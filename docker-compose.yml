@@ -1,0 +1,156 @@
+services:
+  frontend:
+    # Adicionado: Nome da imagem no Docker Hub
+    image: enki10/intertial-codebase:frontend-latest
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:3001}
+    ports:
+      - "3000:3000"
+    depends_on:
+      backend:
+        condition: service_started
+    networks:
+      - inertial-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+  backend:
+    # Adicionado: Nome da imagem no Docker Hub
+    image: enki10/intertial-codebase:backend-latest
+    build:
+      context: ./backend
+    ports:
+      - "3001:3001"
+    depends_on:
+      cassandra:
+        condition: service_healthy
+      baileys:
+        condition: service_started
+    env_file:
+      - .env
+    networks:
+      - inertial-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+  cassandra:
+    image: cassandra:5.0
+    ports:
+      - "9042:9042"
+    volumes:
+      - cassandra_data:/var/lib/cassandra
+    networks:
+      - inertial-network
+    healthcheck:
+      test: ["CMD-SHELL", "cqlsh -e 'DESCRIBE KEYSPACES' || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+    environment:
+      - CASSANDRA_CLUSTER_NAME=inertial-eclipse
+      - CASSANDRA_DC=dc1
+    restart: unless-stopped
+
+  cassandra-init:
+    image: cassandra:5.0
+    depends_on:
+      cassandra:
+        condition: service_healthy
+    volumes:
+      - ./database/migrations:/migrations
+    networks:
+      - inertial-network
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        echo "Running Cassandra migrations..."
+        for cql_file in /migrations/[0-9]*.cql; do
+          filename=$$(basename "$$cql_file")
+          echo "  Applying $${filename}..."
+          cqlsh cassandra 9042 -f "$$cql_file"
+        done
+        echo "All migrations applied successfully."
+    restart: "no"
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - inertial-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  baileys:
+    image: ghcr.io/fazer-ai/baileys-api:latest
+    command: ["bun", "src/index.ts"]
+    ports:
+      - "3025:3025"
+    environment:
+      - NODE_ENV=production
+      - PORT=3025
+      - LOG_LEVEL=debug
+      - BAILEYS_LOG_LEVEL=info
+      - REDIS_URL=redis://redis:6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - CORS_ORIGIN=*
+      - IGNORE_GROUP_MESSAGES=true
+      - IGNORE_STATUS_MESSAGES=true
+      - IGNORE_BROADCAST_MESSAGES=true
+      - IGNORE_NEWSLETTER_MESSAGES=true
+      - IGNORE_BOT_MESSAGES=true
+      - IGNORE_META_AI_MESSAGES=true
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - inertial-network
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:3025/status || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+
+  baileys-init:
+    image: redis:7-alpine
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        redis-cli -u redis://redis:6379 SET "@baileys-api:api-keys:${BAILEYS_API_KEY:-your-baileys-api-key}" '{"role":"admin"}' && echo "Baileys API key registered"
+    environment:
+      - BAILEYS_API_KEY=${BAILEYS_API_KEY:-your-baileys-api-key}
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - inertial-network
+    restart: "no"
+
+networks:
+  inertial-network:
+    driver: bridge
+
+volumes:
+  cassandra_data:
+  redis_data:
