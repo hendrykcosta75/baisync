@@ -26,6 +26,8 @@ for i in $(seq 1 30); do
   sleep 2
 done
 # Copia e executa cada migration (CREATE IF NOT EXISTS garante idempotência)
+# Remove diretório anterior para evitar que cp crie /tmp/migrations/migrations/
+docker compose exec -T cassandra rm -rf /tmp/migrations
 docker compose cp database/migrations cassandra:/tmp/migrations
 docker compose exec -T cassandra bash -c 'for f in $(ls /tmp/migrations/[0-9]*.cql | sort); do
   output=$(cqlsh -f "$f" 2>&1)
