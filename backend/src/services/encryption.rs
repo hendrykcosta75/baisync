@@ -1,0 +1,73 @@
+use aes_gcm::aead::{Aead, KeyInit, OsRng};
+use aes_gcm::{Aes256Gcm, Nonce};
+use base64::engine::general_purpose::STANDARD as BASE64;
+use base64::Engine;
+use rand::RngCore;
+
+use crate::errors::AppError;
+
+#[derive(Clone)]
+pub struct EncryptionService {
+    key: Vec<u8>,
+}
+
+impl EncryptionService {
+    pub fn new(hex_key: &str) -> Result<Self, AppError> {
+        let key = hex::decode(hex_key).map_err(|e| {
+            // Fallback: use the key bytes directly if not valid hex
+            tracing::warn!("ENCRYPTION_KEY is not valid hex, using raw bytes: {e}");
+            e
+        });
+
+        let key = match key {
+            Ok(k) if k.len() == 32 => k,
+            _ => {
+                let mut padded = hex_key.as_bytes().to_vec();
+                padded.resize(32, 0);
+                padded
+            }
+        };
+
+        Ok(Self { key })
+    }
+
+    pub fn encrypt(&self, plaintext: &str) -> Result<String, AppError> {
+        let cipher = Aes256Gcm::new_from_slice(&self.key)
+            .map_err(|e| AppError::EncryptionError(e.to_string()))?;
+
+        let mut nonce_bytes = [0u8; 12];
+        OsRng.fill_bytes(&mut nonce_bytes);
+        let nonce = Nonce::from_slice(&nonce_bytes);
+
+        let ciphertext = cipher
+            .encrypt(nonce, plaintext.as_bytes())
+            .map_err(|e| AppError::EncryptionError(e.to_string()))?;
+
+        let mut combined = nonce_bytes.to_vec();
+        combined.extend_from_slice(&ciphertext);
+
+        Ok(BASE64.encode(&combined))
+    }
+
+    pub fn decrypt(&self, encrypted: &str) -> Result<String, AppError> {
+        let combined = BASE64
+            .decode(encrypted)
+            .map_err(|e| AppError::EncryptionError(e.to_string()))?;
+
+        if combined.len() < 12 {
+            return Err(AppError::EncryptionError("Invalid ciphertext".into()));
+        }
+
+        let (nonce_bytes, ciphertext) = combined.split_at(12);
+        let nonce = Nonce::from_slice(nonce_bytes);
+
+        let cipher = Aes256Gcm::new_from_slice(&self.key)
+            .map_err(|e| AppError::EncryptionError(e.to_string()))?;
+
+        let plaintext = cipher
+            .decrypt(nonce, ciphertext)
+            .map_err(|e| AppError::EncryptionError(e.to_string()))?;
+
+        String::from_utf8(plaintext).map_err(|e| AppError::EncryptionError(e.to_string()))
+    }
+}

@@ -11,8 +11,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Monorepo with three main directories:
 
 - **`/frontend`** — Next.js 16 + React 19 + HeroUI v3 + Tailwind CSS v4 + Zustand
-- **`/backend`** — Rust + Axum, serves API on port 3001
-- **`/database`** — Cassandra CQL migration scripts
+- **`/backend`** — Rust + Axum, serves API on port 3001 (includes CQL migrations in `/backend/migrations/`)
 
 All services are orchestrated via `docker-compose.yml` (frontend:3000, backend:3001, Cassandra:9042, Redis:6379, Baileys:3025).
 
@@ -45,10 +44,8 @@ cargo run         # Starts on :3001 (needs .env and Cassandra running)
 
 ### Database
 ```bash
-# Migrations run automatically via cassandra-init in docker-compose
-# Manual execution:
-cd database/migrations
-bash run_migrations.sh  # Uses CQLSH_HOST and CQLSH_PORT env vars
+# Migrations run automatically by the backend on startup (no manual step needed)
+# Migration files: backend/migrations/*.cql
 ```
 
 ## Frontend Specifics
@@ -103,7 +100,7 @@ src/
 
 ## Database
 
-Cassandra keyspace: `inertial_eclipse`. Migrations in `/database/migrations/` (001-010).
+Cassandra keyspace: `inertial_eclipse`. Migrations in `/backend/migrations/` (001-031), run automatically by the backend on startup.
 
 Key design decisions:
 - Partition keys on `user_id` for tenant isolation

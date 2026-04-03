@@ -14,7 +14,7 @@ services:
     networks:
       - inertial-network
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000"]
+      test: ["CMD-SHELL", "node -e \"const http=require('http');http.get('http://localhost:3000/api/health',r=>{process.exit(r.statusCode===200?0:1)}).on('error',()=>process.exit(1))\""]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -63,27 +63,6 @@ services:
       - CASSANDRA_CLUSTER_NAME=inertial-eclipse
       - CASSANDRA_DC=dc1
     restart: unless-stopped
-
-  cassandra-init:
-    image: cassandra:5.0
-    depends_on:
-      cassandra:
-        condition: service_healthy
-    volumes:
-      - ./database/migrations:/migrations
-    networks:
-      - inertial-network
-    entrypoint: ["/bin/bash", "-c"]
-    command:
-      - |
-        echo "Running Cassandra migrations..."
-        for cql_file in /migrations/[0-9]*.cql; do
-          filename=$$(basename "$$cql_file")
-          echo "  Applying $${filename}..."
-          cqlsh cassandra 9042 -f "$$cql_file"
-        done
-        echo "All migrations applied successfully."
-    restart: "no"
 
   redis:
     image: redis:7-alpine

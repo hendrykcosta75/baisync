@@ -1,0 +1,146 @@
+services:
+  frontend:
+    image: 'enki10/intertial-codebase:frontend-latest'
+    ports:
+      - '3000:3000'
+    environment:
+      - 'API_URL=http://backend:3001'
+    depends_on:
+      backend:
+        condition: service_started
+    networks:
+      - inertial-network
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - "node -e \"const http=require('http');http.get('http://localhost:3000/api/health',r=>{process.exit(r.statusCode===200?0:1)}).on('error',()=>process.exit(1))\""
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+  backend:
+    image: 'enki10/intertial-codebase:backend-latest'
+    ports:
+      - '3001:3001'
+    depends_on:
+      cassandra:
+        condition: service_healthy
+      baileys:
+        condition: service_started
+    environment:
+      - 'DATABASE_URL=cassandra:9042'
+      - JWT_SECRET=***REMOVED***
+      - SMTP_HOST=smtp.mail.us-east-1.awsapps.com
+      - SMTP_PORT=465
+      - SMTP_USER=ia@planejareconsultoria.com.br
+      - SMTP_PASS=100%planejarE
+      - SMTP_FROM=ia@planejareconsultoria.com.br
+      - ENCRYPTION_KEY=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      - 'BAILEYS_URL=http://baileys:3025'
+      - 'BAILEYS_API_KEY=coxinha#22'
+      - 'APP_URL=https://ai.planejareconsultoria.com.br'
+    networks:
+      - inertial-network
+    healthcheck:
+      test:
+        - CMD
+        - curl
+        - '-f'
+        - 'http://localhost:3001/health'
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+  cassandra:
+    image: 'cassandra:5.0'
+    ports:
+      - '9042:9042'
+    volumes:
+      - 'cassandra_data:/var/lib/cassandra'
+    networks:
+      - inertial-network
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - "cqlsh -e 'DESCRIBE KEYSPACES' || exit 1"
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+    environment:
+      - CASSANDRA_CLUSTER_NAME=inertial-eclipse
+      - CASSANDRA_DC=dc1
+    restart: unless-stopped
+  redis:
+    image: 'redis:7-alpine'
+    ports:
+      - '6379:6379'
+    volumes:
+      - 'redis_data:/data'
+    networks:
+      - inertial-network
+    healthcheck:
+      test:
+        - CMD
+        - redis-cli
+        - ping
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+  baileys:
+    image: 'ghcr.io/fazer-ai/baileys-api:latest'
+    command:
+      - bun
+      - src/index.ts
+    ports:
+      - '3025:3025'
+    environment:
+      - NODE_ENV=production
+      - PORT=3025
+      - LOG_LEVEL=debug
+      - BAILEYS_LOG_LEVEL=info
+      - 'REDIS_URL=redis://redis:6379'
+      - REDIS_PASSWORD=
+      - 'CORS_ORIGIN=*'
+      - IGNORE_GROUP_MESSAGES=true
+      - IGNORE_STATUS_MESSAGES=true
+      - IGNORE_BROADCAST_MESSAGES=true
+      - IGNORE_NEWSLETTER_MESSAGES=true
+      - IGNORE_BOT_MESSAGES=true
+      - IGNORE_META_AI_MESSAGES=true
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - inertial-network
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - 'wget -q --spider http://localhost:3025/status || exit 1'
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+  baileys-init:
+    image: 'redis:7-alpine'
+    entrypoint:
+      - /bin/sh
+      - '-c'
+    command:
+      - "redis-cli -u redis://redis:6379 SET \"@baileys-api:api-keys:coxinha#22\" '{\"role\":\"admin\"}' && echo \"Baileys API key registered\"\n"
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - inertial-network
+    restart: 'no'
+networks:
+  inertial-network:
+    driver: bridge
+volumes:
+  cassandra_data: null
+  redis_data: null
