@@ -16,25 +16,25 @@ fn wrap_email_html(title: &str, content: &str) -> String {
 <meta name="supported-color-schemes" content="dark">
 <title>{title}</title>
 </head>
-<body style="margin:0;padding:0;background-color:#080C19;font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased;">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#080C19;">
+<body style="margin:0;padding:0;background-color:#050505;font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#050505;">
   <tr><td align="center" style="padding:32px 16px;">
-    <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;border-radius:12px;overflow:hidden;border:1px solid #242E5A;">
+    <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;border-radius:12px;overflow:hidden;border:1px solid #1F1F1F;">
       <!-- Header with gradient bar -->
       <tr>
         <td style="background:linear-gradient(135deg,#8B5CF6,#D946EF);padding:4px 0;"></td>
       </tr>
       <tr>
-        <td style="background-color:#0E1329;padding:24px 32px 16px 32px;">
+        <td style="background-color:#0A0A0A;padding:24px 32px 16px 32px;">
           <table role="presentation" cellpadding="0" cellspacing="0">
             <tr>
               <td style="padding-right:12px;vertical-align:middle;">
                 <div style="width:32px;height:32px;border-radius:8px;background:linear-gradient(135deg,#8B5CF6,#D946EF);text-align:center;line-height:32px;">
-                  <span style="color:#ffffff;font-size:16px;font-weight:bold;">&#9679;</span>
+                  <span style="color:#ffffff;font-size:18px;font-weight:bold;">B</span>
                 </div>
               </td>
               <td style="vertical-align:middle;">
-                <span style="color:#EDF0F7;font-size:18px;font-weight:700;letter-spacing:-0.3px;">Inertial Eclipse</span>
+                <span style="color:#EDF0F7;font-size:18px;font-weight:700;letter-spacing:-0.3px;">Baisync</span>
               </td>
             </tr>
           </table>
@@ -42,8 +42,8 @@ fn wrap_email_html(title: &str, content: &str) -> String {
       </tr>
       <!-- Content card -->
       <tr>
-        <td style="background-color:#0E1329;padding:0 32px 24px 32px;">
-          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#161C38;border:1px solid #242E5A;border-radius:10px;">
+        <td style="background-color:#0A0A0A;padding:0 32px 24px 32px;">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#111111;border:1px solid #1F1F1F;border-radius:10px;">
             <tr>
               <td style="padding:28px 28px;">
                 {content}
@@ -54,9 +54,9 @@ fn wrap_email_html(title: &str, content: &str) -> String {
       </tr>
       <!-- Footer -->
       <tr>
-        <td style="background-color:#0E1329;padding:0 32px 24px 32px;text-align:center;">
+        <td style="background-color:#0A0A0A;padding:0 32px 24px 32px;text-align:center;">
           <p style="margin:0;color:#8892B0;font-size:12px;line-height:1.5;">
-            Inertial Eclipse &mdash; Plataforma de Agentes de IA
+            Baisync &mdash; Impulsionando Neg&oacute;cios com IA
           </p>
         </td>
       </tr>
@@ -91,7 +91,7 @@ fn styled_button(url: &str, label: &str) -> String {
 
 fn styled_data_table(rows: &str) -> String {
     format!(
-        r#"<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#1A2142;border:1px solid #242E5A;border-radius:8px;margin:16px 0;">
+        r#"<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#141414;border:1px solid #1F1F1F;border-radius:8px;margin:16px 0;">
   <tr><td style="padding:12px 16px;">
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
       {rows}
@@ -139,14 +139,14 @@ pub async fn send_email(
 }
 
 pub async fn send_2fa_code(config: &Config, to: &str, code: &str) -> Result<(), AppError> {
-    let subject = "Your verification code - Inertial Eclipse";
+    let subject = "Código de verificação - Baisync";
     let content = format!(
         r#"<h2 style="margin:0 0 8px 0;color:#EDF0F7;font-size:20px;font-weight:700;">Código de verificação</h2>
 <p style="margin:0 0 20px 0;color:#C4CCDF;font-size:14px;line-height:1.6;">Use o código abaixo para verificar sua identidade:</p>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
   <tr>
     <td align="center" style="padding:20px 0;">
-      <div style="display:inline-block;background-color:#1A2142;border:1px solid #242E5A;border-radius:10px;padding:16px 40px;">
+      <div style="display:inline-block;background-color:#141414;border:1px solid #1F1F1F;border-radius:10px;padding:16px 40px;">
         <span style="font-size:36px;font-weight:800;letter-spacing:8px;color:#EDF0F7;">{code}</span>
       </div>
     </td>
@@ -159,7 +159,7 @@ pub async fn send_2fa_code(config: &Config, to: &str, code: &str) -> Result<(), 
 }
 
 pub async fn send_reset_email(config: &Config, to: &str, token: &str) -> Result<(), AppError> {
-    let subject = "Password Reset - Inertial Eclipse";
+    let subject = "Redefinição de senha - Baisync";
     let reset_url = format!("{}/reset-password?token={token}", config.app_url);
     let content = format!(
         r#"<h2 style="margin:0 0 8px 0;color:#EDF0F7;font-size:20px;font-weight:700;">Redefinição de senha</h2>
@@ -167,7 +167,7 @@ pub async fn send_reset_email(config: &Config, to: &str, token: &str) -> Result<
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
   <tr>
     <td align="center" style="padding:16px 0;">
-      <div style="display:inline-block;background-color:#1A2142;border:1px solid #242E5A;border-radius:10px;padding:12px 32px;">
+      <div style="display:inline-block;background-color:#141414;border:1px solid #1F1F1F;border-radius:10px;padding:12px 32px;">
         <span style="font-size:24px;font-weight:800;letter-spacing:4px;color:#EDF0F7;">{token}</span>
       </div>
     </td>
@@ -188,7 +188,7 @@ pub async fn send_connection_lost_email(
     channel: &str,
     provider: &str,
 ) -> Result<(), AppError> {
-    let subject = format!("Conexão perdida - {assistant_name} | Inertial Eclipse");
+    let subject = format!("Conexão perdida - {assistant_name} | Baisync");
     let dashboard_url = format!("{}/dashboard/assistants", config.app_url);
     let rows = format!(
         "{}{}",
@@ -227,7 +227,7 @@ pub async fn send_appointment_email(
         "rescheduled" => "Agendamento Reagendado",
         _ => "Atualização de Agendamento",
     };
-    let subject = format!("{action_label} - {assistant_name} | Inertial Eclipse");
+    let subject = format!("{action_label} - {assistant_name} | Baisync");
     let calendar_url = format!("{}/dashboard/calendar", config.app_url);
 
     let mut rows = String::new();
@@ -267,7 +267,7 @@ pub async fn send_human_agent_email(
     contact_phone: &str,
     reason: &str,
 ) -> Result<(), AppError> {
-    let subject = format!("Solicitação de Agente Humano - {assistant_name} | Inertial Eclipse");
+    let subject = format!("Solicitação de Agente Humano - {assistant_name} | Baisync");
     let dashboard_url = format!("{}/dashboard/assistants", config.app_url);
     let rows = format!(
         "{}{}",
