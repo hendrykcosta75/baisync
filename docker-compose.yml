@@ -81,7 +81,26 @@ services:
 
   baileys:
     image: ghcr.io/fazer-ai/baileys-api:latest
-    command: ["bun", "src/index.ts"]
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo "Seeding Baileys API key into Redis..."
+        BKEY="$${BAILEYS_API_KEY:-your-baileys-api-key}"
+        for i in 1 2 3 4 5 6 7 8 9 10; do
+          bun -e "
+            const net = require('net');
+            const key = '@baileys-api:api-keys:$${BKEY}';
+            const val = '{\"role\":\"admin\"}';
+            const cmd = '*3\r\n\$$3\r\nSET\r\n\$$' + key.length + '\r\n' + key + '\r\n\$$' + val.length + '\r\n' + val + '\r\n';
+            const c = net.createConnection({host:'redis',port:6379}, () => c.write(cmd));
+            c.on('data', d => { console.log('API key registered:', d.toString().trim()); c.end(); process.exit(0); });
+            c.on('error', e => { console.error(e.message); process.exit(1); });
+          " && break
+          echo "Redis not ready, retry $$i..."
+          sleep 2
+        done
+        echo "Starting Baileys API..."
+        exec bun src/index.ts
     ports:
       - "3025:3025"
     environment:
@@ -91,6 +110,7 @@ services:
       - BAILEYS_LOG_LEVEL=info
       - REDIS_URL=redis://redis:6379
       - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - BAILEYS_API_KEY=${BAILEYS_API_KEY:-your-baileys-api-key}
       - CORS_ORIGIN=*
       - IGNORE_GROUP_MESSAGES=true
       - IGNORE_STATUS_MESSAGES=true
@@ -110,21 +130,6 @@ services:
       retries: 5
       start_period: 20s
     restart: unless-stopped
-
-  baileys-init:
-    image: redis:7-alpine
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - |
-        redis-cli -u redis://redis:6379 SET "@baileys-api:api-keys:${BAILEYS_API_KEY:-your-baileys-api-key}" '{"role":"admin"}' && echo "Baileys API key registered"
-    environment:
-      - BAILEYS_API_KEY=${BAILEYS_API_KEY:-your-baileys-api-key}
-    depends_on:
-      redis:
-        condition: service_healthy
-    networks:
-      - inertial-network
-    restart: "no"
 
 networks:
   inertial-network:
