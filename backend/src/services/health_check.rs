@@ -93,9 +93,25 @@ async fn check_connection(
 ) -> bool {
     match provider {
         "baileys" => {
-            // Baileys connection state is managed exclusively via webhooks (connection.update).
-            // Do not verify externally — assume still connected.
-            true
+            let Some(phone) = config_phone_number else {
+                return false;
+            };
+            // Use a lightweight read-only endpoint that requires an active connection.
+            // If the connection doesn't exist, Baileys returns 500 "Phone number not connected".
+            let jid = format!("{}@s.whatsapp.net", phone.trim_start_matches('+'));
+            let url = format!(
+                "{}/connections/{}/profile-picture-url?jid={}",
+                config.baileys_url, phone, jid
+            );
+            match client
+                .get(&url)
+                .header("x-api-key", &config.baileys_api_key)
+                .send()
+                .await
+            {
+                Ok(resp) => resp.status().is_success() || resp.status().as_u16() == 404,
+                Err(_) => false,
+            }
         }
         "meta_official" => {
             let (Some(phone_id), Some(token)) = (config_phone_number, config_token) else {

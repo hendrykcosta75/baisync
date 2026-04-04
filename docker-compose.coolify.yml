@@ -38,7 +38,7 @@ services:
       - SMTP_FROM=ia@planejareconsultoria.com.br
       - ENCRYPTION_KEY=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
       - 'BAILEYS_URL=http://baileys:3025'
-      - 'BAILEYS_API_KEY=coxinha#22'
+      - 'BAILEYS_API_KEY=c0x1nha22'
       - 'APP_URL=https://ai.planejareconsultoria.com.br'
     networks:
       - inertial-network
@@ -135,7 +135,7 @@ services:
       - /bin/sh
       - '-c'
     command:
-      - "redis-cli -u redis://redis:6379 SET \"@baileys-api:api-keys:coxinha#22\" '{\"role\":\"admin\"}' && echo \"Baileys API key registered\"\n"
+      - "redis-cli -u redis://redis:6379 SET \"@baileys-api:api-keys:c0x1nha22\" '{\"role\":\"admin\"}' && echo \"Baileys API key registered\"\n"
     depends_on:
       redis:
         condition: service_healthy
