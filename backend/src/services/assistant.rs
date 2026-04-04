@@ -268,6 +268,75 @@ pub async fn delete_assistant(
 ) -> Result<(), AppError> {
     get_assistant(db, user_id, assistant_id).await?;
 
+    // Cascade delete: remove all related data
+
+    // Delete integrations (PK: (assistant_id, user_id), id)
+    db.query_unpaged(
+        "DELETE FROM inertial_eclipse.assistant_integrations WHERE assistant_id = ? AND user_id = ?",
+        (assistant_id, user_id),
+    ).await.map_err(|e| AppError::DatabaseError(e.to_string()))?;
+
+    // Delete tools (PK: assistant_id, id)
+    db.query_unpaged(
+        "DELETE FROM inertial_eclipse.assistant_tools WHERE assistant_id = ?",
+        (assistant_id,),
+    ).await.map_err(|e| AppError::DatabaseError(e.to_string()))?;
+
+    // Delete files (PK: (assistant_id, user_id), id)
+    db.query_unpaged(
+        "DELETE FROM inertial_eclipse.assistant_files WHERE assistant_id = ? AND user_id = ?",
+        (assistant_id, user_id),
+    ).await.map_err(|e| AppError::DatabaseError(e.to_string()))?;
+
+    // Delete conversations and their messages (conversations PK: (assistant_id, user_id), id)
+    let convs = db.query_unpaged(
+        "SELECT id FROM inertial_eclipse.conversations WHERE assistant_id = ? AND user_id = ?",
+        (assistant_id, user_id),
+    ).await.map_err(|e| AppError::DatabaseError(e.to_string()))?;
+
+    for row in convs.rows_typed::<(Uuid,)>().map_err(|e| AppError::DatabaseError(e.to_string()))? {
+        if let Ok((conv_id,)) = row {
+            // Delete messages for this conversation (PK: conversation_id, id)
+            let _ = db.query_unpaged(
+                "DELETE FROM inertial_eclipse.messages WHERE conversation_id = ?",
+                (&conv_id,),
+            ).await;
+        }
+    }
+
+    db.query_unpaged(
+        "DELETE FROM inertial_eclipse.conversations WHERE assistant_id = ? AND user_id = ?",
+        (assistant_id, user_id),
+    ).await.map_err(|e| AppError::DatabaseError(e.to_string()))?;
+
+    // Delete usage stats (PK: (user_id, assistant_id), period)
+    db.query_unpaged(
+        "DELETE FROM inertial_eclipse.usage_stats WHERE user_id = ? AND assistant_id = ?",
+        (user_id, assistant_id),
+    ).await.map_err(|e| AppError::DatabaseError(e.to_string()))?;
+
+    // Delete access tokens (PK: (user_id, assistant_id), id)
+    db.query_unpaged(
+        "DELETE FROM inertial_eclipse.access_tokens WHERE user_id = ? AND assistant_id = ?",
+        (user_id, assistant_id),
+    ).await.map_err(|e| AppError::DatabaseError(e.to_string()))?;
+
+    // Delete tool call logs (PK: (assistant_id, tool_id), called_at, id) — delete all tools' logs
+    // Note: we can't easily delete without tool_id, but tools are already deleted above
+
+    // Delete availability config (PK: assistant_id)
+    db.query_unpaged(
+        "DELETE FROM inertial_eclipse.availability_config WHERE assistant_id = ?",
+        (assistant_id,),
+    ).await.map_err(|e| AppError::DatabaseError(e.to_string()))?;
+
+    // Delete accepted shares by assistant (PK: assistant_id, accepted_at, user_id)
+    db.query_unpaged(
+        "DELETE FROM inertial_eclipse.accepted_shares_by_assistant WHERE assistant_id = ?",
+        (assistant_id,),
+    ).await.map_err(|e| AppError::DatabaseError(e.to_string()))?;
+
+    // Finally, delete the assistant itself
     db.query_unpaged(
         "DELETE FROM inertial_eclipse.assistants WHERE user_id = ? AND id = ?",
         (user_id, assistant_id),
@@ -600,6 +669,18 @@ pub async fn create_integration(
     let existing = list_integrations(db, assistant_id, user_id).await?;
     if let Some(found) = existing.iter().find(|i| i.channel == req.channel && i.provider == req.provider) {
         return Ok(found.clone());
+    }
+
+    // Prevent duplicate phone numbers across integrations
+    if let Some(ref phone) = req.config_phone_number {
+        if !phone.is_empty() {
+            if let Ok(existing_integration) = crate::services::messaging::find_integration_by_phone(db, phone).await {
+                // Allow if it's the same assistant (re-creation), reject otherwise
+                if existing_integration.assistant_id != *assistant_id || existing_integration.user_id != *user_id {
+                    return Err(AppError::BadRequest("Phone number already in use by another integration".into()));
+                }
+            }
+        }
     }
 
     let id = Uuid::new_v4();

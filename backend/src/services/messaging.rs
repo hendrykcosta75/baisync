@@ -80,7 +80,18 @@ pub async fn process_incoming_message(
     let user_id = integration.user_id;
     let assistant_id = integration.assistant_id;
 
-    let assistant = crate::services::assistant::get_assistant(db, &user_id, &assistant_id).await?;
+    let assistant = match crate::services::assistant::get_assistant(db, &user_id, &assistant_id).await {
+        Ok(a) => a,
+        Err(_) => {
+            // Assistant was deleted but integration remains — clean up orphan
+            tracing::warn!("Orphan integration found for deleted assistant {assistant_id}, cleaning up");
+            let _ = db.query_unpaged(
+                "DELETE FROM inertial_eclipse.assistant_integrations WHERE assistant_id = ? AND user_id = ? AND id = ?",
+                (&assistant_id, &user_id, &integration.id),
+            ).await;
+            return Err(AppError::NotFound("Assistant no longer exists".into()));
+        }
+    };
 
     // Check rate limit — use assistant-level config, falling back to integration-level
     let rate_limit = assistant.config_rate_limit_per_day.or(integration.config_rate_limit_per_day);
@@ -286,7 +297,7 @@ pub async fn process_incoming_message(
         llm_messages.push(LlmMessage { role: "system".into(), content: prompt, media_base64: None, media_mime_type: None });
     }
     for msg in &history {
-        llm_messages.push(LlmMessage { role: msg.role.clone(), content: msg.content.clone(), media_base64: None, media_mime_type: None });
+        llm_messages.push(LlmMessage { role: msg.role.clone(), content: msg.content.clone().unwrap_or_default(), media_base64: None, media_mime_type: None });
     }
 
     // Attach media to the last user message if this is a media message with interpretation enabled
@@ -556,12 +567,55 @@ pub async fn find_integration_by_phone(db: &DbSession, phone: &str) -> Result<As
         .await
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
-    let row = result
-        .maybe_first_row_typed::<IntegrationRow>()
+    // Collect ALL integrations with this phone number
+    let mut all: Vec<AssistantIntegration> = Vec::new();
+    for row in result
+        .rows_typed::<IntegrationRow>()
         .map_err(|e| AppError::DatabaseError(e.to_string()))?
-        .ok_or_else(|| AppError::NotFound("No integration found for this phone number".into()))?;
+    {
+        let r = row.map_err(|e| AppError::DatabaseError(e.to_string()))?;
+        all.push(row_to_integration(r));
+    }
 
-    Ok(row_to_integration(row))
+    if all.is_empty() {
+        return Err(AppError::NotFound("No integration found for this phone number".into()));
+    }
+
+    // Prefer connected integrations whose assistant still exists
+    let mut valid: Option<AssistantIntegration> = None;
+    let mut orphans: Vec<AssistantIntegration> = Vec::new();
+
+    for integration in all {
+        // Skip disconnected integrations
+        if integration.status.as_str() == "disconnected" {
+            continue;
+        }
+        // Verify the assistant still exists
+        match crate::services::assistant::get_assistant(db, &integration.user_id, &integration.assistant_id).await {
+            Ok(_) => {
+                if valid.is_none() {
+                    valid = Some(integration);
+                }
+            }
+            Err(_) => {
+                orphans.push(integration);
+            }
+        }
+    }
+
+    // Clean up orphan integrations in the background
+    for orphan in &orphans {
+        tracing::warn!(
+            "Cleaning up orphan integration {} for deleted assistant {}",
+            orphan.id, orphan.assistant_id
+        );
+        let _ = db.query_unpaged(
+            "DELETE FROM inertial_eclipse.assistant_integrations WHERE assistant_id = ? AND user_id = ? AND id = ?",
+            (&orphan.assistant_id, &orphan.user_id, &orphan.id),
+        ).await;
+    }
+
+    valid.ok_or_else(|| AppError::NotFound("No active integration found for this phone number".into()))
 }
 
 pub async fn find_integration_by_token(db: &DbSession, token: &str) -> Result<AssistantIntegration, AppError> {
@@ -573,12 +627,53 @@ pub async fn find_integration_by_token(db: &DbSession, token: &str) -> Result<As
         .await
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
-    let row = result
-        .maybe_first_row_typed::<IntegrationRow>()
+    // Collect ALL integrations with this token
+    let mut all: Vec<AssistantIntegration> = Vec::new();
+    for row in result
+        .rows_typed::<IntegrationRow>()
         .map_err(|e| AppError::DatabaseError(e.to_string()))?
-        .ok_or_else(|| AppError::NotFound("No integration found for this token".into()))?;
+    {
+        let r = row.map_err(|e| AppError::DatabaseError(e.to_string()))?;
+        all.push(row_to_integration(r));
+    }
 
-    Ok(row_to_integration(row))
+    if all.is_empty() {
+        return Err(AppError::NotFound("No integration found for this token".into()));
+    }
+
+    // Prefer connected integrations whose assistant still exists
+    let mut valid: Option<AssistantIntegration> = None;
+    let mut orphans: Vec<AssistantIntegration> = Vec::new();
+
+    for integration in all {
+        if integration.status.as_str() == "disconnected" {
+            continue;
+        }
+        match crate::services::assistant::get_assistant(db, &integration.user_id, &integration.assistant_id).await {
+            Ok(_) => {
+                if valid.is_none() {
+                    valid = Some(integration);
+                }
+            }
+            Err(_) => {
+                orphans.push(integration);
+            }
+        }
+    }
+
+    // Clean up orphan integrations
+    for orphan in &orphans {
+        tracing::warn!(
+            "Cleaning up orphan integration {} for deleted assistant {}",
+            orphan.id, orphan.assistant_id
+        );
+        let _ = db.query_unpaged(
+            "DELETE FROM inertial_eclipse.assistant_integrations WHERE assistant_id = ? AND user_id = ? AND id = ?",
+            (&orphan.assistant_id, &orphan.user_id, &orphan.id),
+        ).await;
+    }
+
+    valid.ok_or_else(|| AppError::NotFound("No active integration found for this token".into()))
 }
 
 async fn is_rate_limited(db: &DbSession, integration: &AssistantIntegration, limit: i32) -> Result<bool, AppError> {
@@ -602,12 +697,17 @@ async fn is_rate_limited(db: &DbSession, integration: &AssistantIntegration, lim
     Ok(false)
 }
 
-type ConversationRow = (Uuid, Uuid, Uuid, String, String, DateTime<Utc>, DateTime<Utc>, Option<String>, Option<bool>);
+type ConversationRow = (Uuid, Uuid, Uuid, Option<String>, Option<String>, Option<DateTime<Utc>>, Option<DateTime<Utc>>, Option<String>, Option<bool>);
 
 fn row_to_conversation(r: ConversationRow) -> Conversation {
+    let fallback = Utc::now();
     Conversation {
-        assistant_id: r.0, user_id: r.1, id: r.2, contact_number: r.3, channel: r.4,
-        started_at: r.5, last_message_at: r.6, summary: r.7,
+        assistant_id: r.0, user_id: r.1, id: r.2,
+        contact_number: r.3.unwrap_or_default(),
+        channel: r.4.unwrap_or_default(),
+        started_at: r.5.unwrap_or(fallback),
+        last_message_at: r.6.unwrap_or(fallback),
+        summary: r.7,
         ai_enabled: r.8.unwrap_or(true),
     }
 }
@@ -617,8 +717,8 @@ async fn get_or_create_conversation(
 ) -> Result<Conversation, AppError> {
     let result = db
         .query_unpaged(
-            "SELECT assistant_id, user_id, id, contact_number, channel, started_at, last_message_at, summary, ai_enabled FROM inertial_eclipse.conversations WHERE contact_number = ? ALLOW FILTERING",
-            (contact_number,),
+            "SELECT assistant_id, user_id, id, contact_number, channel, started_at, last_message_at, summary, ai_enabled FROM inertial_eclipse.conversations WHERE assistant_id = ? AND user_id = ? AND contact_number = ? ALLOW FILTERING",
+            (assistant_id, user_id, contact_number),
         )
         .await
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
@@ -671,14 +771,15 @@ pub async fn get_recent_messages(db: &DbSession, conversation_id: &Uuid, limit: 
 
     let mut messages = Vec::new();
     for row in result
-        .rows_typed::<(Uuid, CqlTimeuuid, String, String, Option<String>, Option<String>, Option<i32>, Option<Uuid>, DateTime<Utc>)>()
+        .rows_typed::<(Uuid, CqlTimeuuid, Option<String>, Option<String>, Option<String>, Option<String>, Option<i32>, Option<Uuid>, Option<DateTime<Utc>>)>()
         .map_err(|e| AppError::DatabaseError(e.to_string()))?
     {
         let r = row.map_err(|e| AppError::DatabaseError(e.to_string()))?;
         messages.push(Message {
-            conversation_id: r.0, id: r.1.into(), role: r.2, content: r.3,
+            conversation_id: r.0, id: r.1.into(),
+            role: r.2.unwrap_or_default(), content: r.3,
             media_url: r.4, media_type: r.5, tokens_used: r.6,
-            sub_agent_id: r.7, created_at: r.8,
+            sub_agent_id: r.7, created_at: r.8.unwrap_or_else(Utc::now),
         });
     }
 
@@ -763,8 +864,22 @@ pub async fn send_direct_message(
 
     // Send via messaging provider if it's a real channel (not playground)
     if conv.channel != "playground" {
-        let integration = find_integration_for_conversation(db, assistant_id, user_id, &conv.channel).await?;
-        send_message_via_provider(config, &integration, &conv.contact_number, message_text).await?;
+        match find_integration_for_conversation(db, assistant_id, user_id, &conv.channel).await {
+            Ok(integration) => {
+                // Backfill empty channel/contact_number from legacy conversations
+                if conv.channel.is_empty() || conv.contact_number.is_empty() {
+                    let ch = if conv.channel.is_empty() { &integration.channel } else { &conv.channel };
+                    let _ = db.query_unpaged(
+                        "UPDATE inertial_eclipse.conversations SET channel = ? WHERE assistant_id = ? AND user_id = ? AND id = ?",
+                        (ch, assistant_id, user_id, conversation_id),
+                    ).await;
+                }
+                send_message_via_provider(config, &integration, &conv.contact_number, message_text).await?;
+            }
+            Err(e) => {
+                tracing::warn!("No integration found for conversation {conversation_id}, message saved but not sent via provider: {e}");
+            }
+        }
     }
 
     // Update last_message_at
@@ -816,12 +931,14 @@ async fn find_integration_for_conversation(
     {
         let r = row.map_err(|e| AppError::DatabaseError(e.to_string()))?;
         let integration = row_to_integration(r);
-        if integration.channel == channel {
+        if !channel.is_empty() && integration.channel == channel {
             return Ok(integration);
         }
-        // Fallback: match by provider for legacy conversations stored with provider as channel
-        if integration.provider == channel && fallback.is_none() {
-            fallback = Some(integration);
+        if fallback.is_none() {
+            // Fallback: match by provider (legacy) or use first integration if channel is empty
+            if channel.is_empty() || integration.provider == channel {
+                fallback = Some(integration);
+            }
         }
     }
 
@@ -897,7 +1014,7 @@ pub async fn playground_chat(
         llm_messages.push(LlmMessage { role: "system".into(), content: prompt, media_base64: None, media_mime_type: None });
     }
     for msg in &history {
-        llm_messages.push(LlmMessage { role: msg.role.clone(), content: msg.content.clone(), media_base64: None, media_mime_type: None });
+        llm_messages.push(LlmMessage { role: msg.role.clone(), content: msg.content.clone().unwrap_or_default(), media_base64: None, media_mime_type: None });
     }
 
     // Load enabled tools
@@ -1511,7 +1628,7 @@ pub async fn summarize_conversation(
     let mut transcript = String::new();
     for msg in &messages {
         let role_label = if msg.role == "user" { "Cliente" } else { "Agente" };
-        transcript.push_str(&format!("[{}] {}: {}\n", msg.created_at.format("%d/%m %H:%M"), role_label, msg.content));
+        transcript.push_str(&format!("[{}] {}: {}\n", msg.created_at.format("%d/%m %H:%M"), role_label, msg.content.as_deref().unwrap_or("")));
     }
 
     let system_prompt = "Você é um analista especializado em atendimento ao cliente. Analise a conversa abaixo entre um Agente (IA) e um Cliente e forneça:\n\n\

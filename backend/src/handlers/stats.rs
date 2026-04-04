@@ -82,14 +82,14 @@ pub async fn user_usage(
             .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
         for row in result
-            .rows_typed::<(String, i64, i64)>()
+            .rows_typed::<(String, Option<i64>, Option<i64>)>()
             .map_err(|e| AppError::DatabaseError(e.to_string()))?
         {
             let (period, messages, tokens) =
                 row.map_err(|e| AppError::DatabaseError(e.to_string()))?;
             if let Some(entry) = daily.get_mut(&period) {
-                entry.0 += messages;
-                entry.1 += tokens;
+                entry.0 += messages.unwrap_or(0);
+                entry.1 += tokens.unwrap_or(0);
             }
         }
     }
@@ -167,11 +167,13 @@ pub async fn assistant_stats(
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     for row in result
-        .rows_typed::<(String, i64, i64)>()
+        .rows_typed::<(String, Option<i64>, Option<i64>)>()
         .map_err(|e| AppError::DatabaseError(e.to_string()))?
     {
         let (period, messages, tokens) =
             row.map_err(|e| AppError::DatabaseError(e.to_string()))?;
+        let messages = messages.unwrap_or(0);
+        let tokens = tokens.unwrap_or(0);
         if let Some(entry) = daily_data.get_mut(&period) {
             entry.0 += messages;
             entry.1 += tokens;

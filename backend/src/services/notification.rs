@@ -11,9 +11,9 @@ type NotificationRow = (
     Uuid,           // id
     Option<Uuid>,   // assistant_id
     Option<Uuid>,   // integration_id
-    String,         // notification_type
-    String,         // title
-    String,         // message
+    Option<String>, // notification_type
+    Option<String>, // title
+    Option<String>, // message
     Option<bool>,   // is_read
     CqlTimestamp,   // created_at
 );
@@ -27,9 +27,9 @@ fn row_to_notification(r: NotificationRow) -> Notification {
         id: r.1,
         assistant_id: r.2,
         integration_id: r.3,
-        notification_type: r.4,
-        title: r.5,
-        message: r.6,
+        notification_type: r.4.unwrap_or_default(),
+        title: r.5.unwrap_or_default(),
+        message: r.6.unwrap_or_default(),
         is_read: r.7.unwrap_or(false),
         created_at,
     }

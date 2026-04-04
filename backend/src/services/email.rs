@@ -22,14 +22,14 @@ fn wrap_email_html(title: &str, content: &str) -> String {
     <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;border-radius:12px;overflow:hidden;border:1px solid #1F1F1F;">
       <!-- Header with gradient bar -->
       <tr>
-        <td style="background:linear-gradient(135deg,#8B5CF6,#D946EF);padding:4px 0;"></td>
+        <td style="background:linear-gradient(135deg,#F97316,#F59E0B);padding:4px 0;"></td>
       </tr>
       <tr>
         <td style="background-color:#0A0A0A;padding:24px 32px 16px 32px;">
           <table role="presentation" cellpadding="0" cellspacing="0">
             <tr>
               <td style="padding-right:12px;vertical-align:middle;">
-                <div style="width:32px;height:32px;border-radius:8px;background:linear-gradient(135deg,#8B5CF6,#D946EF);text-align:center;line-height:32px;">
+                <div style="width:32px;height:32px;border-radius:8px;background:linear-gradient(135deg,#F97316,#F59E0B);text-align:center;line-height:32px;">
                   <span style="color:#ffffff;font-size:18px;font-weight:bold;">B</span>
                 </div>
               </td>
@@ -81,7 +81,7 @@ fn styled_button(url: &str, label: &str) -> String {
     format!(
         r#"<table role="presentation" cellpadding="0" cellspacing="0" style="margin:24px 0 4px 0;">
   <tr>
-    <td style="border-radius:8px;background:linear-gradient(135deg,#8B5CF6,#D946EF);">
+    <td style="border-radius:8px;background:linear-gradient(135deg,#F97316,#F59E0B);">
       <a href="{url}" target="_blank" style="display:inline-block;padding:12px 28px;color:#ffffff;font-size:14px;font-weight:600;text-decoration:none;letter-spacing:0.3px;">{label}</a>
     </td>
   </tr>

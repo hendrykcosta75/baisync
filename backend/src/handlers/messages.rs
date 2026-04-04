@@ -55,6 +55,17 @@ pub async fn webhook_baileys(
     let event = payload["event"].as_str().unwrap_or("");
     let phone = format!("+{phone_from_path}");
 
+    // Validate webhookVerifyToken against the integration's stored token
+    let webhook_token = payload["webhookVerifyToken"].as_str().unwrap_or("");
+    if let Ok(integration) = messaging::find_integration_by_phone(&db, &phone).await {
+        if let Some(ref expected) = integration.config_webhook_verify_token {
+            if !expected.is_empty() && webhook_token != expected {
+                tracing::warn!("Baileys webhook token mismatch for {phone}");
+                return Err(AppError::Unauthorized("Invalid webhook verify token".into()));
+            }
+        }
+    }
+
     match event {
         "connection.update" => {
             let data = &payload["data"];
@@ -396,26 +407,19 @@ pub async fn webhook_meta_verify(
         return Err(AppError::Unauthorized("Invalid verification request".into()));
     }
 
-    // Look up any meta_official integration that has this verify token
+    // Look up integration by the verify token directly (avoids full table scan)
     let result = db
         .query_unpaged(
-            "SELECT config_webhook_verify_token FROM inertial_eclipse.assistant_integrations WHERE provider = 'meta_official' ALLOW FILTERING",
-            &[],
+            "SELECT config_webhook_verify_token FROM inertial_eclipse.assistant_integrations WHERE config_webhook_verify_token = ? ALLOW FILTERING",
+            (token,),
         )
         .await
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
-    let mut found = false;
-    for row in result
-        .rows_typed::<(Option<String>,)>()
+    let found = result
+        .maybe_first_row_typed::<(Option<String>,)>()
         .map_err(|e| AppError::DatabaseError(e.to_string()))?
-    {
-        let (stored_token,) = row.map_err(|e| AppError::DatabaseError(e.to_string()))?;
-        if stored_token.as_deref() == Some(token) {
-            found = true;
-            break;
-        }
-    }
+        .is_some();
 
     if !found {
         return Err(AppError::Unauthorized("Verify token mismatch".into()));
@@ -425,6 +429,7 @@ pub async fn webhook_meta_verify(
 }
 
 /// POST /api/webhooks/meta — Receive messages from Meta WhatsApp Cloud API
+// TODO: Validate X-Hub-Signature-256 header against META_APP_SECRET for payload authenticity
 pub async fn webhook_meta(
     Extension(db): Extension<DbSession>,
     Extension(config): Extension<Config>,
@@ -692,7 +697,7 @@ pub async fn list_conversations(
         let messages = messaging::get_recent_messages(&db, &conv.id, 1).await.unwrap_or_default();
         let message_count = messaging::count_messages(&db, &conv.id).await.unwrap_or(0);
         let total_tokens = messaging::sum_tokens(&db, &conv.id).await.unwrap_or(0);
-        let last_message = messages.first().map(|m| m.content.clone()).unwrap_or_default();
+        let last_message = messages.first().and_then(|m| m.content.clone()).unwrap_or_default();
 
         responses.push(ConversationResponse {
             id: conv.id.to_string(),
@@ -724,7 +729,7 @@ pub async fn list_messages(
         .into_iter()
         .map(|m| MessageResponse {
             id: m.id.to_string(),
-            content: m.content,
+            content: m.content.unwrap_or_default(),
             sender: m.role,
             timestamp: m.created_at.to_rfc3339(),
             tokens_used: m.tokens_used,
@@ -772,7 +777,7 @@ pub async fn send_message(
     ).await?;
     Ok(Json(MessageResponse {
         id: response.id.to_string(),
-        content: response.content,
+        content: response.content.unwrap_or_default(),
         sender: response.role,
         timestamp: response.created_at.to_rfc3339(),
         tokens_used: response.tokens_used,

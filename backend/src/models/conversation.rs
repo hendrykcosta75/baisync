@@ -20,7 +20,7 @@ pub struct Message {
     pub conversation_id: Uuid,
     pub id: Uuid,
     pub role: String,
-    pub content: String,
+    pub content: Option<String>,
     pub media_url: Option<String>,
     pub media_type: Option<String>,
     pub tokens_used: Option<i32>,
