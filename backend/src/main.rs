@@ -273,6 +273,9 @@ async fn main() {
             "/api/assistants/{id}/availability/slots",
             get(handlers::appointments::available_slots),
         )
+        // Baisync Agent
+        .route("/api/baisync/chat", post(handlers::baisync::chat))
+        .route("/api/baisync/rate-limit", get(handlers::baisync::rate_limit))
         // Test Agent
         .route(
             "/api/test-agent/chat",

@@ -278,6 +278,10 @@ pub async fn process_incoming_message(
     ).await.unwrap_or_default();
 
     let mut llm_messages = Vec::new();
+    let conversation_context = format!(
+        "\n\n--- Contexto da Conversa ---\nTelefone do Usuário: {}\nCanal: {}\n",
+        conversation.contact_number, conversation.channel
+    );
     if let Some(system_prompt) = &assistant.system_prompt {
         let mut prompt = system_prompt.clone();
         if !rag_contexts.is_empty() {
@@ -287,6 +291,7 @@ pub async fn process_incoming_message(
                 prompt.push_str("\n---\n");
             }
         }
+        prompt.push_str(&conversation_context);
         llm_messages.push(LlmMessage { role: "system".into(), content: prompt, media_base64: None, media_mime_type: None });
     } else if !rag_contexts.is_empty() {
         let mut prompt = "Use the following knowledge base context to help answer:\n\n".to_string();
@@ -294,6 +299,10 @@ pub async fn process_incoming_message(
             prompt.push_str(ctx);
             prompt.push_str("\n---\n");
         }
+        prompt.push_str(&conversation_context);
+        llm_messages.push(LlmMessage { role: "system".into(), content: prompt, media_base64: None, media_mime_type: None });
+    } else {
+        let prompt = format!("You are a helpful assistant.{}", conversation_context);
         llm_messages.push(LlmMessage { role: "system".into(), content: prompt, media_base64: None, media_mime_type: None });
     }
     for msg in &history {

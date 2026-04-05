@@ -326,7 +326,7 @@ pub async fn delete_assistant(
 
     // Delete availability config (PK: assistant_id)
     db.query_unpaged(
-        "DELETE FROM inertial_eclipse.availability_config WHERE assistant_id = ?",
+        "DELETE FROM inertial_eclipse.assistant_availability WHERE assistant_id = ?",
         (assistant_id,),
     ).await.map_err(|e| AppError::DatabaseError(e.to_string()))?;
 

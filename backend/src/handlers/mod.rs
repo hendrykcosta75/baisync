@@ -1,5 +1,6 @@
 pub mod access_tokens;
 pub mod api_keys;
+pub mod baisync;
 pub mod appointments;
 pub mod assistants;
 pub mod auth;

@@ -12,6 +12,8 @@ pub struct Config {
     pub baileys_url: String,
     pub baileys_api_key: String,
     pub app_url: String,
+    pub baisync_api_key: String,
+    pub baisync_rate_limit: i32,
 }
 
 impl Config {
@@ -30,6 +32,11 @@ impl Config {
             baileys_url: env::var("BAILEYS_URL").unwrap_or_else(|_| "http://baileys:3025".into()),
             baileys_api_key: env::var("BAILEYS_API_KEY").unwrap_or_default(),
             app_url: env::var("APP_URL").unwrap_or_else(|_| "http://localhost:3000".into()),
+            baisync_api_key: env::var("BAISYNC_API_KEY").unwrap_or_default(),
+            baisync_rate_limit: env::var("BAISYNC_RATE_LIMIT_PER_HOUR")
+                .unwrap_or_else(|_| "150".into())
+                .parse()
+                .unwrap_or(150),
         }
     }
 }
