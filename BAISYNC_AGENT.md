@@ -65,8 +65,97 @@ Acoes que a IA pode executar via blocos `baisync-action`:
 | Acao | Dados | Frontend Handler |
 |------|-------|-----------------|
 | `create_assistant` | `name, description, llm_provider, model, temperature, max_tokens, system_prompt` | `useAssistantStore.addAssistant()` |
-| `update_assistant` | `assistant_id, name?, description?, system_prompt?, model?, temperature?, max_tokens?` | `useAssistantStore.updateAssistant()` |
-| `delete_assistant` | `assistant_id` | `useAssistantStore.deleteAssistant()` |
+| `update_assistant` | `assistant_id, assistant_name, name?, description?, system_prompt?, model?, temperature?, max_tokens?` | `useAssistantStore.updateAssistant()` |
+| `delete_assistant` | `assistant_id, assistant_name` | `useAssistantStore.deleteAssistant()` |
+| `list_assistants` | (sem parametros) | `useAssistantStore.fetchAssistants()` → sendActionResult |
+
+### Ferramentas (Tools) — 4 tipos
+
+| Tipo | Descricao | Endpoint? | Singleton? |
+|------|-----------|-----------|------------|
+| `http_request` | Ferramenta HTTP customizada | Obrigatorio | Nao |
+| `notify_human` | Notifica atendente humano | Nao usado | Sim (max 1) |
+| `send_document` | Envia documento/imagem via URL | URL do doc | Nao |
+| `schedule_appointment` | Agenda/cancela/reagenda compromissos | Nao usado | Nao |
+
+| Acao | Dados | Frontend Handler |
+|------|-------|-----------------|
+| `list_tools` | `assistant_id` | `GET /api/assistants/{id}/tools` → sendActionResult |
+| `create_tool` | Varia por tipo (veja system prompt) | `POST /api/assistants/{id}/tools` |
+| `update_tool` | `assistant_id, tool_id, name?, description?, endpoint?, method?, schema_json?, headers_json?` | `PUT /api/assistants/{id}/tools/{tool_id}` |
+| `delete_tool` | `assistant_id, tool_id` | `DELETE /api/assistants/{id}/tools/{tool_id}` |
+| `toggle_tool` | `assistant_id, tool_id, is_enabled` | `PUT /api/assistants/{id}/tools/{tool_id}` |
+
+### Integracoes
+| Acao | Dados | Frontend Handler |
+|------|-------|-----------------|
+| `connect_whatsapp` | `assistant_id, phone` | Cria integracao Baileys + polling QR |
+| `connect_meta` | `assistant_id, phone_number_id, access_token, verify_token` | Cria integracao Meta + connect |
+| `connect_telegram` | `assistant_id, bot_token` | Cria integracao Telegram + connect |
+| `disconnect_integration` | `assistant_id, integration_id` | `POST .../disconnect` |
+| `list_integrations` | `assistant_id` | `GET /api/assistants/{id}/integrations` → sendActionResult |
+
+### Conversas
+| Acao | Dados | Frontend Handler |
+|------|-------|-----------------|
+| `list_conversations` | `assistant_id` | `GET /api/assistants/{id}/conversations` → sendActionResult |
+| `list_messages` | `assistant_id, conversation_id` | `GET .../messages` → sendActionResult |
+| `delete_conversation` | `assistant_id, conversation_id` | `DELETE .../conversations/{id}` |
+| `toggle_ai` | `assistant_id, conversation_id, ai_enabled` | `PATCH .../conversations/{id}` |
+| `summarize_conversation` | `assistant_id, conversation_id` | `POST .../summary` → sendActionResult |
+
+### Tokens de Acesso
+| Acao | Dados | Frontend Handler |
+|------|-------|-----------------|
+| `list_access_tokens` | `assistant_id` | `GET /api/assistants/{id}/access-tokens` → sendActionResult |
+| `create_access_token` | `assistant_id, name, permission_level, email?, expires_in_days?` | `POST /api/assistants/{id}/access-tokens` → sendActionResult |
+| `delete_access_token` | `assistant_id, token_id` | `DELETE .../access-tokens/{id}` |
+| `revoke_access_token` | `assistant_id, token_id` | `PATCH .../access-tokens/{id}/revoke` |
+
+### Compartilhamento
+| Acao | Dados | Frontend Handler |
+|------|-------|-----------------|
+| `create_share_token` | `assistant_id` | `POST /api/assistants/{id}/share-token` → sendActionResult |
+| `get_share_token` | `assistant_id` | `GET /api/assistants/{id}/share-token` → sendActionResult |
+| `revoke_share_token` | `assistant_id` | `DELETE /api/assistants/{id}/share-token` |
+
+### Voz (TTS)
+| Acao | Dados | Frontend Handler |
+|------|-------|-----------------|
+| `list_voices` | `provider` (elevenlabs/openai) | `GET /api/{provider}/voices` → sendActionResult |
+
+### Agenda
+| Acao | Dados | Frontend Handler |
+|------|-------|-----------------|
+| `list_events` | (sem parametros) | `GET /api/appointments` → sendActionResult |
+| `create_event` | `client_name, client_phone?, date_time, duration_minutes?, appointment_type?, notes?, assistant_id?` | `POST /api/appointments` |
+| `update_event` | `event_id, status?, date_time?, notes?, duration_minutes?, appointment_type?` | `PUT /api/appointments/{id}` |
+| `delete_event` | `event_id` | `DELETE /api/appointments/{id}` |
+| `cancel_event` | `event_id` | `PUT /api/appointments/{id}` com status=cancelled |
+
+### Disponibilidade
+| Acao | Dados | Frontend Handler |
+|------|-------|-----------------|
+| `get_availability` | `assistant_id` | `GET /api/assistants/{id}/availability` → sendActionResult |
+| `set_availability` | `assistant_id, timezone?, default_duration_minutes?, buffer_minutes?, max_per_day?, schedule?` | `PUT /api/assistants/{id}/availability` |
+| `get_available_slots` | `assistant_id, date?` | `GET /api/assistants/{id}/availability/slots` → sendActionResult |
+
+### Notificacoes
+| Acao | Dados | Frontend Handler |
+|------|-------|-----------------|
+| `list_notifications` | (sem parametros) | `GET /api/notifications` → sendActionResult |
+| `mark_notification_read` | `notification_id` | `POST /api/notifications/{id}/read` |
+| `mark_all_notifications_read` | (sem parametros) | `POST /api/notifications/read-all` |
+| `delete_notification` | `notification_id` | `DELETE /api/notifications/{id}` |
+| `delete_all_notifications` | (sem parametros) | `DELETE /api/notifications` |
+
+### Analytics
+| Acao | Dados | Frontend Handler |
+|------|-------|-----------------|
+| `get_usage` | (sem parametros) | `GET /api/user/usage` → sendActionResult |
+| `get_assistant_stats` | `assistant_id` | `GET /api/assistants/{id}/stats` → sendActionResult |
+| `get_assistant_logs` | `assistant_id` | `GET /api/assistants/{id}/logs` → sendActionResult |
+| `get_activity` | (sem parametros) | `GET /api/user/activity` → sendActionResult |
 
 ---
 

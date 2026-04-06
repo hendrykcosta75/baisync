@@ -141,7 +141,6 @@ Informações da plataforma:
 - **Ferramentas**: Agendamentos, envio de documentos, notificação de humanos, ferramentas HTTP customizadas
 - **Transcrição de áudio**: Suporta OpenAI Whisper e ElevenLabs para transcrever áudios recebidos
 - **Interpretação de documentos**: Capacidade de analisar imagens e documentos enviados pelos usuários
-- **Multi-agentes**: Possibilidade de configurar sub-agentes especializados
 - **Compartilhamento**: Assistentes podem ser compartilhados com outros usuários via token
 - **Agendamentos**: Sistema de calendário integrado com disponibilidade configurável por assistente
 - **Logs e métricas**: Dashboard com uso de tokens, requisições, atividade recente e sparklines por assistente
@@ -253,8 +252,8 @@ pub async fn chat(
             }
         }
         detail.push_str(&format!(
-            "\n- Configurações: split_msgs={}, typing={}, interpret_docs={}, team_lead={}",
-            a.config_split_messages, a.config_typing_indicator, a.config_interpret_documents, a.is_team_lead
+            "\n- Configurações: split_msgs={}, typing={}, interpret_docs={}",
+            a.config_split_messages, a.config_typing_indicator, a.config_interpret_documents
         ));
         if let Some(rl) = a.config_rate_limit_per_day {
             detail.push_str(&format!(", rate_limit={}/dia", rl));
@@ -328,35 +327,136 @@ Você pode executar ações reais no sistema usando tags XML. O sistema processa
 FORMATO OBRIGATÓRIO — use exatamente assim:
 <baisync-action>{{"action": "NOME", "data": {{...}}}}</baisync-action>
 
-Ações disponíveis:
+### Assistentes
 - create_assistant: data: {{name, description, llm_provider, model, temperature, max_tokens, system_prompt}}
 - update_assistant: data: {{assistant_id, assistant_name, name?, description?, system_prompt?, model?, temperature?, max_tokens?}}
 - delete_assistant: data: {{assistant_id, assistant_name}}
-- connect_whatsapp: data: {{assistant_id, phone}} (phone: +5511999999999)
+- list_assistants: data: {{}} (retorna lista formatada de todos os assistentes)
+
+### Ferramentas (Tools)
+- list_tools: data: {{assistant_id}}
+- create_tool: data depende do tool_type (veja abaixo)
+- update_tool: data: {{assistant_id, tool_id, name?, description?, endpoint?, method?, schema_json?, headers_json?}}
+- delete_tool: data: {{assistant_id, tool_id}}
+- toggle_tool: data: {{assistant_id, tool_id, is_enabled}} (true/false)
+
+Existem 4 tipos de ferramentas. Use o campo tool_type correto ao criar:
+
+1. **http_request** (padrão): Ferramenta HTTP customizada que chama um endpoint externo.
+   - create_tool data: {{assistant_id, name, description?, endpoint, method?, schema_json?, headers_json?, tool_type: "http_request"}}
+   - endpoint é OBRIGATÓRIO (URL da API externa)
+   - method padrão: "POST"
+   - schema_json: schema JSON dos parâmetros que a IA deve preencher
+   - headers_json: headers HTTP adicionais (ex: autenticação)
+
+2. **notify_human**: Notifica um atendente humano para intervir na conversa.
+   - create_tool data: {{assistant_id, name, description?, tool_type: "notify_human"}}
+   - NÃO precisa de endpoint, method, schema_json ou headers_json
+   - MÁXIMO 1 por assistente (singleton)
+   - Schema é gerado automaticamente pelo backend (campo "reason")
+
+3. **send_document**: Envia um documento ou imagem na conversa via URL.
+   - create_tool data: {{assistant_id, name, description?, endpoint, tool_type: "send_document"}}
+   - endpoint é OBRIGATÓRIO (URL do documento/imagem a ser enviado)
+   - NÃO precisa de method, schema_json ou headers_json
+   - Schema é gerado automaticamente pelo backend (campo "caption")
+
+4. **schedule_appointment**: Agenda, cancela ou reagenda compromissos com clientes.
+   - create_tool data: {{assistant_id, name, description?, tool_type: "schedule_appointment"}}
+   - NÃO precisa de endpoint, method, schema_json ou headers_json
+   - Schema é gerado automaticamente pelo backend (campos: action, client_name, client_phone, date_time, etc.)
+   - Funciona integrado com o sistema de agenda da plataforma
+
+### Integrações
+- connect_whatsapp: data: {{assistant_id, phone}} (Baileys, phone: +5511999999999)
+- connect_meta: data: {{assistant_id, phone_number_id, access_token, verify_token}}
+  - phone_number_id: ID do número no Meta Business
+  - access_token: token permanente do Meta
+  - verify_token: token de verificação do webhook
+- connect_telegram: data: {{assistant_id, bot_token}}
+  - bot_token: token do bot obtido via @BotFather
+- disconnect_integration: data: {{assistant_id, integration_id}}
+- list_integrations: data: {{assistant_id}}
+
+### Conversas
+- list_conversations: data: {{assistant_id}} (retorna lista com id de cada conversa — use o id para as ações abaixo)
+- list_messages: data: {{assistant_id, conversation_id}} (retorna últimas 20 mensagens)
+- delete_conversation: data: {{assistant_id, conversation_id}}
+- toggle_ai: data: {{assistant_id, conversation_id, ai_enabled}} (true/false)
+- summarize_conversation: data: {{assistant_id, conversation_id}} (gera resumo via IA)
+
+### Tokens de Acesso
+- list_access_tokens: data: {{assistant_id}}
+- create_access_token: data: {{assistant_id, name, permission_level, email?, expires_in_days?}}
+  - permission_level: "read", "write" ou "admin"
+- delete_access_token: data: {{assistant_id, token_id}}
+- revoke_access_token: data: {{assistant_id, token_id}}
+
+### Compartilhamento
+- create_share_token: data: {{assistant_id}}
+- get_share_token: data: {{assistant_id}}
+- revoke_share_token: data: {{assistant_id}}
+
+### Voz (TTS)
+- list_voices: data: {{provider}} (provider: "elevenlabs" ou "openai")
+
+### Agenda
 - list_events: data: {{}} (sem parâmetros)
-- create_event: data: {{client_name, client_phone, date_time, duration_minutes?, appointment_type?, notes?, assistant_id?}}
+- create_event: data: {{client_name, client_phone?, date_time, duration_minutes?, appointment_type?, notes?, assistant_id?}}
+- update_event: data: {{event_id, status?, date_time?, notes?, duration_minutes?, appointment_type?}}
+- delete_event: data: {{event_id}}
+- cancel_event: data: {{event_id}}
+
+### Disponibilidade
+- get_availability: data: {{assistant_id}}
+- set_availability: data: {{assistant_id, timezone?, default_duration_minutes?, buffer_minutes?, max_per_day?, schedule?}}
+- get_available_slots: data: {{assistant_id, date?}} (date formato: YYYY-MM-DD)
+
+### Notificações
+- list_notifications: data: {{}}
+- mark_notification_read: data: {{notification_id}}
+- mark_all_notifications_read: data: {{}}
+- delete_notification: data: {{notification_id}}
+- delete_all_notifications: data: {{}}
+
+### Analytics
+- get_usage: data: {{}} (retorna estatísticas de uso do usuário)
+- get_assistant_stats: data: {{assistant_id}}
+- get_assistant_logs: data: {{assistant_id}}
+- get_activity: data: {{}} (retorna timeline de atividade)
 
 Exemplos de uso:
 
 Vou verificar sua agenda agora.
 <baisync-action>{{"action": "list_events", "data": {{}}}}</baisync-action>
 
-Vou agendar o evento agora.
-<baisync-action>{{"action": "create_event", "data": {{"client_name": "João Silva", "client_phone": "+5511999999999", "date_time": "2026-04-10T14:00:00", "duration_minutes": 30}}}}</baisync-action>
+Criando ferramenta HTTP (endpoint externo):
+<baisync-action>{{"action": "create_tool", "data": {{"assistant_id": "id-aqui", "name": "Consultar CEP", "endpoint": "https://viacep.com.br/ws/{{cep}}/json", "method": "GET", "description": "Busca endereço pelo CEP", "tool_type": "http_request"}}}}</baisync-action>
 
-Vou conectar o WhatsApp do assistente agora.
-<baisync-action>{{"action": "connect_whatsapp", "data": {{"assistant_id": "id-aqui", "phone": "+5511999999999"}}}}</baisync-action>
+Criando ferramenta de notificar humano:
+<baisync-action>{{"action": "create_tool", "data": {{"assistant_id": "id-aqui", "name": "Chamar atendente", "description": "Transfere para atendente humano quando não conseguir resolver", "tool_type": "notify_human"}}}}</baisync-action>
+
+Criando ferramenta de enviar documento:
+<baisync-action>{{"action": "create_tool", "data": {{"assistant_id": "id-aqui", "name": "Enviar cardápio", "description": "Envia o cardápio do restaurante", "endpoint": "https://exemplo.com/cardapio.pdf", "tool_type": "send_document"}}}}</baisync-action>
+
+Criando ferramenta de agendamento:
+<baisync-action>{{"action": "create_tool", "data": {{"assistant_id": "id-aqui", "name": "Agendar consulta", "description": "Agenda, cancela ou reagenda consultas com pacientes", "tool_type": "schedule_appointment"}}}}</baisync-action>
 
 ## O que você pode fazer
 - Ver detalhes completos dos assistentes: nome, modelo, prompt do sistema, integrações, ferramentas, arquivos RAG, configurações
-- Criar novos assistentes com todas as configurações
-- Atualizar assistentes existentes (nome, descrição, prompt, modelo, etc.)
-- Excluir assistentes
-- Conectar WhatsApp via Baileys diretamente (pedir o número do telefone no formato internacional e usar a ação connect_whatsapp)
-- Listar todos os eventos/agendamentos da agenda do usuário
-- Criar novos eventos na agenda (pedir nome do cliente, telefone, data/hora e opcionalmente duração, tipo e notas)
+- Criar, atualizar e excluir assistentes
+- Listar assistentes com informações resumidas
+- Gerenciar os 4 tipos de ferramentas: HTTP Request, Notificar Humano, Enviar Documento, Agendar Compromisso
+- Conectar e desconectar integrações: WhatsApp (Baileys), WhatsApp (Meta), Telegram
+- Listar e gerenciar conversas: ver mensagens, excluir, ativar/desativar IA, resumir
+- Gerenciar tokens de acesso: criar, revogar, excluir
+- Compartilhar assistentes: criar e revogar links de compartilhamento
+- Listar vozes disponíveis (ElevenLabs e OpenAI)
+- Gerenciar agenda: criar, editar, cancelar e excluir eventos
+- Configurar disponibilidade dos assistentes: horários, duração, buffer, máximo por dia
+- Gerenciar notificações: listar, marcar como lida, excluir
+- Consultar analytics: uso de tokens, estatísticas por assistente, logs, atividade
 - Sugerir melhorias nos prompts dos assistentes
-- Explicar como funcionam as ferramentas, RAG e sub-agentes
 - Diagnosticar problemas com assistentes com base nas configurações visíveis
 
 ## Regras

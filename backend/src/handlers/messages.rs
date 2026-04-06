@@ -93,8 +93,27 @@ pub async fn webhook_baileys(
                 // Persist connected state to DB immediately
                 update_baileys_status(&db, &config, &phone, "connected").await;
             } else if connection == "close" {
-                conn_store.remove(&phone);
-                update_baileys_status(&db, &config, &phone, "disconnected").await;
+                // Check if this is a permanent logout (status 401) vs temporary disconnect
+                let is_logged_out = data["lastDisconnect"]["error"]["output"]["statusCode"]
+                    .as_i64()
+                    .map_or(false, |code| code == 401);
+
+                if is_logged_out {
+                    // Permanent: user removed device from WhatsApp
+                    conn_store.remove(&phone);
+                    update_baileys_status(&db, &config, &phone, "disconnected").await;
+                } else {
+                    // Temporary: Baileys will auto-reconnect, don't mark as disconnected.
+                    // The health check will mark as disconnected after sustained failures.
+                    tracing::info!("Baileys connection closed temporarily for {phone}, waiting for reconnect");
+                    conn_store.set(
+                        &phone,
+                        ConnectionState {
+                            status: "reconnecting".to_string(),
+                            qr_data_url: None,
+                        },
+                    );
+                }
             }
 
             Ok(Json(serde_json::json!({"status": "ok"})))

@@ -1,4 +1,6 @@
 use reqwest::Client;
+use std::collections::HashMap;
+use std::sync::Mutex;
 use uuid::Uuid;
 
 use crate::config::Config;
@@ -6,11 +8,16 @@ use crate::db::DbSession;
 use crate::services::email;
 use crate::services::notification;
 
+/// Tracks consecutive health check failures per integration.
+/// Only marks as disconnected after 3 consecutive failures (~15 minutes).
+static FAIL_COUNTS: std::sync::LazyLock<Mutex<HashMap<Uuid, u8>>> =
+    std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
+
 /// Background task: runs every 5 minutes, checks all connected integrations.
-/// If a connection is lost, updates the status, creates an in-app notification,
-/// and sends an email to the user.
+/// If a connection is lost after 3 consecutive failures, updates the status,
+/// creates an in-app notification, and sends an email to the user.
 pub async fn run(db: DbSession, config: Config) {
-    let interval = std::time::Duration::from_secs(20);
+    let interval = std::time::Duration::from_secs(300);
     loop {
         tokio::time::sleep(interval).await;
         if let Err(e) = check_all_connections(&db, &config).await {
@@ -62,21 +69,38 @@ async fn check_all_connections(db: &DbSession, config: &Config) -> Result<(), St
         .await;
 
         if !still_connected {
-            if let Err(e) = handle_disconnection(
-                db,
-                config,
-                &user_id,
-                &assistant_id,
-                &integration_id,
-                &channel,
-                &provider,
-            )
-            .await
-            {
-                tracing::warn!(
-                    "Failed to handle disconnection for integration {integration_id}: {e}"
+            let should_disconnect = {
+                let mut fails = FAIL_COUNTS.lock().unwrap();
+                let count = fails.entry(integration_id).or_insert(0);
+                *count += 1;
+                tracing::info!(
+                    "Health check failure #{} for integration {integration_id}",
+                    *count
                 );
+                *count >= 3
+            };
+
+            if should_disconnect {
+                FAIL_COUNTS.lock().unwrap().remove(&integration_id);
+                if let Err(e) = handle_disconnection(
+                    db,
+                    config,
+                    &user_id,
+                    &assistant_id,
+                    &integration_id,
+                    &channel,
+                    &provider,
+                )
+                .await
+                {
+                    tracing::warn!(
+                        "Failed to handle disconnection for integration {integration_id}: {e}"
+                    );
+                }
             }
+        } else {
+            // Connection is healthy, reset failure counter
+            FAIL_COUNTS.lock().unwrap().remove(&integration_id);
         }
     }
 
@@ -106,6 +130,7 @@ async fn check_connection(
             match client
                 .get(&url)
                 .header("x-api-key", &config.baileys_api_key)
+                .timeout(std::time::Duration::from_secs(10))
                 .send()
                 .await
             {
