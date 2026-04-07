@@ -1,9 +1,16 @@
-# Stage 1: Build the application
+# Stage 1: Build the application (with dependency caching)
 FROM rust:1.88-slim AS builder
 WORKDIR /app
+
+# 1) Copy manifests and create a dummy main to cache dependency compilation
 COPY Cargo.toml Cargo.lock ./
-COPY src ./src
+RUN mkdir src && echo "fn main() {}" > src/main.rs
 RUN cargo build --release
+RUN rm -rf src
+
+# 2) Copy real source and build (only app code recompiles)
+COPY src ./src
+RUN touch src/main.rs && cargo build --release
 
 # Stage 2: Production runner
 FROM debian:bookworm-slim AS runner

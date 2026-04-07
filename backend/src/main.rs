@@ -274,7 +274,8 @@ async fn main() {
             get(handlers::appointments::available_slots),
         )
         // Baisync Agent
-        .route("/api/baisync/chat", post(handlers::baisync::chat))
+        .route("/api/baisync/chat", post(handlers::baisync::chat)
+            .layer(DefaultBodyLimit::max(21 * 1024 * 1024)))
         .route("/api/baisync/rate-limit", get(handlers::baisync::rate_limit))
         // Test Agent
         .route(

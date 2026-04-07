@@ -56,7 +56,7 @@ pub async fn list_voices(
     let client = reqwest::Client::new();
     let resp = client
         .get("https://api.elevenlabs.io/v2/voices")
-        .query(&[("page_size", "100"), ("voice_type", "default")])
+        .query(&[("page_size", "100")])
         .header("xi-api-key", &api_key)
         .send()
         .await

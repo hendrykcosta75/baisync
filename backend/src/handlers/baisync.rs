@@ -1,6 +1,7 @@
 use axum::extract::Extension;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::Json;
+use base64::Engine;
 use futures::stream::Stream;
 use serde::{Deserialize, Serialize};
 use std::convert::Infallible;
@@ -17,17 +18,34 @@ use crate::middleware::auth::AuthUser;
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
+pub struct BaisyncAttachment {
+    pub name: String,
+    pub mime_type: String,
+    pub data_base64: String,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct BaisyncChatRequest {
     pub message: String,
     #[serde(default)]
     pub history: Vec<BaisyncMessage>,
     pub skill: Option<String>,
+    #[serde(default)]
+    pub attachments: Vec<BaisyncAttachment>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct BaisyncFileRef {
+    pub id: String,
+    pub kind: String, // "image" or "file"
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct BaisyncMessage {
     pub role: String,
     pub content: String,
+    #[serde(default)]
+    pub file_refs: Vec<BaisyncFileRef>,
 }
 
 #[derive(Debug, Serialize)]
@@ -442,7 +460,26 @@ Criando ferramenta de enviar documento:
 Criando ferramenta de agendamento:
 <baisync-action>{{"action": "create_tool", "data": {{"assistant_id": "id-aqui", "name": "Agendar consulta", "description": "Agenda, cancela ou reagenda consultas com pacientes", "tool_type": "schedule_appointment"}}}}</baisync-action>
 
+## Pesquisa na Internet
+Você tem acesso a pesquisa na internet em tempo real. Use essa capacidade quando:
+- O usuário perguntar sobre informações atuais, notícias ou eventos recentes
+- Precisar de dados técnicos, documentações ou tutoriais atualizados
+- O usuário pedir para pesquisar algo específico
+- Precisar verificar preços, funcionalidades ou comparações de serviços
+- Qualquer situação onde informações atualizadas da web possam enriquecer sua resposta
+
+Quando usar a pesquisa, integre os resultados naturalmente na sua resposta, citando as fontes quando relevante.
+
+## Análise de Documentos e Imagens
+O usuário pode enviar imagens e documentos diretamente no chat. Quando receber anexos:
+- **Imagens**: Analise o conteúdo visual, descreva o que vê, e responda perguntas sobre a imagem
+- **Documentos** (PDF, TXT, DOCX, etc.): Leia e interprete o conteúdo do documento
+- Integre a análise dos anexos na sua resposta de forma natural
+- Se o usuário enviar uma captura de tela de um erro ou configuração, ajude a diagnosticar o problema
+
 ## O que você pode fazer
+- Pesquisar na internet em tempo real para obter informações atualizadas
+- Analisar imagens e documentos enviados pelo usuário
 - Ver detalhes completos dos assistentes: nome, modelo, prompt do sistema, integrações, ferramentas, arquivos RAG, configurações
 - Criar, atualizar e excluir assistentes
 - Listar assistentes com informações resumidas
@@ -483,23 +520,125 @@ Criando ferramenta de agendamento:
         }
     }
 
-    // Build messages array for OpenAI
-    let mut messages = vec![serde_json::json!({
-        "role": "system",
+    // Build input array for OpenAI Responses API
+    let mut input = vec![serde_json::json!({
+        "role": "developer",
         "content": system_prompt,
     })];
 
     for msg in &req.history {
-        messages.push(serde_json::json!({
-            "role": msg.role,
-            "content": msg.content,
-        }));
+        if msg.file_refs.is_empty() {
+            input.push(serde_json::json!({
+                "role": msg.role,
+                "content": msg.content,
+            }));
+        } else {
+            // Rebuild multimodal content with file references
+            let mut parts = vec![serde_json::json!({
+                "type": "input_text",
+                "text": msg.content,
+            })];
+            for fref in &msg.file_refs {
+                if fref.kind == "image" {
+                    parts.push(serde_json::json!({
+                        "type": "input_image",
+                        "file_id": fref.id,
+                    }));
+                } else {
+                    parts.push(serde_json::json!({
+                        "type": "input_file",
+                        "file_id": fref.id,
+                    }));
+                }
+            }
+            input.push(serde_json::json!({
+                "role": msg.role,
+                "content": parts,
+            }));
+        }
     }
 
-    messages.push(serde_json::json!({
-        "role": "user",
-        "content": req.message,
-    }));
+    // Build user message — multimodal if attachments are present
+    let mut uploaded_file_refs: Vec<serde_json::Value> = Vec::new();
+
+    if req.attachments.is_empty() {
+        input.push(serde_json::json!({
+            "role": "user",
+            "content": req.message,
+        }));
+    } else {
+        let mut content_parts = vec![serde_json::json!({
+            "type": "input_text",
+            "text": req.message,
+        })];
+
+        let client = reqwest::Client::new();
+
+        for att in &req.attachments {
+            // Upload all attachments (images + documents) to Files API for persistent file_id
+            let file_bytes = base64::engine::general_purpose::STANDARD
+                .decode(&att.data_base64)
+                .unwrap_or_default();
+
+            let file_part = reqwest::multipart::Part::bytes(file_bytes)
+                .file_name(att.name.clone())
+                .mime_str(&att.mime_type)
+                .unwrap_or_else(|_| reqwest::multipart::Part::bytes(vec![]));
+
+            let form = reqwest::multipart::Form::new()
+                .text("purpose", "user_data")
+                .part("file", file_part);
+
+            let upload_res = client
+                .post("https://api.openai.com/v1/files")
+                .header("Authorization", format!("Bearer {}", api_key))
+                .multipart(form)
+                .send()
+                .await;
+
+            let file_id = match upload_res {
+                Ok(res) if res.status().is_success() => {
+                    res.json::<serde_json::Value>().await.ok()
+                        .and_then(|body| body["id"].as_str().map(String::from))
+                }
+                Ok(res) => {
+                    let err = res.text().await.unwrap_or_default();
+                    tracing::error!("OpenAI file upload failed: {}", err);
+                    None
+                }
+                Err(e) => {
+                    tracing::error!("OpenAI file upload error: {}", e);
+                    None
+                }
+            };
+
+            let Some(file_id) = file_id else {
+                return Err(AppError::BadRequest(
+                    format!("Não foi possível processar o arquivo \"{}\". Tente novamente.", att.name)
+                ));
+            };
+
+            let kind = if att.mime_type.starts_with("image/") { "image" } else { "file" };
+            uploaded_file_refs.push(serde_json::json!({"id": file_id, "kind": kind}));
+
+            if att.mime_type.starts_with("image/") {
+                content_parts.push(serde_json::json!({
+                    "type": "input_image",
+                    "file_id": file_id,
+                }));
+            } else {
+                content_parts.push(serde_json::json!({
+                    "type": "input_file",
+                    "file_id": file_id,
+                }));
+            }
+        }
+
+        input.push(serde_json::json!({
+            "role": "user",
+            "content": content_parts,
+        }));
+    }
 
     // Increment usage counter
     increment_usage(&db, &user_id).await;
@@ -513,6 +652,15 @@ Criando ferramenta de agendamento:
 
     // Spawn streaming task
     tokio::spawn(async move {
+        // Send uploaded file refs so frontend can persist them for history
+        if !uploaded_file_refs.is_empty() {
+            let _ = tx
+                .send(Ok(Event::default()
+                    .event("file_refs")
+                    .data(serde_json::json!({"file_refs": uploaded_file_refs}).to_string())))
+                .await;
+        }
+
         // Send thinking status
         let _ = tx
             .send(Ok(Event::default()
@@ -520,17 +668,17 @@ Criando ferramenta de agendamento:
                 .data(serde_json::json!({"text": "Analisando mensagem..."}).to_string())))
             .await;
 
-        // Call OpenAI with streaming
+        // Call OpenAI Responses API with streaming
         let client = reqwest::Client::new();
         let body = serde_json::json!({
             "model": "gpt-5.3-chat-latest",
-            "messages": messages,
+            "input": input,
             "stream": true,
-            "max_completion_tokens": 4096,
+            "max_output_tokens": 4096,
         });
 
         let resp = client
-            .post("https://api.openai.com/v1/chat/completions")
+            .post("https://api.openai.com/v1/responses")
             .header("Authorization", format!("Bearer {}", api_key))
             .header("Content-Type", "application/json")
             .json(&body)
@@ -548,17 +696,16 @@ Criando ferramenta de agendamento:
                 if !response.status().is_success() {
                     let error_text = response.text().await.unwrap_or_default();
                     tracing::error!("OpenAI API error: {}", error_text);
-                    let truncated: String = error_text.chars().take(200).collect();
                     let _ = tx
                         .send(Ok(Event::default()
                             .event("error")
-                            .data(serde_json::json!({"error": format!("Erro na API OpenAI: {}", truncated)}).to_string())))
+                            .data(serde_json::json!({"error": "Não foi possível processar sua mensagem no momento. Tente novamente."}).to_string())))
                         .await;
                     let _ = tx.send(Ok(Event::default().event("done").data("{}"))).await;
                     return;
                 }
 
-                // Process SSE stream from OpenAI
+                // Process SSE stream from OpenAI Responses API
                 let mut stream = response.bytes_stream();
                 let mut buffer = String::new();
                 let mut full_content = String::new();
@@ -574,19 +721,24 @@ Criando ferramenta de agendamento:
                                 let line = buffer[..pos].trim().to_string();
                                 buffer = buffer[pos + 1..].to_string();
 
-                                if line.is_empty() || line == "data: [DONE]" {
+                                if line.is_empty() {
                                     continue;
                                 }
 
                                 if let Some(data) = line.strip_prefix("data: ") {
                                     if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(data) {
-                                        if let Some(delta) = parsed["choices"][0]["delta"]["content"].as_str() {
-                                            full_content.push_str(delta);
-                                            let _ = tx
-                                                .send(Ok(Event::default()
-                                                    .event("token")
-                                                    .data(serde_json::json!({"text": delta}).to_string())))
-                                                .await;
+                                        let event_type = parsed["type"].as_str().unwrap_or("");
+
+                                        // response.output_text.delta contains streaming text
+                                        if event_type == "response.output_text.delta" {
+                                            if let Some(delta) = parsed["delta"].as_str() {
+                                                full_content.push_str(delta);
+                                                let _ = tx
+                                                    .send(Ok(Event::default()
+                                                        .event("token")
+                                                        .data(serde_json::json!({"text": delta}).to_string())))
+                                                    .await;
+                                            }
                                         }
                                     }
                                 }
@@ -630,7 +782,7 @@ Criando ferramenta de agendamento:
                 let _ = tx
                     .send(Ok(Event::default()
                         .event("error")
-                        .data(serde_json::json!({"error": format!("Falha na requisição: {}", e)}).to_string())))
+                        .data(serde_json::json!({"error": "Não foi possível processar sua mensagem no momento. Tente novamente."}).to_string())))
                     .await;
                 let _ = tx.send(Ok(Event::default().event("done").data("{}"))).await;
             }
