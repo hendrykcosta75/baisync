@@ -15,6 +15,7 @@ pub struct User {
     pub api_key_claude: Option<String>,
     pub api_key_gemini: Option<String>,
     pub api_key_elevenlabs: Option<String>,
+    pub api_key_mercadopago: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -110,4 +111,5 @@ pub struct ApiKeysResponse {
     pub claude_configured: bool,
     pub gemini_configured: bool,
     pub elevenlabs_configured: bool,
+    pub mercadopago_configured: bool,
 }

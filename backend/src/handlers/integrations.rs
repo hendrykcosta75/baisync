@@ -251,45 +251,18 @@ pub async fn disconnect(
     let integration =
         get_integration(&db, &assistant_id, &owner_id, &integration_id).await?;
 
-    let phone = integration
-        .config_phone_number
-        .clone()
-        .ok_or_else(|| AppError::BadRequest("No phone number configured".into()))?;
+    let phone = integration.config_phone_number.clone().unwrap_or_default();
 
-    match integration.provider.as_str() {
-        "baileys" => {
-            let client = Client::new();
-            let url = format!("{}/connections/{}", config.baileys_url, phone);
-            let _ = client.delete(&url).header("x-api-key", &config.baileys_api_key).send().await;
-            conn_store.remove(&phone);
-        }
-        "meta_official" => {
-            // Meta Official: nothing to clean up externally, just update status
-        }
-        _ => {}
+    // Provider-specific cleanup
+    if integration.provider == "baileys" && !phone.is_empty() {
+        let client = Client::new();
+        let url = format!("{}/connections/{}", config.baileys_url, phone);
+        let _ = client.delete(&url).header("x-api-key", &config.baileys_api_key).send().await;
+        conn_store.remove(&phone);
     }
 
-    assistant_service::update_integration(
-        &db,
-        &assistant_id,
-        &owner_id,
-        &integration_id,
-        UpdateIntegrationRequest {
-            status: Some("disconnected".into()),
-            channel: None,
-            provider: None,
-            config_token: None,
-            config_phone_number: None,
-            config_chatwoot_url: None,
-            config_rate_limit_per_day: None,
-            config_max_message_length: None,
-            config_audio_response_mode: None,
-            config_interpret_documents: None,
-            config_split_messages: None,
-            config_webhook_verify_token: None,
-        },
-    )
-    .await?;
+    // Delete the integration row entirely — no reason to keep disconnected integrations
+    assistant_service::delete_integration(&db, &assistant_id, &owner_id, &integration_id).await?;
 
     Ok(Json(json!({"message": "Disconnected successfully"})))
 }

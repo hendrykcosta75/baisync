@@ -70,6 +70,10 @@ async fn main() {
             "/api/webhooks/telegram/{token}",
             post(handlers::messages::webhook_telegram),
         )
+        .route(
+            "/api/webhooks/mercadopago",
+            post(handlers::pix::webhook_mercadopago),
+        )
 ;
 
     // Protected routes (require auth)
@@ -236,6 +240,8 @@ async fn main() {
             "/api/assistants/{id}/access-tokens/{token_id}/revoke",
             patch(handlers::access_tokens::revoke_token),
         )
+        // SSE Events
+        .route("/api/events", get(handlers::events::sse_stream))
         // Notifications
         .route(
             "/api/notifications",
@@ -272,6 +278,23 @@ async fn main() {
         .route(
             "/api/assistants/{id}/availability/slots",
             get(handlers::appointments::available_slots),
+        )
+        // Financeiro (PIX charges)
+        .route(
+            "/api/user/financeiro/overview",
+            get(handlers::financeiro::overview),
+        )
+        .route(
+            "/api/assistants/{id}/financeiro/summary",
+            get(handlers::financeiro::summary),
+        )
+        .route(
+            "/api/assistants/{id}/financeiro/charges",
+            get(handlers::financeiro::charges),
+        )
+        .route(
+            "/api/assistants/{id}/financeiro/charges/{charge_id}/status",
+            put(handlers::financeiro::update_charge_status_handler),
         )
         // Baisync Agent
         .route("/api/baisync/chat", post(handlers::baisync::chat)
@@ -326,6 +349,11 @@ async fn main() {
         .layer(Extension(db))
         .layer(Extension(config.clone()))
         .layer(Extension(encryption))
+        .layer({
+            let bus = services::events::EventBus::new();
+            services::events::init_global(bus.clone());
+            Extension(bus)
+        })
         .layer(Extension(conn_store))
         .layer(Extension(jwt_secret))
         .layer(cors)

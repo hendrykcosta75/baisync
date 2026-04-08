@@ -677,7 +677,28 @@ pub async fn create_integration(
             if let Ok(existing_integration) = crate::services::messaging::find_integration_by_phone(db, phone).await {
                 // Allow if it's the same assistant (re-creation), reject otherwise
                 if existing_integration.assistant_id != *assistant_id || existing_integration.user_id != *user_id {
-                    return Err(AppError::BadRequest("Phone number already in use by another integration".into()));
+                    let is_same_user = existing_integration.user_id == *user_id;
+                    // Get assistant name for the error message
+                    let assistant_name = if is_same_user {
+                        get_assistant(db, &existing_integration.user_id, &existing_integration.assistant_id)
+                            .await
+                            .map(|a| a.name)
+                            .unwrap_or_else(|_| "outro assistente".into())
+                    } else {
+                        "assistente de outro usuário".into()
+                    };
+                    let msg = if is_same_user {
+                        format!(
+                            "PHONE_CONFLICT_SAME_USER|{}|{}|{}|Este número já está conectado ao assistente \"{}\".",
+                            existing_integration.assistant_id,
+                            existing_integration.id,
+                            assistant_name,
+                            assistant_name
+                        )
+                    } else {
+                        "PHONE_CONFLICT_OTHER_USER|Este número já está em uso por outro usuário.".into()
+                    };
+                    return Err(AppError::BadRequest(msg));
                 }
             }
         }

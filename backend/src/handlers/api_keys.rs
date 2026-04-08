@@ -20,6 +20,7 @@ pub async fn get_keys(
         claude_configured: user.api_key_claude.is_some(),
         gemini_configured: user.api_key_gemini.is_some(),
         elevenlabs_configured: user.api_key_elevenlabs.is_some(),
+        mercadopago_configured: user.api_key_mercadopago.is_some(),
     }))
 }
 
@@ -43,6 +44,7 @@ pub async fn update_keys(
     let claude_raw = source["claude"].as_str().map(|s| s.to_string());
     let gemini_raw = source["gemini"].as_str().map(|s| s.to_string());
     let elevenlabs_raw = source["elevenlabs"].as_str().map(|s| s.to_string());
+    let mercadopago_raw = source["mercadopago"].as_str().map(|s| s.to_string());
 
     let user = auth_service::get_user_by_id(&db, &auth_user.user_id).await?;
     let now = CqlTimestamp(chrono::Utc::now().timestamp_millis());
@@ -71,9 +73,15 @@ pub async fn update_keys(
         None => user.api_key_elevenlabs,
     };
 
+    let mercadopago = match &mercadopago_raw {
+        Some(key) if !key.is_empty() => Some(encryption.encrypt(key)?),
+        Some(_) => None,
+        None => user.api_key_mercadopago,
+    };
+
     db.query_unpaged(
-        "UPDATE inertial_eclipse.users SET api_key_openai = ?, api_key_claude = ?, api_key_gemini = ?, api_key_elevenlabs = ?, updated_at = ? WHERE id = ?",
-        (&openai, &claude, &gemini, &elevenlabs, now, &auth_user.user_id),
+        "UPDATE inertial_eclipse.users SET api_key_openai = ?, api_key_claude = ?, api_key_gemini = ?, api_key_elevenlabs = ?, api_key_mercadopago = ?, updated_at = ? WHERE id = ?",
+        (&openai, &claude, &gemini, &elevenlabs, &mercadopago, now, &auth_user.user_id),
     )
     .await
     .map_err(|e| AppError::DatabaseError(e.to_string()))?;
@@ -83,5 +91,6 @@ pub async fn update_keys(
         claude_configured: claude.is_some(),
         gemini_configured: gemini.is_some(),
         elevenlabs_configured: elevenlabs.is_some(),
+        mercadopago_configured: mercadopago.is_some(),
     }))
 }

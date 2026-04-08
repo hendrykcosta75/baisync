@@ -65,6 +65,7 @@ pub async fn process_incoming_message(
     db: &DbSession,
     config: &Config,
     encryption: &EncryptionService,
+    event_bus: &crate::services::events::EventBus,
     webhook: IncomingWebhook,
 ) -> Result<WebhookResponse, AppError> {
     let lookup_key = if webhook.connection_phone.is_empty() {
@@ -341,6 +342,9 @@ pub async fn process_incoming_message(
         db: Some(db),
         assistant_id: Some(assistant_id),
         user_id: Some(user_id),
+        conversation_id: Some(conversation.id),
+        config: Some(config),
+        encryption: Some(encryption),
     };
     let llm_response = llm::call_llm_with_tools_ctx(
         &assistant.llm_provider, &assistant.model, &api_key,
@@ -396,6 +400,143 @@ pub async fn process_incoming_message(
                 ).await {
                     tracing::error!(error = %e, "Failed to notify human agent");
                 }
+            }
+            "pix_payment" => {
+                let action = record.arguments.get("action")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                if action == "create_charge" {
+                    let amount = record.arguments.get("amount")
+                        .and_then(|v| v.as_f64()).unwrap_or(0.0);
+                    let desc = record.arguments.get("description")
+                        .and_then(|v| v.as_str()).unwrap_or("Cobrança PIX");
+                    let customer_name = record.arguments.get("customer_name")
+                        .and_then(|v| v.as_str());
+                    let customer_cpf = record.arguments.get("customer_cpf")
+                        .and_then(|v| v.as_str());
+
+                    // Extract tool config: pix_mode, pix_key, pix_key_type
+                    let tool_config = record.tool_id.and_then(|tid| {
+                        tools.iter().find(|t| t.id == tid).map(|t| {
+                            let headers: serde_json::Value = t.headers_json.as_deref()
+                                .and_then(|h| serde_json::from_str(h).ok())
+                                .unwrap_or(serde_json::json!({}));
+                            let pix_mode = headers.get("pix_mode")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("direct")
+                                .to_string();
+                            let key_type = headers.get("pix_key_type")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("random")
+                                .to_string();
+                            (t.endpoint.clone(), key_type, pix_mode)
+                        })
+                    });
+
+                    let (pix_key, pix_key_type, pix_mode) = tool_config
+                        .unwrap_or_else(|| (String::new(), "random".to_string(), "direct".to_string()));
+
+                    if amount > 0.0 {
+                        // For MP mode, decrypt user's access token
+                        let mp_token = if pix_mode == "mercadopago" {
+                            match crate::services::pix::get_user_mp_token(db, encryption, &user_id).await {
+                                Ok(Some(token)) => Some(token),
+                                Ok(None) => {
+                                    tracing::error!("User has no Mercado Pago token configured");
+                                    None
+                                }
+                                Err(e) => {
+                                    tracing::error!(error = %e, "Failed to decrypt MP token");
+                                    None
+                                }
+                            }
+                        } else {
+                            None
+                        };
+
+                        // Build notification URL for MP webhooks
+                        let notification_url = if pix_mode == "mercadopago" && config.app_url.starts_with("https://") {
+                            Some(format!("{}/api/webhooks/mercadopago", config.app_url))
+                        } else {
+                            None
+                        };
+
+                        // Skip if MP mode but no token
+                        let should_create = pix_mode != "mercadopago" || mp_token.is_some();
+
+                        if should_create {
+                            match crate::services::pix::create_charge(
+                                db, &user_id, &assistant_id, Some(&conversation.id),
+                                &webhook.phone, amount, desc, &pix_key, &pix_key_type,
+                                &integration.channel, &pix_mode,
+                                mp_token.as_deref(),
+                                customer_name, customer_cpf,
+                                notification_url.as_deref(),
+                            ).await {
+                                Ok(charge) => {
+                                    // Save charge info to conversation so the agent remembers it
+                                    let charge_memo = format!(
+                                        "[Sistema] Cobrança PIX criada com sucesso. charge_id: {} | Valor: R$ {:.2} | Modo: {} | Cliente: {} | Status: pending",
+                                        charge.id, charge.amount, charge.pix_mode,
+                                        charge.customer_name.as_deref().unwrap_or("--"),
+                                    );
+                                    let _ = save_message(db, &conversation.id, "system", &charge_memo, None, None, None).await;
+
+                                    // Publish SSE event for new charge
+                                    event_bus.publish(&user_id, crate::services::events::SseEvent {
+                                        event_type: "pix_charge_created".into(),
+                                        data: serde_json::json!({
+                                            "chargeId": charge.id.to_string(),
+                                            "assistantId": assistant_id.to_string(),
+                                            "amount": charge.amount,
+                                            "customerName": charge.customer_name,
+                                        }).to_string(),
+                                    }).await;
+
+                                    // Spawn background poller for MP charges
+                                    if pix_mode == "mercadopago" {
+                                        if let Some(ref mp_id) = charge.mp_payment_id {
+                                            crate::services::pix::spawn_mp_payment_poller(
+                                                db.clone(), config.clone(), encryption.clone(),
+                                                event_bus.clone(),
+                                                user_id, charge.id, assistant_id,
+                                                mp_id.clone(),
+                                            );
+                                        }
+                                    }
+
+                                    // Build caption with copia-e-cola for easy copy on mobile
+                                    let caption = charge.mp_copia_e_cola.as_deref()
+                                        .map(|copia| format!(
+                                            "Valor: R$ {:.2}\n\nCopia e cola:\n{}", amount, copia
+                                        ))
+                                        .unwrap_or_else(|| format!("PIX - R$ {:.2}", amount));
+
+                                    // Send QR code image with copia-e-cola as caption
+                                    if let Some(qr_b64) = &charge.mp_qr_code_base64 {
+                                        if let Err(e) = send_pix_qr_via_provider(
+                                            config, &integration, &webhook.phone, qr_b64, &caption,
+                                        ).await {
+                                            tracing::error!(error = %e, "Failed to send PIX QR code");
+                                        }
+                                    } else if let Some(copia) = &charge.mp_copia_e_cola {
+                                        let msg = format!(
+                                            "Aqui está o código PIX copia e cola:\n\n{}\n\nValor: R$ {:.2}",
+                                            copia, amount
+                                        );
+                                        if let Err(e) = send_message_via_provider(config, &integration, &webhook.phone, &msg).await {
+                                            tracing::error!(error = %e, "Failed to send PIX copia-e-cola");
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    tracing::error!(error = %e, "Failed to create PIX charge via tool");
+                                }
+                            }
+                        }
+                    }
+                }
+                // check_status is handled entirely in execute_tool, no post-processing needed
             }
             "schedule_appointment" => {
                 let action = record.arguments.get("action")
@@ -563,6 +704,15 @@ pub async fn process_incoming_message(
     ).await.map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     update_usage_stats(db, &user_id, &assistant_id, llm_response.tokens_used).await?;
+
+    // Publish SSE event for conversation update
+    event_bus.publish(&user_id, crate::services::events::SseEvent {
+        event_type: "conversation_updated".into(),
+        data: serde_json::json!({
+            "conversationId": conversation.id.to_string(),
+            "assistantId": assistant_id.to_string(),
+        }).to_string(),
+    }).await;
 
     Ok(WebhookResponse { status: "ok".into(), message_id: Some(conversation.id.to_string()) })
 }
@@ -898,6 +1048,15 @@ pub async fn send_direct_message(
         (now, assistant_id, user_id, conversation_id),
     ).await.map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
+    // Publish SSE event
+    crate::services::events::publish_global(user_id, crate::services::events::SseEvent {
+        event_type: "conversation_updated".into(),
+        data: serde_json::json!({
+            "conversationId": conversation_id.to_string(),
+            "assistantId": assistant_id.to_string(),
+        }).to_string(),
+    }).await;
+
     // Return the saved message
     let messages = get_recent_messages(db, conversation_id, 1).await?;
     messages.into_iter().last().ok_or_else(|| AppError::InternalError("Failed to retrieve saved message".into()))
@@ -1038,6 +1197,9 @@ pub async fn playground_chat(
         db: Some(db),
         assistant_id: Some(*assistant_id),
         user_id: Some(owner_id),
+        conversation_id: None,
+        config: None,
+        encryption: None,
     };
     let llm_response = llm::call_llm_with_tools_ctx(
         &assistant.llm_provider, &assistant.model, &api_key,
@@ -1269,6 +1431,13 @@ async fn resolve_audio_bytes(
 /// Send a reply via the messaging provider.
 /// - `integration`: the integration config (contains provider, phone, token, etc.)
 /// - `contact_phone`: the phone of the person who sent the message (the recipient of the reply)
+/// Public wrapper for sending messages via provider (used by pix notification)
+pub async fn send_message_via_provider_public(
+    config: &Config, integration: &AssistantIntegration, contact_phone: &str, message: &str,
+) -> Result<(), AppError> {
+    send_message_via_provider(config, integration, contact_phone, message).await
+}
+
 async fn send_message_via_provider(
     config: &Config, integration: &AssistantIntegration, contact_phone: &str, message: &str,
 ) -> Result<(), AppError> {
@@ -1864,6 +2033,84 @@ async fn send_document_via_provider(
     }
 
     tracing::info!(provider = %integration.provider, url = %url, "Document sent via tool");
+    Ok(())
+}
+
+// ─── Built-in tool: PIX QR Code Sender ──────────────────────────────────────
+
+async fn send_pix_qr_via_provider(
+    config: &Config,
+    integration: &AssistantIntegration,
+    contact_phone: &str,
+    qr_base64: &str,
+    caption: &str,
+) -> Result<(), AppError> {
+    let connection_phone = integration.config_phone_number.as_deref().unwrap_or_default();
+
+    match integration.provider.as_str() {
+        "baileys" => {
+            let jid = format!("{}@s.whatsapp.net", contact_phone.trim_start_matches('+'));
+            let api_url = format!("{}/connections/{}/send-message", config.baileys_url, connection_phone);
+
+            let client = Client::new();
+            let resp = client
+                .post(&api_url)
+                .header("x-api-key", &config.baileys_api_key)
+                .json(&json!({
+                    "jid": jid,
+                    "messageContent": {
+                        "image": qr_base64,
+                        "mimetype": "image/png",
+                        "caption": caption
+                    }
+                }))
+                .send()
+                .await
+                .map_err(|e| AppError::InternalError(format!("Failed to send PIX QR via baileys: {e}")))?;
+            if !resp.status().is_success() {
+                let status = resp.status();
+                let body = resp.text().await.unwrap_or_default();
+                tracing::error!("Baileys send PIX QR failed: {status} {body}");
+                return Err(AppError::InternalError(format!("Baileys send PIX QR failed: {status}")));
+            }
+        }
+        "meta_official" => {
+            // Meta Official API doesn't support base64 directly
+            // Send the copia-e-cola as a text message instead
+            if let Err(e) = send_message_via_provider(config, integration, contact_phone, caption).await {
+                tracing::error!(error = %e, "Failed to send PIX text via Meta Official");
+                return Err(e);
+            }
+        }
+        "telegram" => {
+            let token = integration.config_token.as_deref().unwrap_or_default();
+            let api_url = format!("https://api.telegram.org/bot{token}/sendPhoto");
+
+            // Decode base64 to bytes and send as multipart with caption
+            if let Ok(bytes) = BASE64.decode(qr_base64) {
+                let part = reqwest::multipart::Part::bytes(bytes)
+                    .file_name("pix_qr.png")
+                    .mime_str("image/png")
+                    .unwrap_or_else(|_| reqwest::multipart::Part::bytes(vec![]));
+                let form = reqwest::multipart::Form::new()
+                    .text("chat_id", contact_phone.to_string())
+                    .text("caption", caption.to_string())
+                    .part("photo", part);
+
+                let client = Client::new();
+                let resp = client.post(&api_url).multipart(form).send().await
+                    .map_err(|e| AppError::InternalError(format!("Failed to send PIX QR via Telegram: {e}")))?;
+                if !resp.status().is_success() {
+                    let status = resp.status();
+                    let body = resp.text().await.unwrap_or_default();
+                    tracing::error!("Telegram send PIX QR failed: {status} {body}");
+                }
+            }
+        }
+        _ => {}
+    }
+
+    tracing::info!(provider = %integration.provider, "PIX QR code sent");
     Ok(())
 }
 

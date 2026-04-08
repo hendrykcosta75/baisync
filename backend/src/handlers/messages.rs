@@ -48,6 +48,7 @@ pub async fn webhook_baileys(
     Extension(db): Extension<DbSession>,
     Extension(config): Extension<Config>,
     Extension(encryption): Extension<EncryptionService>,
+    Extension(event_bus): Extension<crate::services::events::EventBus>,
     Extension(conn_store): Extension<ConnectionStateStore>,
     Path(phone_from_path): Path<String>,
     Json(payload): Json<Value>,
@@ -274,7 +275,7 @@ pub async fn webhook_baileys(
                     };
 
                     match messaging::process_incoming_message(
-                        &db, &config, &encryption, webhook,
+                        &db, &config, &encryption, &event_bus, webhook,
                     )
                     .await
                     {
@@ -453,6 +454,7 @@ pub async fn webhook_meta(
     Extension(db): Extension<DbSession>,
     Extension(config): Extension<Config>,
     Extension(encryption): Extension<EncryptionService>,
+    Extension(event_bus): Extension<crate::services::events::EventBus>,
     Json(payload): Json<Value>,
 ) -> Result<Json<Value>, AppError> {
     let entries = payload["entry"].as_array();
@@ -533,7 +535,7 @@ pub async fn webhook_meta(
                             };
 
                             match messaging::process_incoming_message(
-                                &db, &config, &encryption, webhook,
+                                &db, &config, &encryption, &event_bus, webhook,
                             )
                             .await
                             {
@@ -555,6 +557,7 @@ pub async fn webhook_telegram(
     Extension(db): Extension<DbSession>,
     Extension(config): Extension<Config>,
     Extension(encryption): Extension<EncryptionService>,
+    Extension(event_bus): Extension<crate::services::events::EventBus>,
     Path(token): Path<String>,
     Json(payload): Json<Value>,
 ) -> Result<Json<Value>, AppError> {
@@ -665,7 +668,7 @@ pub async fn webhook_telegram(
         message_id: None,
     };
 
-    match messaging::process_incoming_message(&db, &config, &encryption, webhook).await {
+    match messaging::process_incoming_message(&db, &config, &encryption, &event_bus, webhook).await {
         Ok(_) => tracing::info!("Processed Telegram message from chat {chat_id}"),
         Err(e) => tracing::error!("Failed to process Telegram message from chat {chat_id}: {e}"),
     }

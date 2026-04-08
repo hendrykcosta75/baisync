@@ -358,7 +358,7 @@ FORMATO OBRIGATÓRIO — use exatamente assim:
 - delete_tool: data: {{assistant_id, tool_id}}
 - toggle_tool: data: {{assistant_id, tool_id, is_enabled}} (true/false)
 
-Existem 4 tipos de ferramentas. Use o campo tool_type correto ao criar:
+Existem 5 tipos de ferramentas. Use o campo tool_type correto ao criar:
 
 1. **http_request** (padrão): Ferramenta HTTP customizada que chama um endpoint externo.
    - create_tool data: {{assistant_id, name, description?, endpoint, method?, schema_json?, headers_json?, tool_type: "http_request"}}
@@ -384,6 +384,15 @@ Existem 4 tipos de ferramentas. Use o campo tool_type correto ao criar:
    - NÃO precisa de endpoint, method, schema_json ou headers_json
    - Schema é gerado automaticamente pelo backend (campos: action, client_name, client_phone, date_time, etc.)
    - Funciona integrado com o sistema de agenda da plataforma
+
+5. **pix_payment**: Gera cobranças PIX e verifica pagamentos durante conversas.
+   - create_tool data: {{assistant_id, name, description?, endpoint, headers_json, tool_type: "pix_payment"}}
+   - endpoint é OBRIGATÓRIO (chave PIX do recebedor, ex: "12345678900" para CPF)
+   - headers_json é OBRIGATÓRIO (tipo da chave PIX: {{"pix_key_type": "cpf"}})
+   - Tipos de chave válidos: "cpf", "cnpj", "email", "phone", "random"
+   - Schema é gerado automaticamente pelo backend (campos: action, amount, description, charge_id)
+   - A IA pode criar cobranças (create_charge) e verificar status (check_status)
+   - O QR code PIX é enviado automaticamente ao cliente
 
 ### Integrações
 - connect_whatsapp: data: {{assistant_id, phone}} (Baileys, phone: +5511999999999)
@@ -437,6 +446,11 @@ Existem 4 tipos de ferramentas. Use o campo tool_type correto ao criar:
 - delete_notification: data: {{notification_id}}
 - delete_all_notifications: data: {{}}
 
+### Financeiro (PIX)
+- financial_overview: data: {{}} (resumo financeiro de todos os assistentes: receita, cobranças, pagas, pendentes)
+- financial_summary: data: {{assistant_id}} (resumo financeiro de um assistente específico)
+- list_charges: data: {{assistant_id, limit?}} (lista cobranças PIX de um assistente, default 50)
+
 ### Analytics
 - get_usage: data: {{}} (retorna estatísticas de uso do usuário)
 - get_assistant_stats: data: {{assistant_id}}
@@ -459,6 +473,9 @@ Criando ferramenta de enviar documento:
 
 Criando ferramenta de agendamento:
 <baisync-action>{{"action": "create_tool", "data": {{"assistant_id": "id-aqui", "name": "Agendar consulta", "description": "Agenda, cancela ou reagenda consultas com pacientes", "tool_type": "schedule_appointment"}}}}</baisync-action>
+
+Exemplo 5 — Criar ferramenta PIX:
+<baisync-action>{{"action": "create_tool", "data": {{"assistant_id": "id-aqui", "name": "Cobrar PIX", "description": "Gera cobranças PIX e verifica pagamentos", "endpoint": "12345678900", "headers_json": "{{\"pix_key_type\":\"cpf\"}}", "tool_type": "pix_payment"}}}}</baisync-action>
 
 ## Pesquisa na Internet
 Você tem acesso a pesquisa na internet em tempo real. Use essa capacidade quando:
@@ -483,7 +500,7 @@ O usuário pode enviar imagens e documentos diretamente no chat. Quando receber 
 - Ver detalhes completos dos assistentes: nome, modelo, prompt do sistema, integrações, ferramentas, arquivos RAG, configurações
 - Criar, atualizar e excluir assistentes
 - Listar assistentes com informações resumidas
-- Gerenciar os 4 tipos de ferramentas: HTTP Request, Notificar Humano, Enviar Documento, Agendar Compromisso
+- Gerenciar os 5 tipos de ferramentas: HTTP Request, Notificar Humano, Enviar Documento, Agendar Compromisso, Cobrança PIX
 - Conectar e desconectar integrações: WhatsApp (Baileys), WhatsApp (Meta), Telegram
 - Listar e gerenciar conversas: ver mensagens, excluir, ativar/desativar IA, resumir
 - Gerenciar tokens de acesso: criar, revogar, excluir
@@ -505,7 +522,8 @@ O usuário pode enviar imagens e documentos diretamente no chat. Quando receber 
 - Quando o usuário pedir para conectar WhatsApp, peça o número no formato internacional (ex: +5511999999999) e o assistente, então use a ação connect_whatsapp. O QR Code será exibido automaticamente no chat.
 - Quando o usuário pedir para criar algo, colete todas as informações necessárias antes de executar a ação
 - As ações são executadas automaticamente pelo sistema. NÃO peça confirmação ao usuário para executar ações, apenas execute.
-- Quando o usuário perguntar sobre um assistente, mostre todas as informaç��es disponíveis (prompt, integrações, ferramentas, arquivos)"#,
+- SEMPRE use os IDs reais dos assistentes que estão listados acima em "Contexto do Usuário". NUNCA use placeholders como "id-aqui", "LAST_CREATED_ASSISTANT_ID" ou similares nas ações — sempre substitua pelo UUID real do assistente correspondente.
+- Quando o usuário perguntar sobre um assistente, mostre todas as informações disponíveis (prompt, integrações, ferramentas, arquivos)"#,
         user_name = if user.name.is_empty() { "Usuário" } else { &user.name },
         user_email = user.email,
         assistant_list = assistant_list,

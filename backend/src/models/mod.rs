@@ -3,5 +3,6 @@ pub mod assistant;
 pub mod conversation;
 pub mod integration;
 pub mod notification;
+pub mod pix;
 pub mod usage;
 pub mod user;

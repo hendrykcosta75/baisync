@@ -12,6 +12,9 @@ pub struct ToolContext<'a> {
     pub db: Option<&'a DbSession>,
     pub assistant_id: Option<Uuid>,
     pub user_id: Option<Uuid>,
+    pub conversation_id: Option<Uuid>,
+    pub config: Option<&'a crate::config::Config>,
+    pub encryption: Option<&'a crate::services::encryption::EncryptionService>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -64,6 +67,32 @@ pub struct ToolCallRecord {
     pub error: Option<String>,
     pub duration_ms: i32,
     pub tool_type: String,
+}
+
+/// Sanitize a tool name to match OpenAI's pattern: ^[a-zA-Z0-9_-]+$
+/// Removes accents, replaces spaces with underscores, strips invalid chars.
+fn sanitize_tool_name(name: &str) -> String {
+    let lowered = name.replace(' ', "_").to_lowercase();
+    // Map common accented characters to ASCII equivalents
+    let mut result = String::with_capacity(lowered.len());
+    for c in lowered.chars() {
+        match c {
+            'á' | 'à' | 'ã' | 'â' | 'ä' => result.push('a'),
+            'é' | 'è' | 'ê' | 'ë' => result.push('e'),
+            'í' | 'ì' | 'î' | 'ï' => result.push('i'),
+            'ó' | 'ò' | 'õ' | 'ô' | 'ö' => result.push('o'),
+            'ú' | 'ù' | 'û' | 'ü' => result.push('u'),
+            'ç' => result.push('c'),
+            'ñ' => result.push('n'),
+            c if c.is_ascii_alphanumeric() || c == '_' || c == '-' => result.push(c),
+            _ => {} // strip any other invalid characters
+        }
+    }
+    if result.is_empty() {
+        "tool".to_string()
+    } else {
+        result
+    }
 }
 
 /// Extract `{{placeholder}}` variable names from a string.
@@ -131,7 +160,7 @@ impl From<&AssistantTool> for LlmTool {
             "send_document" => {
                 return Self {
                     id: Some(t.id),
-                    name: t.name.replace(' ', "_").to_lowercase(),
+                    name: sanitize_tool_name(&t.name),
                     description: t.description.clone().unwrap_or_else(|| "Envia um documento ou imagem na conversa".to_string()),
                     parameters: json!({
                         "type": "object",
@@ -152,7 +181,7 @@ impl From<&AssistantTool> for LlmTool {
             "notify_human" => {
                 return Self {
                     id: Some(t.id),
-                    name: t.name.replace(' ', "_").to_lowercase(),
+                    name: sanitize_tool_name(&t.name),
                     description: t.description.clone().unwrap_or_else(|| "Notifica um agente humano para intervir na conversa quando não conseguir resolver o problema do usuário".to_string()),
                     parameters: json!({
                         "type": "object",
@@ -171,10 +200,58 @@ impl From<&AssistantTool> for LlmTool {
                     tool_type,
                 };
             }
+            "pix_payment" => {
+                return Self {
+                    id: Some(t.id),
+                    name: sanitize_tool_name(&t.name),
+                    description: t.description.clone().unwrap_or_else(||
+                        "Gera cobranças PIX e verifica status de pagamentos. Use create_charge para criar uma cobrança e check_status para verificar se foi paga.".to_string()
+                    ),
+                    parameters: json!({
+                        "type": "object",
+                        "properties": {
+                            "action": {
+                                "type": "string",
+                                "enum": ["create_charge", "check_status"],
+                                "description": "Ação: create_charge (criar nova cobrança PIX) ou check_status (verificar status de pagamento)"
+                            },
+                            "amount": {
+                                "type": "number",
+                                "description": "Valor da cobrança em reais (ex: 29.90). Obrigatório para create_charge."
+                            },
+                            "description": {
+                                "type": "string",
+                                "description": "Descrição da cobrança (ex: 'Pedido #123 - Pizza Margherita'). Obrigatório para create_charge."
+                            },
+                            "customer_name": {
+                                "type": "string",
+                                "description": "Nome completo do cliente. Obrigatório para create_charge."
+                            },
+                            "customer_cpf": {
+                                "type": "string",
+                                "description": "CPF do cliente (ex: '123.456.789-00'). Obrigatório para create_charge."
+                            },
+                            "charge_id": {
+                                "type": "string",
+                                "description": "ID da cobrança para consultar (obrigatório para check_status)"
+                            }
+                        },
+                        "required": ["action"]
+                    }),
+                    endpoint: t.endpoint.clone(),
+                    method: String::new(),
+                    headers: t.headers_json.clone(),
+                    auth: None,
+                    query_params: None,
+                    body_content_type: None,
+                    body_content: None,
+                    tool_type,
+                };
+            }
             "schedule_appointment" => {
                 return Self {
                     id: Some(t.id),
-                    name: t.name.replace(' ', "_").to_lowercase(),
+                    name: sanitize_tool_name(&t.name),
                     description: t.description.clone().unwrap_or_else(||
                         "Agenda, cancela ou reagenda compromissos. IMPORTANTE: SEMPRE use check_availability ANTES de agendar. Use week_start para ver dias disponíveis, depois date para horários específicos. Nunca agende sem verificar disponibilidade primeiro.".to_string()
                     ),
@@ -265,7 +342,7 @@ impl From<&AssistantTool> for LlmTool {
 
         Self {
             id: Some(t.id),
-            name: t.name.replace(' ', "_").to_lowercase(),
+            name: sanitize_tool_name(&t.name),
             description: t.description.clone().unwrap_or_default(),
             parameters,
             endpoint: t.endpoint.clone(),
@@ -300,7 +377,7 @@ pub async fn call_llm_with_tools(
     max_tokens: i32,
     tools: &[LlmTool],
 ) -> Result<LlmResponse, AppError> {
-    let ctx = ToolContext { db: None, assistant_id: None, user_id: None };
+    let ctx = ToolContext { db: None, assistant_id: None, user_id: None, conversation_id: None, config: None, encryption: None };
     call_llm_with_tools_ctx(provider, model, api_key, messages, temperature, max_tokens, tools, &ctx).await
 }
 
@@ -387,6 +464,73 @@ async fn execute_tool(client: &Client, tool: &LlmTool, arguments: &Value, ctx: &
                 error: None,
                 duration_ms: 0,
                 tool_type: "notify_human".to_string(),
+            };
+            return (result, record);
+        }
+        "pix_payment" => {
+            let action = arguments.get("action").and_then(|v| v.as_str()).unwrap_or("create_charge");
+            tracing::info!(action = %action, arguments = %arguments, "pix_payment tool called");
+
+            let result = if action == "create_charge" {
+                let amount = arguments.get("amount").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                let desc = arguments.get("description").and_then(|v| v.as_str()).unwrap_or("");
+                let customer_name = arguments.get("customer_name").and_then(|v| v.as_str()).unwrap_or("");
+                let customer_cpf = arguments.get("customer_cpf").and_then(|v| v.as_str()).unwrap_or("");
+
+                if amount <= 0.0 {
+                    json!({"status": "error", "message": "Valor deve ser maior que zero."}).to_string()
+                } else if desc.is_empty() {
+                    json!({"status": "error", "message": "Descrição é obrigatória."}).to_string()
+                } else if customer_name.is_empty() || customer_cpf.is_empty() {
+                    json!({"status": "error", "message": "Nome e CPF do cliente são obrigatórios."}).to_string()
+                } else {
+                    json!({"status": "queued", "action": "create_charge", "message": "Cobrança PIX será gerada e enviada ao usuário."}).to_string()
+                }
+            } else if action == "check_status" {
+                let charge_id_str = arguments.get("charge_id").and_then(|v| v.as_str()).unwrap_or("");
+                if let (Some(db), Some(user_id), Some(encryption), Some(config)) = (ctx.db, ctx.user_id, ctx.encryption, ctx.config) {
+                    let conv_id = ctx.conversation_id;
+                    match uuid::Uuid::parse_str(charge_id_str) {
+                        Ok(cid) => {
+                            // Use live check: actively polls MP API for pending MP charges
+                            match crate::services::pix::check_charge_status_live(db, encryption, config, &user_id, &cid, conv_id.as_ref()).await {
+                                Ok(charge) => {
+                                    json!({
+                                        "status": "ok",
+                                        "charge_id": charge.id.to_string(),
+                                        "payment_status": charge.status,
+                                        "amount": charge.amount,
+                                        "description": charge.description,
+                                        "message": match charge.status.as_str() {
+                                            "approved" => "Pagamento confirmado!",
+                                            "pending" => "Pagamento ainda pendente.",
+                                            "cancelled" => "Pagamento foi cancelado.",
+                                            "refunded" => "Pagamento foi estornado.",
+                                            _ => "Status desconhecido."
+                                        }
+                                    }).to_string()
+                                }
+                                Err(e) => json!({"status": "error", "message": e.to_string()}).to_string(),
+                            }
+                        }
+                        Err(_) => json!({"status": "error", "message": "ID da cobrança inválido."}).to_string(),
+                    }
+                } else {
+                    json!({"status": "error", "message": "Serviço de pagamento indisponível."}).to_string()
+                }
+            } else {
+                json!({"status": "error", "message": format!("Ação desconhecida: {}", action)}).to_string()
+            };
+
+            let record = ToolCallRecord {
+                tool_id: tool.id,
+                tool_name: tool.name.clone(),
+                arguments: arguments.clone(),
+                status_code: Some(200),
+                response_body: Some(result.clone()),
+                error: None,
+                duration_ms: start.elapsed().as_millis() as i32,
+                tool_type: "pix_payment".to_string(),
             };
             return (result, record);
         }

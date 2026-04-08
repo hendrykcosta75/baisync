@@ -156,14 +156,14 @@ pub async fn login_user(
 pub async fn get_user_by_id(db: &DbSession, user_id: &Uuid) -> Result<User, AppError> {
     let result = db
         .query_unpaged(
-            "SELECT id, email, password_hash, name, two_factor_enabled, two_factor_secret, api_key_openai, api_key_claude, api_key_gemini, api_key_elevenlabs, created_at, updated_at FROM inertial_eclipse.users WHERE id = ?",
+            "SELECT id, email, password_hash, name, two_factor_enabled, two_factor_secret, api_key_openai, api_key_claude, api_key_gemini, api_key_elevenlabs, api_key_mercadopago, created_at, updated_at FROM inertial_eclipse.users WHERE id = ?",
             (user_id,),
         )
         .await
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
-    let (id, email, password_hash, name, two_factor_enabled, two_factor_secret, api_key_openai, api_key_claude, api_key_gemini, api_key_elevenlabs, created_at, updated_at) = result
-        .single_row_typed::<(Uuid, String, String, String, Option<bool>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, DateTime<Utc>, DateTime<Utc>)>()
+    let (id, email, password_hash, name, two_factor_enabled, two_factor_secret, api_key_openai, api_key_claude, api_key_gemini, api_key_elevenlabs, api_key_mercadopago, created_at, updated_at) = result
+        .single_row_typed::<(Uuid, String, String, String, Option<bool>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, DateTime<Utc>, DateTime<Utc>)>()
         .map_err(|_| AppError::NotFound("User not found".into()))?;
 
     Ok(User {
@@ -177,6 +177,7 @@ pub async fn get_user_by_id(db: &DbSession, user_id: &Uuid) -> Result<User, AppE
         api_key_claude,
         api_key_gemini,
         api_key_elevenlabs,
+        api_key_mercadopago,
         created_at,
         updated_at,
     })

@@ -285,3 +285,35 @@ pub async fn send_human_agent_email(
     let body = wrap_email_html("Solicitação de Agente Humano", &content);
     send_email(config, to, &subject, &body).await
 }
+
+pub async fn send_pix_payment_confirmed_email(
+    config: &Config,
+    to: &str,
+    assistant_name: &str,
+    amount: f64,
+    description: &str,
+    customer_name: &str,
+    customer_cpf: &str,
+    contact_phone: &str,
+) -> Result<(), AppError> {
+    let subject = format!("Pagamento PIX Confirmado - R$ {:.2} | Baisync", amount);
+    let dashboard_url = format!("{}/dashboard/financeiro", config.app_url);
+    let rows = format!(
+        "{}{}{}{}{}",
+        styled_table_row("Valor", &format!("R$ {:.2}", amount)),
+        styled_table_row("Descricao", description),
+        styled_table_row("Cliente", customer_name),
+        styled_table_row("CPF", customer_cpf),
+        styled_table_row("Contato", contact_phone),
+    );
+    let content = format!(
+        r#"<h2 style="margin:0 0 8px 0;color:#EDF0F7;font-size:20px;font-weight:700;">Pagamento PIX Confirmado</h2>
+<p style="margin:0 0 4px 0;color:#C4CCDF;font-size:14px;line-height:1.6;">O assistente <strong style="color:#EDF0F7;">{assistant_name}</strong> recebeu um pagamento PIX.</p>
+{table}
+{button}"#,
+        table = styled_data_table(&rows),
+        button = styled_button(&dashboard_url, "Ver Financeiro"),
+    );
+    let body = wrap_email_html("Pagamento PIX Confirmado", &content);
+    send_email(config, to, &subject, &body).await
+}
