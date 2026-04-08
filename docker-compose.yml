@@ -53,6 +53,8 @@ services:
       - cassandra_data:/var/lib/cassandra
     networks:
       - inertial-network
+    mem_limit: 2g
+    memswap_limit: 2g
     healthcheck:
       test: ["CMD-SHELL", "cqlsh -e 'DESCRIBE KEYSPACES' || exit 1"]
       interval: 15s
@@ -62,6 +64,8 @@ services:
     environment:
       - CASSANDRA_CLUSTER_NAME=inertial-eclipse
       - CASSANDRA_DC=dc1
+      - MAX_HEAP_SIZE=1G
+      - HEAP_NEWSIZE=256M
     restart: unless-stopped
 
   redis:
