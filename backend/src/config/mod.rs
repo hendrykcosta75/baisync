@@ -14,6 +14,8 @@ pub struct Config {
     pub app_url: String,
     pub baisync_api_key: String,
     pub baisync_rate_limit: i32,
+    pub admin_user: String,
+    pub admin_password: String,
 }
 
 impl Config {
@@ -37,6 +39,8 @@ impl Config {
                 .unwrap_or_else(|_| "150".into())
                 .parse()
                 .unwrap_or(150),
+            admin_user: env::var("ADMIN_USER").unwrap_or_default(),
+            admin_password: env::var("ADMIN_PASSWORD").unwrap_or_default(),
         }
     }
 }

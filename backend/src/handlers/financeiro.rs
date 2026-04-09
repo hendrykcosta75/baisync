@@ -61,9 +61,10 @@ pub async fn charges(
     let _ = crate::services::assistant::get_assistant(&db, &auth_user.user_id, &assistant_id).await?;
 
     let limit = query.limit.unwrap_or(50).min(500);
-    let charges = crate::services::pix::list_charges_by_assistant(&db, &assistant_id, limit).await?;
 
-    let data: Vec<Value> = charges.into_iter().map(|c| {
+    // Fetch PIX charges
+    let pix_charges = crate::services::pix::list_charges_by_assistant(&db, &assistant_id, limit).await?;
+    let mut data: Vec<Value> = pix_charges.into_iter().map(|c| {
         json!({
             "id": c.id,
             "amount": c.amount,
@@ -74,8 +75,37 @@ pub async fn charges(
             "customerName": c.customer_name,
             "customerCpf": c.customer_cpf,
             "pixMode": c.pix_mode,
+            "paymentType": "pix",
         })
     }).collect();
+
+    // Fetch card charges
+    let card_charges = crate::services::card_payment::list_charges_by_assistant(&db, &assistant_id, limit).await?;
+    let card_data: Vec<Value> = card_charges.into_iter().map(|c| {
+        json!({
+            "id": c.id,
+            "amount": c.amount,
+            "status": c.status,
+            "description": c.description,
+            "contactPhone": c.contact_phone,
+            "createdAt": c.created_at.to_rfc3339(),
+            "customerName": c.customer_name,
+            "customerCpf": c.customer_cpf,
+            "pixMode": c.card_mode,
+            "paymentType": "card",
+        })
+    }).collect();
+    data.extend(card_data);
+
+    // Sort by createdAt descending
+    data.sort_by(|a, b| {
+        let a_date = a.get("createdAt").and_then(|v| v.as_str()).unwrap_or("");
+        let b_date = b.get("createdAt").and_then(|v| v.as_str()).unwrap_or("");
+        b_date.cmp(a_date)
+    });
+
+    // Apply limit
+    data.truncate(limit as usize);
 
     Ok(Json(json!(data)))
 }
@@ -100,39 +130,70 @@ pub async fn update_charge_status_handler(
         return Err(AppError::BadRequest("Status deve ser 'approved' ou 'cancelled'".into()));
     }
 
-    // Fetch the charge to verify it exists
-    let charge = crate::services::pix::check_charge_status(
+    // Try PIX charges first, then card charges
+    let pix_charge = crate::services::pix::check_charge_status(
+        &db, &auth_user.user_id, &charge_id, None,
+    ).await;
+
+    if let Ok(charge) = pix_charge {
+        // PIX charge found
+        if new_status == "approved" && charge.pix_mode != "direct" {
+            return Err(AppError::BadRequest(
+                "Apenas cobranças PIX direto podem ser confirmadas manualmente".into()
+            ));
+        }
+        if charge.assistant_id != assistant_id {
+            return Err(AppError::NotFound("Cobrança não pertence a este assistente".into()));
+        }
+
+        crate::services::pix::update_charge_status(
+            &db, &auth_user.user_id, &charge_id, &assistant_id, charge.created_at, new_status,
+        ).await?;
+
+        if new_status == "approved" {
+            crate::services::pix::notify_pix_payment_confirmed(&db, &config, &charge).await;
+        }
+
+        event_bus.publish(&auth_user.user_id, crate::services::events::SseEvent {
+            event_type: "pix_status_changed".into(),
+            data: serde_json::json!({
+                "chargeId": charge_id.to_string(),
+                "assistantId": assistant_id.to_string(),
+                "status": new_status,
+                "amount": charge.amount,
+            }).to_string(),
+        }).await;
+
+        return Ok(Json(json!({"status": new_status})));
+    }
+
+    // Try card charges
+    let card_charge = crate::services::card_payment::check_charge_status(
         &db, &auth_user.user_id, &charge_id, None,
     ).await?;
 
-    // Only direct mode charges can be manually approved; cancellation is allowed for any mode
-    if new_status == "approved" && charge.pix_mode != "direct" {
-        return Err(AppError::BadRequest(
-            "Apenas cobranças PIX direto podem ser confirmadas manualmente".into()
-        ));
-    }
-
-    if charge.assistant_id != assistant_id {
+    if card_charge.assistant_id != assistant_id {
         return Err(AppError::NotFound("Cobrança não pertence a este assistente".into()));
     }
 
-    crate::services::pix::update_charge_status(
-        &db, &auth_user.user_id, &charge_id, &assistant_id, charge.created_at, new_status,
-    ).await?;
-
-    // Notify user and client when payment is confirmed
+    // Card charges cannot be manually approved (processed by provider)
     if new_status == "approved" {
-        crate::services::pix::notify_pix_payment_confirmed(&db, &config, &charge).await;
+        return Err(AppError::BadRequest(
+            "Cobranças por cartão não podem ser confirmadas manualmente".into()
+        ));
     }
 
-    // Publish SSE event
+    crate::services::card_payment::update_charge_status(
+        &db, &auth_user.user_id, &charge_id, &assistant_id, card_charge.created_at, new_status,
+    ).await?;
+
     event_bus.publish(&auth_user.user_id, crate::services::events::SseEvent {
-        event_type: "pix_status_changed".into(),
+        event_type: "card_status_changed".into(),
         data: serde_json::json!({
             "chargeId": charge_id.to_string(),
             "assistantId": assistant_id.to_string(),
             "status": new_status,
-            "amount": charge.amount,
+            "amount": card_charge.amount,
         }).to_string(),
     }).await;
 

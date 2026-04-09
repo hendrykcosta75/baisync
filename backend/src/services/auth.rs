@@ -17,6 +17,8 @@ pub struct Claims {
     pub sub: String,
     pub email: String,
     pub exp: usize,
+    #[serde(default)]
+    pub role: Option<String>,
 }
 
 pub fn hash_password(password: &str) -> Result<String, AppError> {
@@ -46,6 +48,7 @@ pub fn create_jwt(user_id: &Uuid, email: &str, secret: &str) -> Result<String, A
         sub: user_id.to_string(),
         email: email.to_string(),
         exp: expiration,
+        role: None,
     };
 
     encode(
@@ -64,6 +67,27 @@ pub fn decode_jwt(token: &str, secret: &str) -> Result<Claims, AppError> {
     )
     .map(|data| data.claims)
     .map_err(|e| AppError::Unauthorized(format!("Invalid token: {e}")))
+}
+
+pub fn create_admin_jwt(secret: &str) -> Result<String, AppError> {
+    let expiration = Utc::now()
+        .checked_add_signed(chrono::Duration::hours(8))
+        .expect("valid timestamp")
+        .timestamp() as usize;
+
+    let claims = Claims {
+        sub: Uuid::nil().to_string(),
+        email: "admin".to_string(),
+        exp: expiration,
+        role: Some("admin".to_string()),
+    };
+
+    encode(
+        &Header::default(),
+        &claims,
+        &EncodingKey::from_secret(secret.as_bytes()),
+    )
+    .map_err(|e| AppError::InternalError(format!("Failed to create admin JWT: {e}")))
 }
 
 fn ts_now() -> CqlTimestamp {
@@ -126,15 +150,19 @@ pub async fn login_user(
 ) -> Result<AuthResponse, AppError> {
     let result = db
         .query_unpaged(
-            "SELECT id, email, password_hash, name, two_factor_enabled, created_at FROM inertial_eclipse.users WHERE email = ?",
+            "SELECT id, email, password_hash, name, two_factor_enabled, blocked, created_at FROM inertial_eclipse.users WHERE email = ?",
             (email,),
         )
         .await
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
-    let (id, email, password_hash, name, two_factor_enabled, created_at) = result
-        .single_row_typed::<(Uuid, String, String, String, Option<bool>, DateTime<Utc>)>()
+    let (id, email, password_hash, name, two_factor_enabled, blocked, created_at) = result
+        .single_row_typed::<(Uuid, String, String, String, Option<bool>, Option<bool>, DateTime<Utc>)>()
         .map_err(|_| AppError::Unauthorized("Invalid email or password".into()))?;
+
+    if blocked.unwrap_or(false) {
+        return Err(AppError::Unauthorized("Conta bloqueada".into()));
+    }
 
     if !verify_password(password, &password_hash)? {
         return Err(AppError::Unauthorized("Invalid email or password".into()));
@@ -156,14 +184,14 @@ pub async fn login_user(
 pub async fn get_user_by_id(db: &DbSession, user_id: &Uuid) -> Result<User, AppError> {
     let result = db
         .query_unpaged(
-            "SELECT id, email, password_hash, name, two_factor_enabled, two_factor_secret, api_key_openai, api_key_claude, api_key_gemini, api_key_elevenlabs, api_key_mercadopago, created_at, updated_at FROM inertial_eclipse.users WHERE id = ?",
+            "SELECT id, email, password_hash, name, two_factor_enabled, two_factor_secret, api_key_openai, api_key_claude, api_key_gemini, api_key_elevenlabs, api_key_mercadopago, api_key_stripe, blocked, created_at, updated_at FROM inertial_eclipse.users WHERE id = ?",
             (user_id,),
         )
         .await
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
-    let (id, email, password_hash, name, two_factor_enabled, two_factor_secret, api_key_openai, api_key_claude, api_key_gemini, api_key_elevenlabs, api_key_mercadopago, created_at, updated_at) = result
-        .single_row_typed::<(Uuid, String, String, String, Option<bool>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, DateTime<Utc>, DateTime<Utc>)>()
+    let (id, email, password_hash, name, two_factor_enabled, two_factor_secret, api_key_openai, api_key_claude, api_key_gemini, api_key_elevenlabs, api_key_mercadopago, api_key_stripe, blocked, created_at, updated_at) = result
+        .single_row_typed::<(Uuid, String, String, String, Option<bool>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<bool>, DateTime<Utc>, DateTime<Utc>)>()
         .map_err(|_| AppError::NotFound("User not found".into()))?;
 
     Ok(User {
@@ -178,6 +206,8 @@ pub async fn get_user_by_id(db: &DbSession, user_id: &Uuid) -> Result<User, AppE
         api_key_gemini,
         api_key_elevenlabs,
         api_key_mercadopago,
+        api_key_stripe,
+        blocked,
         created_at,
         updated_at,
     })

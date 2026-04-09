@@ -1,4 +1,5 @@
 pub mod access_tokens;
+pub mod admin;
 pub mod api_keys;
 pub mod baisync;
 pub mod appointments;
@@ -13,6 +14,7 @@ pub mod integrations;
 pub mod messages;
 pub mod models;
 pub mod notifications;
+pub mod card_payment;
 pub mod pix;
 pub mod sharing;
 pub mod stats;

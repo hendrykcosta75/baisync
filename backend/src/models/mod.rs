@@ -1,8 +1,10 @@
+pub mod admin;
 pub mod appointment;
 pub mod assistant;
 pub mod conversation;
 pub mod integration;
 pub mod notification;
+pub mod card_charge;
 pub mod pix;
 pub mod usage;
 pub mod user;

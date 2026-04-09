@@ -243,6 +243,149 @@ pub async fn get_user_mp_token(
     }
 }
 
+// ─── Stripe PIX API ─────────────────────────────────────────────────────────
+
+/// Create a PIX payment via Stripe PaymentIntent API.
+/// Returns (payment_intent_id, qr_code_base64, copia_e_cola).
+async fn create_stripe_pix_payment(
+    secret_key: &str,
+    amount: f64,
+    description: &str,
+) -> Result<(String, String, String), AppError> {
+    let client = reqwest::Client::new();
+    let amount_cents = (amount * 100.0).round() as i64;
+
+    let resp = client
+        .post("https://api.stripe.com/v1/payment_intents")
+        .basic_auth(secret_key, None::<&str>)
+        .form(&[
+            ("amount", amount_cents.to_string()),
+            ("currency", "brl".to_string()),
+            ("payment_method_types[]", "pix".to_string()),
+            ("description", description.to_string()),
+        ])
+        .send()
+        .await
+        .map_err(|e| AppError::InternalError(format!("Failed to call Stripe API: {e}")))?;
+
+    let status = resp.status();
+    let resp_body: serde_json::Value = resp.json().await
+        .map_err(|e| AppError::InternalError(format!("Failed to parse Stripe response: {e}")))?;
+
+    if !status.is_success() {
+        let msg = resp_body.pointer("/error/message")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Unknown error");
+        return Err(AppError::InternalError(format!("Stripe API error ({}): {}", status, msg)));
+    }
+
+    let pi_id = resp_body.get("id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| AppError::InternalError("Stripe response missing payment_intent id".into()))?
+        .to_string();
+
+    // Confirm the PaymentIntent to generate the PIX QR code
+    let confirm_resp = client
+        .post(format!("https://api.stripe.com/v1/payment_intents/{}/confirm", pi_id))
+        .basic_auth(secret_key, None::<&str>)
+        .form(&[
+            ("payment_method_data[type]", "pix"),
+            ("return_url", "https://example.com/return"),
+        ])
+        .send()
+        .await
+        .map_err(|e| AppError::InternalError(format!("Failed to confirm Stripe PaymentIntent: {e}")))?;
+
+    let confirm_status = confirm_resp.status();
+    let confirm_body: serde_json::Value = confirm_resp.json().await
+        .map_err(|e| AppError::InternalError(format!("Failed to parse Stripe confirm response: {e}")))?;
+
+    if !confirm_status.is_success() {
+        let msg = confirm_body.pointer("/error/message")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Unknown error");
+        return Err(AppError::InternalError(format!("Stripe confirm error ({}): {}", confirm_status, msg)));
+    }
+
+    // Extract PIX QR code data from next_action
+    let qr_code_url = confirm_body
+        .pointer("/next_action/pix_display_qr_code/image_url_png")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    let copia_e_cola = confirm_body
+        .pointer("/next_action/pix_display_qr_code/data")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    // Download QR code image and convert to base64
+    let qr_base64 = if !qr_code_url.is_empty() {
+        match client.get(&qr_code_url).send().await {
+            Ok(img_resp) => {
+                let bytes = img_resp.bytes().await.unwrap_or_default();
+                if !bytes.is_empty() {
+                    BASE64.encode(&bytes)
+                } else {
+                    String::new()
+                }
+            }
+            Err(_) => String::new(),
+        }
+    } else {
+        // Fallback: generate QR from copia_e_cola
+        if !copia_e_cola.is_empty() {
+            generate_qr_base64(&copia_e_cola).unwrap_or_default()
+        } else {
+            String::new()
+        }
+    };
+
+    Ok((pi_id, qr_base64, copia_e_cola))
+}
+
+/// Fetch payment status from Stripe API.
+async fn fetch_stripe_payment_status(secret_key: &str, payment_intent_id: &str) -> Result<String, AppError> {
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(format!("https://api.stripe.com/v1/payment_intents/{}", payment_intent_id))
+        .basic_auth(secret_key, None::<&str>)
+        .send()
+        .await
+        .map_err(|e| AppError::InternalError(format!("Failed to fetch Stripe payment: {e}")))?;
+
+    let body: serde_json::Value = resp.json().await
+        .map_err(|e| AppError::InternalError(format!("Failed to parse Stripe response: {e}")))?;
+
+    let status = body.get("status")
+        .and_then(|v| v.as_str())
+        .unwrap_or("requires_action")
+        .to_string();
+
+    Ok(match status.as_str() {
+        "succeeded" => "approved".to_string(),
+        "requires_action" | "requires_payment_method" | "processing" => "pending".to_string(),
+        "canceled" => "cancelled".to_string(),
+        other => other.to_string(),
+    })
+}
+
+// ─── User Stripe Token Helper ──────────────────────────────────────────────
+
+/// Decrypt and return the user's Stripe secret key.
+pub async fn get_user_stripe_token(
+    db: &DbSession,
+    encryption: &EncryptionService,
+    user_id: &Uuid,
+) -> Result<Option<String>, AppError> {
+    let user = crate::services::auth::get_user_by_id(db, user_id).await?;
+    match user.api_key_stripe {
+        Some(encrypted) => Ok(Some(encryption.decrypt(&encrypted)?)),
+        None => Ok(None),
+    }
+}
+
 // ─── Charge CRUD ─────────────────────────────────────────────────────────────
 
 #[allow(clippy::too_many_arguments)]
@@ -281,6 +424,16 @@ pub async fn create_charge(
             ).await?;
 
             (Some(mp_id), Some(qr_b64), Some(copia))
+        }
+        "stripe" => {
+            let token = mp_access_token
+                .ok_or_else(|| AppError::BadRequest("Chave Stripe não configurada".into()))?;
+
+            let (pi_id, qr_b64, copia) = create_stripe_pix_payment(
+                token, amount, description,
+            ).await?;
+
+            (Some(pi_id), Some(qr_b64), Some(copia))
         }
         _ => {
             // Direct mode: generate BR Code locally
@@ -509,35 +662,47 @@ pub async fn check_charge_status_live(
 ) -> Result<PixCharge, AppError> {
     let mut charge = check_charge_status(db, user_id, charge_id, conversation_id).await?;
 
-    // For MP charges that are still pending, actively check with MP API
-    if charge.pix_mode == "mercadopago" && charge.status == "pending" {
-        if let Some(ref mp_id) = charge.mp_payment_id {
-            if let Ok(Some(token)) = get_user_mp_token(db, encryption, user_id).await {
-                if let Ok(new_status) = fetch_mp_payment_status(&token, mp_id).await {
-                    if new_status != "pending" {
-                        // Update in DB
-                        let _ = update_charge_status(
-                            db, user_id, charge_id, &charge.assistant_id,
-                            charge.created_at, &new_status,
-                        ).await;
+    // For MP/Stripe charges that are still pending, actively check with provider API
+    if charge.status == "pending" {
+        if let Some(ref payment_id) = charge.mp_payment_id {
+            let new_status_opt = match charge.pix_mode.as_str() {
+                "mercadopago" => {
+                    if let Ok(Some(token)) = get_user_mp_token(db, encryption, user_id).await {
+                        fetch_mp_payment_status(&token, payment_id).await.ok()
+                    } else { None }
+                }
+                "stripe" => {
+                    if let Ok(Some(token)) = get_user_stripe_token(db, encryption, user_id).await {
+                        fetch_stripe_payment_status(&token, payment_id).await.ok()
+                    } else { None }
+                }
+                _ => None,
+            };
 
-                        // Publish SSE event
-                        crate::services::events::publish_global(user_id, crate::services::events::SseEvent {
-                            event_type: "pix_status_changed".into(),
-                            data: serde_json::json!({
-                                "chargeId": charge_id.to_string(),
-                                "assistantId": charge.assistant_id.to_string(),
-                                "status": new_status,
-                            }).to_string(),
-                        }).await;
+            if let Some(new_status) = new_status_opt {
+                if new_status != "pending" {
+                    // Update in DB
+                    let _ = update_charge_status(
+                        db, user_id, charge_id, &charge.assistant_id,
+                        charge.created_at, &new_status,
+                    ).await;
 
-                        // Notify if approved
-                        if new_status == "approved" {
-                            charge.status = "approved".to_string();
-                            notify_pix_payment_confirmed(db, config, &charge).await;
-                        } else {
-                            charge.status = new_status;
-                        }
+                    // Publish SSE event
+                    crate::services::events::publish_global(user_id, crate::services::events::SseEvent {
+                        event_type: "pix_status_changed".into(),
+                        data: serde_json::json!({
+                            "chargeId": charge_id.to_string(),
+                            "assistantId": charge.assistant_id.to_string(),
+                            "status": new_status,
+                        }).to_string(),
+                    }).await;
+
+                    // Notify if approved
+                    if new_status == "approved" {
+                        charge.status = "approved".to_string();
+                        notify_pix_payment_confirmed(db, config, &charge).await;
+                    } else {
+                        charge.status = new_status;
                     }
                 }
             }

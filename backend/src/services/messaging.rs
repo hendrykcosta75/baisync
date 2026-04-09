@@ -437,21 +437,35 @@ pub async fn process_incoming_message(
                         .unwrap_or_else(|| (String::new(), "random".to_string(), "direct".to_string()));
 
                     if amount > 0.0 {
-                        // For MP mode, decrypt user's access token
-                        let mp_token = if pix_mode == "mercadopago" {
-                            match crate::services::pix::get_user_mp_token(db, encryption, &user_id).await {
-                                Ok(Some(token)) => Some(token),
-                                Ok(None) => {
-                                    tracing::error!("User has no Mercado Pago token configured");
-                                    None
-                                }
-                                Err(e) => {
-                                    tracing::error!(error = %e, "Failed to decrypt MP token");
-                                    None
+                        // For MP/Stripe mode, decrypt user's access token
+                        let mp_token = match pix_mode.as_str() {
+                            "mercadopago" => {
+                                match crate::services::pix::get_user_mp_token(db, encryption, &user_id).await {
+                                    Ok(Some(token)) => Some(token),
+                                    Ok(None) => {
+                                        tracing::error!("User has no Mercado Pago token configured");
+                                        None
+                                    }
+                                    Err(e) => {
+                                        tracing::error!(error = %e, "Failed to decrypt MP token");
+                                        None
+                                    }
                                 }
                             }
-                        } else {
-                            None
+                            "stripe" => {
+                                match crate::services::pix::get_user_stripe_token(db, encryption, &user_id).await {
+                                    Ok(Some(token)) => Some(token),
+                                    Ok(None) => {
+                                        tracing::error!("User has no Stripe key configured");
+                                        None
+                                    }
+                                    Err(e) => {
+                                        tracing::error!(error = %e, "Failed to decrypt Stripe key");
+                                        None
+                                    }
+                                }
+                            }
+                            _ => None,
                         };
 
                         // Build notification URL for MP webhooks
@@ -461,8 +475,8 @@ pub async fn process_incoming_message(
                             None
                         };
 
-                        // Skip if MP mode but no token
-                        let should_create = pix_mode != "mercadopago" || mp_token.is_some();
+                        // Skip if provider mode but no token
+                        let should_create = (pix_mode != "mercadopago" && pix_mode != "stripe") || mp_token.is_some();
 
                         if should_create {
                             match crate::services::pix::create_charge(
@@ -531,6 +545,145 @@ pub async fn process_incoming_message(
                                 }
                                 Err(e) => {
                                     tracing::error!(error = %e, "Failed to create PIX charge via tool");
+                                }
+                            }
+                        }
+                    }
+                }
+                // check_status is handled entirely in execute_tool, no post-processing needed
+            }
+            "card_payment" => {
+                let action = record.arguments.get("action")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                if action == "create_charge" {
+                    let amount = record.arguments.get("amount")
+                        .and_then(|v| v.as_f64()).unwrap_or(0.0);
+                    let desc = record.arguments.get("description")
+                        .and_then(|v| v.as_str()).unwrap_or("Cobrança por cartão");
+                    let customer_name = record.arguments.get("customer_name")
+                        .and_then(|v| v.as_str());
+                    let customer_cpf = record.arguments.get("customer_cpf")
+                        .and_then(|v| v.as_str());
+                    let payment_type = record.arguments.get("payment_type")
+                        .and_then(|v| v.as_str()).unwrap_or("credit");
+                    let installments = record.arguments.get("installments")
+                        .and_then(|v| v.as_i64()).unwrap_or(1) as i32;
+
+                    // Extract tool config: card_mode
+                    let tool_config = record.tool_id.and_then(|tid| {
+                        tools.iter().find(|t| t.id == tid).map(|t| {
+                            let headers: serde_json::Value = t.headers_json.as_deref()
+                                .and_then(|h| serde_json::from_str(h).ok())
+                                .unwrap_or(serde_json::json!({}));
+                            let card_mode = headers.get("card_mode")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("stripe")
+                                .to_string();
+                            card_mode
+                        })
+                    });
+
+                    let card_mode = tool_config.unwrap_or_else(|| "stripe".to_string());
+
+                    if amount > 0.0 {
+                        // Decrypt provider token
+                        let provider_token = match card_mode.as_str() {
+                            "stripe" => {
+                                match crate::services::pix::get_user_stripe_token(db, encryption, &user_id).await {
+                                    Ok(Some(token)) => Some(token),
+                                    Ok(None) => {
+                                        tracing::error!("User has no Stripe key configured for card payment");
+                                        None
+                                    }
+                                    Err(e) => {
+                                        tracing::error!(error = %e, "Failed to decrypt Stripe key");
+                                        None
+                                    }
+                                }
+                            }
+                            "mercadopago" => {
+                                match crate::services::pix::get_user_mp_token(db, encryption, &user_id).await {
+                                    Ok(Some(token)) => Some(token),
+                                    Ok(None) => {
+                                        tracing::error!("User has no Mercado Pago token configured for card payment");
+                                        None
+                                    }
+                                    Err(e) => {
+                                        tracing::error!(error = %e, "Failed to decrypt MP token");
+                                        None
+                                    }
+                                }
+                            }
+                            _ => None,
+                        };
+
+                        // Build notification URL for MP card webhooks
+                        let notification_url = if card_mode == "mercadopago" && config.app_url.starts_with("https://") {
+                            Some(format!("{}/api/webhooks/mercadopago/card", config.app_url))
+                        } else {
+                            None
+                        };
+
+                        if let Some(token) = provider_token {
+                            match crate::services::card_payment::create_charge(
+                                db, &user_id, &assistant_id, Some(&conversation.id),
+                                &webhook.phone, amount, desc, &card_mode,
+                                &token, customer_name, customer_cpf,
+                                payment_type, installments,
+                                &config.app_url, notification_url.as_deref(),
+                            ).await {
+                                Ok(charge) => {
+                                    // Save charge info to conversation
+                                    let parcelas_info = if charge.installments > 1 {
+                                        format!("{}x de R$ {:.2}", charge.installments, charge.amount / charge.installments as f64)
+                                    } else {
+                                        "à vista".to_string()
+                                    };
+                                    let charge_memo = format!(
+                                        "[Sistema] Cobrança por cartão criada. charge_id: {} | Valor: R$ {:.2} | {} {} ({}) | Cliente: {} | Status: pending",
+                                        charge.id, charge.amount,
+                                        if charge.payment_type == "debit" { "Débito" } else { "Crédito" },
+                                        charge.card_mode, parcelas_info,
+                                        charge.customer_name.as_deref().unwrap_or("--"),
+                                    );
+                                    let _ = save_message(db, &conversation.id, "system", &charge_memo, None, None, None).await;
+
+                                    // Publish SSE event
+                                    event_bus.publish(&user_id, crate::services::events::SseEvent {
+                                        event_type: "card_charge_created".into(),
+                                        data: serde_json::json!({
+                                            "chargeId": charge.id.to_string(),
+                                            "assistantId": assistant_id.to_string(),
+                                            "amount": charge.amount,
+                                            "customerName": charge.customer_name,
+                                        }).to_string(),
+                                    }).await;
+
+                                    // Spawn background poller
+                                    if let Some(ref session_id) = charge.provider_session_id {
+                                        crate::services::card_payment::spawn_card_payment_poller(
+                                            db.clone(), config.clone(), encryption.clone(),
+                                            event_bus.clone(),
+                                            user_id, charge.id, assistant_id,
+                                            session_id.clone(), card_mode.clone(),
+                                        );
+                                    }
+
+                                    // Send own-domain payment link to customer
+                                    {
+                                        let pay_link = format!("{}/pay/{}", config.app_url, charge.id);
+                                        let msg = format!(
+                                            "Aqui está o link para pagamento seguro por cartão:\n\n{}\n\nValor: R$ {:.2}\n{}",
+                                            pay_link, amount, desc
+                                        );
+                                        if let Err(e) = send_message_via_provider(config, &integration, &webhook.phone, &msg).await {
+                                            tracing::error!(error = %e, "Failed to send card checkout link");
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    tracing::error!(error = %e, "Failed to create card charge via tool");
                                 }
                             }
                         }

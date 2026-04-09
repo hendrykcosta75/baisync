@@ -20,6 +20,9 @@ pub enum AppError {
     #[error("Database error: {0}")]
     DatabaseError(String),
 
+    #[error("Forbidden: {0}")]
+    Forbidden(String),
+
     #[error("Rate limit exceeded")]
     RateLimitExceeded,
 
@@ -33,6 +36,7 @@ impl IntoResponse for AppError {
             AppError::NotFound(msg) => (StatusCode::NOT_FOUND, msg.clone()),
             AppError::Unauthorized(msg) => (StatusCode::UNAUTHORIZED, msg.clone()),
             AppError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg.clone()),
+            AppError::Forbidden(msg) => (StatusCode::FORBIDDEN, msg.clone()),
             AppError::InternalError(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg.clone()),
             AppError::DatabaseError(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg.clone()),
             AppError::RateLimitExceeded => {

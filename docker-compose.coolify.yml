@@ -40,6 +40,8 @@ services:
       - 'APP_URL=https://ai.planejareconsultoria.com.br'
       - 'BAISYNC_API_KEY=***REMOVED***'
       - 'BAISYNC_RATE_LIMIT_PER_HOUR=150'
+      - 'ADMIN_USER=enkinho'
+      - 'ADMIN_PASSWORD=StU457vzp4'
     networks:
       - inertial-network
     healthcheck:

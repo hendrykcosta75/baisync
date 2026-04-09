@@ -74,7 +74,23 @@ async fn main() {
             "/api/webhooks/mercadopago",
             post(handlers::pix::webhook_mercadopago),
         )
-;
+        .route("/api/admin/login", post(handlers::admin::admin_login))
+        .route(
+            "/api/pay/{charge_id}",
+            get(handlers::card_payment::get_charge_info),
+        )
+        .route(
+            "/api/pay/{charge_id}/process",
+            post(handlers::card_payment::process_mp_card_payment),
+        )
+        .route(
+            "/api/webhooks/stripe",
+            post(handlers::card_payment::webhook_stripe),
+        )
+        .route(
+            "/api/webhooks/mercadopago/card",
+            post(handlers::card_payment::webhook_mercadopago_card),
+        );
 
     // Protected routes (require auth)
     let protected_routes = Router::new()
@@ -168,6 +184,10 @@ async fn main() {
         .route(
             "/api/user/api-keys",
             get(handlers::api_keys::get_keys).put(handlers::api_keys::update_keys),
+        )
+        .route(
+            "/api/user/stripe/check-pix",
+            get(handlers::api_keys::check_stripe_pix),
         )
         // ElevenLabs
         .route(
@@ -338,6 +358,35 @@ async fn main() {
         )
         .layer(axum_mw::from_fn(middleware::auth::auth_middleware));
 
+    // Admin protected routes
+    let admin_routes = Router::new()
+        .route("/api/admin/stats", get(handlers::admin::dashboard_stats))
+        .route(
+            "/api/admin/users",
+            get(handlers::admin::list_users).post(handlers::admin::create_user),
+        )
+        .route(
+            "/api/admin/users/{id}",
+            get(handlers::admin::get_user).delete(handlers::admin::delete_user),
+        )
+        .route(
+            "/api/admin/users/{id}/block",
+            put(handlers::admin::block_user),
+        )
+        .route(
+            "/api/admin/users/{id}/detail",
+            get(handlers::admin::get_user_enriched),
+        )
+        .route(
+            "/api/admin/integrations",
+            get(handlers::admin::list_integrations),
+        )
+        .route(
+            "/api/admin/usage",
+            get(handlers::admin::platform_usage),
+        )
+        .layer(axum_mw::from_fn(middleware::admin::admin_middleware));
+
     let cors = CorsLayer::new()
         .allow_origin(Any)
         .allow_methods(Any)
@@ -346,6 +395,7 @@ async fn main() {
     let app = Router::new()
         .merge(public_routes)
         .merge(protected_routes)
+        .merge(admin_routes)
         .layer(Extension(db))
         .layer(Extension(config.clone()))
         .layer(Extension(encryption))

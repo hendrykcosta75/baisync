@@ -29,5 +29,8 @@ hex = "0.4"
 urlencoding = "2"
 futures = "0.3"
 tokio-stream = { version = "0.1", features = ["sync"] }
+subtle = "2"
+hmac = "0.12"
+sha2 = "0.10"
 qrcode = "0.14"
 image = { version = "0.25", default-features = false, features = ["png"] }

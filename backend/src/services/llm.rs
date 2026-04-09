@@ -248,6 +248,59 @@ impl From<&AssistantTool> for LlmTool {
                     tool_type,
                 };
             }
+            "card_payment" => {
+                return Self {
+                    id: Some(t.id),
+                    name: sanitize_tool_name(&t.name),
+                    description: t.description.clone().unwrap_or_else(||
+                        "Cria cobranças por cartão de crédito/débito e verifica status de pagamentos. O cliente recebe um link de pagamento seguro. REGRAS: 1) Sempre pergunte ao cliente se deseja pagar no crédito ou débito. 2) Se for crédito, pergunte em quantas parcelas (1x a 12x). 3) Só chame esta tool após confirmar esses dados com o cliente. 4) O valor mínimo por parcela é R$5,00. Exemplo: para 2x o valor mínimo da cobrança é R$10,00, para 3x é R$15,00. Se o valor for menor, informe o cliente e sugira menos parcelas ou pagamento à vista. 5) Débito é sempre à vista (1x).".to_string()
+                    ),
+                    parameters: json!({
+                        "type": "object",
+                        "properties": {
+                            "action": {
+                                "type": "string",
+                                "enum": ["create_charge", "check_status"],
+                                "description": "Ação: create_charge (criar nova cobrança por cartão) ou check_status (verificar status de pagamento)"
+                            },
+                            "amount": {
+                                "type": "number",
+                                "description": "Valor da cobrança em reais (ex: 29.90). Obrigatório para create_charge."
+                            },
+                            "description": {
+                                "type": "string",
+                                "description": "Descrição da cobrança (ex: 'Pedido #123 - Pizza Margherita'). Obrigatório para create_charge."
+                            },
+                            "customer_name": {
+                                "type": "string",
+                                "description": "Nome completo do cliente. Obrigatório para create_charge."
+                            },
+                            "payment_type": {
+                                "type": "string",
+                                "enum": ["credit", "debit"],
+                                "description": "Tipo de pagamento: credit (cartão de crédito, permite parcelamento) ou debit (cartão de débito, sempre à vista). Obrigatório para create_charge."
+                            },
+                            "installments": {
+                                "type": "integer",
+                                "description": "Número de parcelas (1-12). Obrigatório para crédito — pergunte ao cliente antes. Para débito use 1. Valor mínimo por parcela: R$5,00. Exemplo: R$30 em 3x = R$10/parcela (ok). R$10 em 3x = R$3,33/parcela (não permitido, sugira 2x ou 1x)."
+                            },
+                            "charge_id": {
+                                "type": "string",
+                                "description": "ID da cobrança para consultar (obrigatório para check_status)"
+                            }
+                        },
+                        "required": ["action", "payment_type", "installments"]
+                    }),
+                    endpoint: String::new(),
+                    method: String::new(),
+                    headers: t.headers_json.clone(),
+                    auth: None,
+                    query_params: None,
+                    body_content_type: None,
+                    body_content: None,
+                    tool_type,
+                };
+            }
             "schedule_appointment" => {
                 return Self {
                     id: Some(t.id),
@@ -531,6 +584,93 @@ async fn execute_tool(client: &Client, tool: &LlmTool, arguments: &Value, ctx: &
                 error: None,
                 duration_ms: start.elapsed().as_millis() as i32,
                 tool_type: "pix_payment".to_string(),
+            };
+            return (result, record);
+        }
+        "card_payment" => {
+            let action = arguments.get("action").and_then(|v| v.as_str()).unwrap_or("create_charge");
+            tracing::info!(action = %action, arguments = %arguments, "card_payment tool called");
+
+            let result = if action == "create_charge" {
+                let amount = arguments.get("amount").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                let desc = arguments.get("description").and_then(|v| v.as_str()).unwrap_or("");
+                let customer_name = arguments.get("customer_name").and_then(|v| v.as_str()).unwrap_or("");
+                let payment_type = arguments.get("payment_type").and_then(|v| v.as_str()).unwrap_or("credit");
+                let installments = arguments.get("installments").and_then(|v| v.as_i64()).unwrap_or(1) as i32;
+
+                if amount <= 0.0 {
+                    json!({"status": "error", "message": "Valor deve ser maior que zero."}).to_string()
+                } else if desc.is_empty() {
+                    json!({"status": "error", "message": "Descrição é obrigatória."}).to_string()
+                } else if customer_name.is_empty() {
+                    json!({"status": "error", "message": "Nome do cliente é obrigatório."}).to_string()
+                } else if payment_type != "credit" && payment_type != "debit" {
+                    json!({"status": "error", "message": "Tipo de pagamento deve ser 'credit' ou 'debit'."}).to_string()
+                } else if payment_type == "debit" && installments > 1 {
+                    json!({"status": "error", "message": "Cartão de débito não permite parcelamento."}).to_string()
+                } else if installments < 1 || installments > 12 {
+                    json!({"status": "error", "message": "Parcelas devem ser entre 1 e 12."}).to_string()
+                } else if installments > 1 && (amount / installments as f64) < 5.0 {
+                    let max_parcelas = (amount / 5.0).floor() as i32;
+                    let sugestao = if max_parcelas >= 2 {
+                        format!("Para R$ {:.2}, o máximo é {}x (R$ {:.2}/parcela).", amount, max_parcelas, amount / max_parcelas as f64)
+                    } else {
+                        format!("Para R$ {:.2}, apenas pagamento à vista (1x) é permitido.", amount)
+                    };
+                    json!({"status": "error", "message": format!("Valor mínimo por parcela é R$ 5,00. {}x de R$ {:.2} = R$ {:.2}/parcela. {}", installments, amount, amount / installments as f64, sugestao)}).to_string()
+                } else {
+                    let parcelas_msg = if installments > 1 {
+                        format!("{}x de R$ {:.2}", installments, amount / installments as f64)
+                    } else {
+                        "à vista".to_string()
+                    };
+                    json!({"status": "queued", "action": "create_charge", "message": format!("Link de pagamento por cartão de {} será gerado ({}).", if payment_type == "credit" { "crédito" } else { "débito" }, parcelas_msg)}).to_string()
+                }
+            } else if action == "check_status" {
+                let charge_id_str = arguments.get("charge_id").and_then(|v| v.as_str()).unwrap_or("");
+                if let (Some(db), Some(user_id), Some(encryption), Some(config)) = (ctx.db, ctx.user_id, ctx.encryption, ctx.config) {
+                    let conv_id = ctx.conversation_id;
+                    match uuid::Uuid::parse_str(charge_id_str) {
+                        Ok(cid) => {
+                            match crate::services::card_payment::check_charge_status_live(db, encryption, config, &user_id, &cid, conv_id.as_ref()).await {
+                                Ok(charge) => {
+                                    json!({
+                                        "status": "ok",
+                                        "charge_id": charge.id.to_string(),
+                                        "payment_status": charge.status,
+                                        "amount": charge.amount,
+                                        "description": charge.description,
+                                        "checkout_url": charge.checkout_url,
+                                        "message": match charge.status.as_str() {
+                                            "approved" => "Pagamento confirmado!",
+                                            "pending" => "Pagamento ainda pendente.",
+                                            "cancelled" => "Pagamento foi cancelado ou expirou.",
+                                            "refunded" => "Pagamento foi estornado.",
+                                            _ => "Status desconhecido."
+                                        }
+                                    }).to_string()
+                                }
+                                Err(e) => json!({"status": "error", "message": e.to_string()}).to_string(),
+                            }
+                        }
+                        Err(_) => json!({"status": "error", "message": "ID da cobrança inválido."}).to_string(),
+                    }
+                } else {
+                    json!({"status": "error", "message": "Serviço de pagamento indisponível."}).to_string()
+                }
+            } else {
+                json!({"status": "error", "message": format!("Ação desconhecida: {}", action)}).to_string()
+            };
+
+            let record = ToolCallRecord {
+                tool_id: tool.id,
+                tool_name: tool.name.clone(),
+                arguments: arguments.clone(),
+                status_code: Some(200),
+                response_body: Some(result.clone()),
+                error: None,
+                duration_ms: start.elapsed().as_millis() as i32,
+                tool_type: "card_payment".to_string(),
             };
             return (result, record);
         }

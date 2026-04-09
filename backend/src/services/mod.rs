@@ -1,3 +1,4 @@
+pub mod admin;
 pub mod appointment;
 pub mod assistant;
 pub mod auth;
@@ -11,6 +12,7 @@ pub mod llm;
 pub mod messaging;
 pub mod notification;
 pub mod openai_audio;
+pub mod card_payment;
 pub mod pix;
 pub mod rag;
 pub mod transcription;
