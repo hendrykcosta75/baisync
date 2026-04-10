@@ -1,23 +1,19 @@
 #!/bin/bash
 
-# Cores para o terminal (estético, mas ajuda a ler)
+# Local-only deploy — build and run for development
+# Production deploys happen automatically via GitHub Actions on push to main/master
+
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+NC='\033[0m'
 
-echo -e "${BLUE}1. 🏗️  Buildando as imagens locais...${NC}"
-# O --no-cache é opcional, use se quiser um build totalmente limpo
+echo -e "${BLUE}1. Buildando as imagens locais...${NC}"
 docker compose build
 
-echo -e "${BLUE}2. 📤 Enviando para o Docker Hub (enki10/intertial-codebase)...${NC}"
-docker compose push
-
-echo -e "${BLUE}3. 🚀 Atualizando os serviços locais...${NC}"
-# O comando 'up -d' percebe que a imagem mudou e recria apenas o necessário
+echo -e "${BLUE}2. Atualizando os serviços locais...${NC}"
 docker compose up -d --remove-orphans
 
-echo -e "${BLUE}4. 🧹 Limpando imagens antigas (Dangling Images)...${NC}"
-# Remove imagens "órfãs" que ficaram sobrando do build anterior para não encher o HD
+echo -e "${BLUE}3. Limpando imagens antigas...${NC}"
 docker image prune -f
 
-echo -e "${GREEN}✅ Sucesso! O backend roda as migrations automaticamente no startup.${NC}"
+echo -e "${GREEN}Sucesso! O backend roda as migrations automaticamente no startup.${NC}"
