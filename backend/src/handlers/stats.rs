@@ -2,6 +2,7 @@ use axum::extract::{Extension, Path, Query};
 use axum::Json;
 use chrono::{Duration, Utc};
 use serde::{Deserialize, Serialize};
+use serde_json;
 use uuid::Uuid;
 
 use crate::db::DbSession;
@@ -43,6 +44,7 @@ fn resolve_periods(dates: Option<&str>, days_fallback: i64) -> Vec<String> {
 #[derive(Deserialize)]
 pub struct LimitQuery {
     pub limit: Option<usize>,
+    pub offset: Option<usize>,
     pub share_token: Option<String>,
 }
 
@@ -201,8 +203,9 @@ pub async fn assistant_stats(
         .map(|d| daily_data.get(d).map(|(m, _)| *m).unwrap_or(0))
         .collect();
 
-    // Conversations: last interaction + channel breakdown
-    let convs = messaging::list_conversations(&db, &assistant_id, &owner_id).await?;
+    // Conversations: last interaction + channel breakdown (fetch all for stats)
+    let convs_page = messaging::list_conversations(&db, &assistant_id, &owner_id, 10000, None, None).await?;
+    let convs = &convs_page.items;
 
     let last_interaction_at = convs
         .iter()
@@ -212,7 +215,7 @@ pub async fn assistant_stats(
 
     let mut channel_map: std::collections::HashMap<String, i64> =
         std::collections::HashMap::new();
-    for conv in &convs {
+    for conv in convs {
         if conv.channel != "playground" {
             *channel_map.entry(conv.channel.clone()).or_insert(0) += 1;
         }
@@ -270,7 +273,7 @@ pub async fn assistant_logs(
     Extension(auth_user): Extension<AuthUser>,
     Path(assistant_id): Path<Uuid>,
     Query(params): Query<LimitQuery>,
-) -> Result<Json<Vec<AssistantLog>>, AppError> {
+) -> Result<Json<serde_json::Value>, AppError> {
     let limit = params.limit.unwrap_or(100).min(500);
 
     // Verify ownership or share_token access
@@ -293,9 +296,14 @@ pub async fn assistant_logs(
     }
 
     all_logs.sort_by(|a, b| b.0.cmp(&a.0));
-    let result: Vec<AssistantLog> = all_logs.into_iter().take(limit).map(|(_, l)| l).collect();
+    let offset = params.offset.unwrap_or(0);
+    let page: Vec<AssistantLog> = all_logs.into_iter().skip(offset).take(limit).map(|(_, l)| l).collect();
+    let has_more = page.len() == limit;
 
-    Ok(Json(result))
+    Ok(Json(serde_json::json!({
+        "items": page,
+        "nextOffset": if has_more { Some(offset + limit) } else { None::<usize> },
+    })))
 }
 
 // ─── GET /api/user/activity?limit=N ──────────────────────────────────────────
@@ -322,9 +330,9 @@ pub async fn user_activity(
     let mut events: Vec<(chrono::DateTime<Utc>, ActivityEvent)> = Vec::new();
 
     for asst in &assistants {
-        let convs =
-            messaging::list_conversations(&db, &asst.id, &auth_user.user_id).await?;
-        for conv in convs {
+        let convs_page =
+            messaging::list_conversations(&db, &asst.id, &auth_user.user_id, 10000, None, None).await?;
+        for conv in convs_page.items {
             events.push((
                 conv.last_message_at,
                 ActivityEvent {

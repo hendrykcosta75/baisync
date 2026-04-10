@@ -8,6 +8,7 @@ pub struct Conversation {
     pub user_id: Uuid,
     pub id: Uuid,
     pub contact_number: String,
+    pub contact_name: Option<String>,
     pub channel: String,
     pub started_at: DateTime<Utc>,
     pub last_message_at: DateTime<Utc>,

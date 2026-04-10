@@ -12,6 +12,8 @@ use crate::middleware::auth::AuthUser;
 #[derive(Debug, Deserialize)]
 pub struct ChargesQuery {
     pub limit: Option<i32>,
+    pub offset: Option<usize>,
+    pub status: Option<String>,
 }
 
 pub async fn overview(
@@ -97,6 +99,15 @@ pub async fn charges(
     }).collect();
     data.extend(card_data);
 
+    // Filter by status if provided
+    if let Some(ref status_filter) = query.status {
+        if !status_filter.is_empty() {
+            data.retain(|item| {
+                item.get("status").and_then(|v| v.as_str()).unwrap_or("") == status_filter.as_str()
+            });
+        }
+    }
+
     // Sort by createdAt descending
     data.sort_by(|a, b| {
         let a_date = a.get("createdAt").and_then(|v| v.as_str()).unwrap_or("");
@@ -104,10 +115,15 @@ pub async fn charges(
         b_date.cmp(a_date)
     });
 
-    // Apply limit
-    data.truncate(limit as usize);
+    // Apply offset-based pagination
+    let offset = query.offset.unwrap_or(0);
+    let page: Vec<Value> = data.into_iter().skip(offset).take(limit as usize).collect();
+    let has_more = page.len() == limit as usize;
 
-    Ok(Json(json!(data)))
+    Ok(Json(json!({
+        "items": page,
+        "nextOffset": if has_more { Some(offset + limit as usize) } else { None },
+    })))
 }
 
 pub async fn update_charge_status_handler(

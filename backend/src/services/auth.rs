@@ -66,7 +66,10 @@ pub fn decode_jwt(token: &str, secret: &str) -> Result<Claims, AppError> {
         &Validation::default(),
     )
     .map(|data| data.claims)
-    .map_err(|e| AppError::Unauthorized(format!("Invalid token: {e}")))
+    .map_err(|e| {
+        tracing::debug!("JWT decode error: {e}");
+        AppError::Unauthorized("Invalid token".into())
+    })
 }
 
 pub fn create_admin_jwt(secret: &str) -> Result<String, AppError> {

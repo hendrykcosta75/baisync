@@ -69,6 +69,7 @@ pub async fn delete(
 #[derive(Deserialize)]
 pub struct CallLogsQuery {
     pub limit: Option<i32>,
+    pub cursor: Option<String>,
     pub share_token: Option<String>,
 }
 
@@ -77,13 +78,13 @@ pub async fn list_calls(
     Extension(auth_user): Extension<AuthUser>,
     Path((assistant_id, tool_id)): Path<(Uuid, Uuid)>,
     Query(query): Query<CallLogsQuery>,
-) -> Result<Json<Vec<ToolCallLog>>, AppError> {
+) -> Result<Json<crate::models::pagination::PaginatedResponse<ToolCallLog>>, AppError> {
     assistant_service::resolve_assistant_access(
         &db, &auth_user.user_id, &assistant_id, query.share_token.as_deref(), "read",
     ).await?;
     let limit = query.limit.unwrap_or(50).min(200);
-    let logs = assistant_service::list_tool_call_logs(&db, &assistant_id, &tool_id, limit).await?;
-    Ok(Json(logs))
+    let paginated = assistant_service::list_tool_call_logs_paged(&db, &assistant_id, &tool_id, limit, query.cursor.as_deref()).await?;
+    Ok(Json(paginated))
 }
 
 // ─── POST /api/tools/test-url ────────────────────────────────────────────────

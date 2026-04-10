@@ -590,6 +590,52 @@ pub async fn list_tool_call_logs(
     Ok(logs)
 }
 
+pub async fn list_tool_call_logs_paged(
+    db: &DbSession,
+    assistant_id: &Uuid,
+    tool_id: &Uuid,
+    limit: i32,
+    cursor: Option<&str>,
+) -> Result<crate::models::pagination::PaginatedResponse<ToolCallLog>, AppError> {
+    let (result, next_cursor) = crate::db::query_paged(
+        db,
+        "SELECT assistant_id, tool_id, id, tool_name, arguments, status_code, response_body, error, duration_ms, called_at FROM inertial_eclipse.tool_call_logs WHERE assistant_id = ? AND tool_id = ? ORDER BY called_at DESC",
+        (assistant_id, tool_id),
+        limit,
+        cursor,
+    )
+    .await
+    .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+
+    let mut logs = Vec::new();
+    for row in result
+        .rows_typed::<ToolCallLogRow>()
+        .map_err(|e| AppError::DatabaseError(e.to_string()))?
+    {
+        let r = row.map_err(|e| AppError::DatabaseError(e.to_string()))?;
+        let called_at = r.9
+            .map(|ts| chrono::DateTime::<chrono::Utc>::from(std::time::UNIX_EPOCH + std::time::Duration::from_millis(ts.0 as u64)))
+            .unwrap_or_else(chrono::Utc::now);
+        logs.push(ToolCallLog {
+            assistant_id: r.0,
+            tool_id: r.1,
+            id: r.2,
+            tool_name: r.3.unwrap_or_default(),
+            arguments: r.4,
+            status_code: r.5,
+            response_body: r.6,
+            error: r.7,
+            duration_ms: r.8.unwrap_or(0),
+            called_at,
+        });
+    }
+
+    Ok(crate::models::pagination::PaginatedResponse {
+        items: logs,
+        cursor: next_cursor,
+    })
+}
+
 // --- Integrations ---
 
 type IntegrationRow = (
@@ -674,31 +720,42 @@ pub async fn create_integration(
     // Prevent duplicate phone numbers across integrations
     if let Some(ref phone) = req.config_phone_number {
         if !phone.is_empty() {
-            if let Ok(existing_integration) = crate::services::messaging::find_integration_by_phone(db, phone).await {
+            if let Ok(existing_integration) = crate::services::messaging::find_any_integration_by_phone(db, phone).await {
                 // Allow if it's the same assistant (re-creation), reject otherwise
                 if existing_integration.assistant_id != *assistant_id || existing_integration.user_id != *user_id {
-                    let is_same_user = existing_integration.user_id == *user_id;
-                    // Get assistant name for the error message
-                    let assistant_name = if is_same_user {
-                        get_assistant(db, &existing_integration.user_id, &existing_integration.assistant_id)
-                            .await
-                            .map(|a| a.name)
-                            .unwrap_or_else(|_| "outro assistente".into())
+                    // If the existing integration is disconnected, clean it up and allow
+                    if existing_integration.status == "disconnected" {
+                        let _ = db.query_unpaged(
+                            "DELETE FROM inertial_eclipse.assistant_integrations WHERE assistant_id = ? AND user_id = ? AND id = ?",
+                            (&existing_integration.assistant_id, &existing_integration.user_id, &existing_integration.id),
+                        ).await;
+                        tracing::info!(
+                            "Cleaned up disconnected integration {} to free phone {} for new user",
+                            existing_integration.id, phone
+                        );
                     } else {
-                        "assistente de outro usuário".into()
-                    };
-                    let msg = if is_same_user {
-                        format!(
-                            "PHONE_CONFLICT_SAME_USER|{}|{}|{}|Este número já está conectado ao assistente \"{}\".",
-                            existing_integration.assistant_id,
-                            existing_integration.id,
-                            assistant_name,
-                            assistant_name
-                        )
-                    } else {
-                        "PHONE_CONFLICT_OTHER_USER|Este número já está em uso por outro usuário.".into()
-                    };
-                    return Err(AppError::BadRequest(msg));
+                        let is_same_user = existing_integration.user_id == *user_id;
+                        let assistant_name = if is_same_user {
+                            get_assistant(db, &existing_integration.user_id, &existing_integration.assistant_id)
+                                .await
+                                .map(|a| a.name)
+                                .unwrap_or_else(|_| "outro assistente".into())
+                        } else {
+                            "assistente de outro usuário".into()
+                        };
+                        let msg = if is_same_user {
+                            format!(
+                                "PHONE_CONFLICT_SAME_USER|{}|{}|{}|Este número já está conectado ao assistente \"{}\".",
+                                existing_integration.assistant_id,
+                                existing_integration.id,
+                                assistant_name,
+                                assistant_name
+                            )
+                        } else {
+                            "PHONE_CONFLICT_OTHER_USER|Este número já está em uso por outro usuário.".into()
+                        };
+                        return Err(AppError::BadRequest(msg));
+                    }
                 }
             }
         }
@@ -747,18 +804,67 @@ pub async fn update_integration(
         .find(|i| i.id == *integration_id)
         .ok_or_else(|| AppError::NotFound("Integration not found".into()))?;
 
+    let phone_requested = req.config_phone_number.is_some();
+
     let channel = req.channel.unwrap_or(existing.channel);
     let provider = req.provider.unwrap_or(existing.provider);
     let status = req.status.unwrap_or(existing.status);
     let config_token = req.config_token.or(existing.config_token);
-    let config_phone_number = req.config_phone_number.or(existing.config_phone_number);
+    let config_phone_number = req.config_phone_number.or(existing.config_phone_number.clone());
     let config_chatwoot_url = req.config_chatwoot_url.or(existing.config_chatwoot_url);
     let config_rate_limit_per_day = req.config_rate_limit_per_day.or(existing.config_rate_limit_per_day);
     let config_max_message_length = req.config_max_message_length.or(existing.config_max_message_length);
     let config_audio_response_mode = req.config_audio_response_mode.or(existing.config_audio_response_mode);
     let config_interpret_documents = req.config_interpret_documents.or(existing.config_interpret_documents);
     let config_split_messages = req.config_split_messages.or(existing.config_split_messages);
-    let config_webhook_verify_token = req.config_webhook_verify_token.or(existing.config_webhook_verify_token);
+    let config_webhook_verify_token = req.config_webhook_verify_token.or(existing.config_webhook_verify_token.clone());
+
+    // Prevent duplicate phone numbers across integrations (only check when phone actually changed)
+    let phone_changed = phone_requested && config_phone_number != existing.config_phone_number;
+    if phone_changed {
+        if let Some(ref phone) = config_phone_number {
+            if !phone.is_empty() {
+                if let Ok(existing_integration) = crate::services::messaging::find_any_integration_by_phone(db, phone).await {
+                    // Allow if it's the same integration being updated, reject otherwise
+                    if existing_integration.id != *integration_id {
+                        if existing_integration.status == "disconnected" {
+                            let _ = db.query_unpaged(
+                                "DELETE FROM inertial_eclipse.assistant_integrations WHERE assistant_id = ? AND user_id = ? AND id = ?",
+                                (&existing_integration.assistant_id, &existing_integration.user_id, &existing_integration.id),
+                            ).await;
+                            tracing::info!(
+                                "Cleaned up disconnected integration {} to free phone {} for update",
+                                existing_integration.id, phone
+                            );
+                        } else {
+                            let is_same_user = existing_integration.user_id == *user_id;
+                            let assistant_name = if is_same_user {
+                                get_assistant(db, &existing_integration.user_id, &existing_integration.assistant_id)
+                                    .await
+                                    .map(|a| a.name)
+                                    .unwrap_or_else(|_| "outro assistente".into())
+                            } else {
+                                "assistente de outro usuário".into()
+                            };
+                            let msg = if is_same_user {
+                                format!(
+                                    "PHONE_CONFLICT_SAME_USER|{}|{}|{}|Este número já está conectado ao assistente \"{}\".",
+                                    existing_integration.assistant_id,
+                                    existing_integration.id,
+                                    assistant_name,
+                                    assistant_name
+                                )
+                            } else {
+                                "PHONE_CONFLICT_OTHER_USER|Este número já está em uso por outro usuário.".into()
+                            };
+                            return Err(AppError::BadRequest(msg));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
 
     db.query_unpaged(
         "UPDATE inertial_eclipse.assistant_integrations SET channel = ?, provider = ?, status = ?, config_token = ?, config_phone_number = ?, config_chatwoot_url = ?, config_rate_limit_per_day = ?, config_max_message_length = ?, config_audio_response_mode = ?, config_interpret_documents = ?, config_split_messages = ?, config_webhook_verify_token = ? WHERE assistant_id = ? AND user_id = ? AND id = ?",

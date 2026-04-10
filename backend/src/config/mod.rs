@@ -16,6 +16,7 @@ pub struct Config {
     pub baisync_rate_limit: i32,
     pub admin_user: String,
     pub admin_password: String,
+    pub meta_app_secret: String,
 }
 
 impl Config {
@@ -41,6 +42,7 @@ impl Config {
                 .unwrap_or(150),
             admin_user: env::var("ADMIN_USER").unwrap_or_default(),
             admin_password: env::var("ADMIN_PASSWORD").unwrap_or_default(),
+            meta_app_secret: env::var("META_APP_SECRET").unwrap_or_default(),
         }
     }
 }

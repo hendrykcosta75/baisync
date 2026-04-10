@@ -31,6 +31,9 @@ pub struct IncomingWebhook {
     /// The original message ID (used by Meta Official for typing indicator)
     #[serde(default)]
     pub message_id: Option<String>,
+    /// Contact display name (pushName for Baileys, profile name for Meta, first+last for Telegram)
+    #[serde(default)]
+    pub contact_name: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -123,7 +126,7 @@ pub async fn process_incoming_message(
     }
 
     let conversation =
-        get_or_create_conversation(db, &assistant_id, &user_id, &webhook.phone, &integration.channel).await?;
+        get_or_create_conversation(db, &assistant_id, &user_id, &webhook.phone, &integration.channel, webhook.contact_name.as_deref()).await?;
 
     // Resolve the effective user message (transcribe audio if needed)
     let is_audio = webhook.media_type.as_deref()
@@ -856,20 +859,40 @@ pub async fn process_incoming_message(
         (now, &assistant_id, &user_id, &conversation.id),
     ).await.map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
-    update_usage_stats(db, &user_id, &assistant_id, llm_response.tokens_used).await?;
+    update_usage_stats(db, &user_id, &assistant_id, llm_response.tokens_used, rate_limit.is_some()).await?;
 
-    // Publish SSE event for conversation update
+    // Publish SSE event for conversation update (includes contact name for live refresh)
     event_bus.publish(&user_id, crate::services::events::SseEvent {
         event_type: "conversation_updated".into(),
         data: serde_json::json!({
             "conversationId": conversation.id.to_string(),
             "assistantId": assistant_id.to_string(),
+            "contactName": conversation.contact_name.as_deref().unwrap_or(&conversation.contact_number),
         }).to_string(),
     }).await;
 
     Ok(WebhookResponse { status: "ok".into(), message_id: Some(conversation.id.to_string()) })
 }
 
+/// Find ANY integration by phone (regardless of status). Used for uniqueness checks.
+pub async fn find_any_integration_by_phone(db: &DbSession, phone: &str) -> Result<AssistantIntegration, AppError> {
+    let result = db
+        .query_unpaged(
+            "SELECT assistant_id, user_id, id, channel, provider, status, config_token, config_phone_number, config_chatwoot_url, config_rate_limit_per_day, config_max_message_length, config_audio_response_mode, config_interpret_documents, config_split_messages, config_webhook_verify_token, created_at FROM inertial_eclipse.assistant_integrations WHERE config_phone_number = ? ALLOW FILTERING",
+            (phone,),
+        )
+        .await
+        .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+
+    let row = result
+        .maybe_first_row_typed::<IntegrationRow>()
+        .map_err(|e| AppError::DatabaseError(e.to_string()))?
+        .ok_or_else(|| AppError::NotFound("No integration found for this phone number".into()))?;
+
+    Ok(row_to_integration(row))
+}
+
+/// Find active (non-disconnected) integration by phone. Used for message routing.
 pub async fn find_integration_by_phone(db: &DbSession, phone: &str) -> Result<AssistantIntegration, AppError> {
     let result = db
         .query_unpaged(
@@ -988,34 +1011,75 @@ pub async fn find_integration_by_token(db: &DbSession, token: &str) -> Result<As
     valid.ok_or_else(|| AppError::NotFound("No active integration found for this token".into()))
 }
 
+/// Check rate limit and atomically reserve a message slot using CAS (compare-and-swap).
+/// This prevents race conditions where concurrent requests both pass the limit check.
 async fn is_rate_limited(db: &DbSession, integration: &AssistantIntegration, limit: i32) -> Result<bool, AppError> {
     let today = Utc::now().format("%Y-%m-%d").to_string();
-    let result = db
-        .query_unpaged(
-            "SELECT total_messages FROM inertial_eclipse.usage_stats WHERE user_id = ? AND assistant_id = ? AND period = ?",
-            (&integration.user_id, &integration.assistant_id, &today as &str),
-        )
-        .await
-        .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+    let max_retries = 3;
 
-    if let Some((count,)) = result
-        .maybe_first_row_typed::<(i64,)>()
-        .map_err(|e| AppError::DatabaseError(e.to_string()))?
-    {
-        if count >= limit as i64 {
+    for _ in 0..max_retries {
+        let result = db
+            .query_unpaged(
+                "SELECT total_tokens, total_messages FROM inertial_eclipse.usage_stats WHERE user_id = ? AND assistant_id = ? AND period = ?",
+                (&integration.user_id, &integration.assistant_id, &today as &str),
+            )
+            .await
+            .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+
+        let (current_tokens, current_messages) = result
+            .maybe_first_row_typed::<(i64, i64)>()
+            .map_err(|e| AppError::DatabaseError(e.to_string()))?
+            .unwrap_or((0, 0));
+
+        if current_messages >= limit as i64 {
             return Ok(true);
         }
+
+        // Atomically increment using LWT (IF condition ensures no concurrent overwrites)
+        let cas_result = if current_messages == 0 && current_tokens == 0 {
+            // Row doesn't exist yet — use INSERT IF NOT EXISTS
+            db.query_unpaged(
+                "INSERT INTO inertial_eclipse.usage_stats (user_id, assistant_id, period, total_tokens, total_messages) VALUES (?, ?, ?, 0, 2) IF NOT EXISTS",
+                (&integration.user_id, &integration.assistant_id, &today as &str),
+            ).await
+        } else {
+            // Row exists — use UPDATE with CAS
+            db.query_unpaged(
+                "UPDATE inertial_eclipse.usage_stats SET total_messages = ? WHERE user_id = ? AND assistant_id = ? AND period = ? IF total_messages = ?",
+                (current_messages + 2, &integration.user_id, &integration.assistant_id, &today as &str, current_messages),
+            ).await
+        };
+
+        match cas_result {
+            Ok(res) => {
+                // LWT returns [applied] as the first column
+                if let Ok(Some((applied,))) = res.maybe_first_row_typed::<(bool,)>() {
+                    if applied {
+                        return Ok(false); // Successfully reserved slot
+                    }
+                    // CAS failed — another request modified the row, retry
+                    continue;
+                }
+                // If we can't parse the result, assume success (non-LWT fallback)
+                return Ok(false);
+            }
+            Err(e) => return Err(AppError::DatabaseError(e.to_string())),
+        }
     }
+
+    // After max retries, be safe and allow the message (don't block legitimate traffic)
+    tracing::warn!("Rate limit CAS failed after {max_retries} retries for assistant {}", integration.assistant_id);
     Ok(false)
 }
 
-type ConversationRow = (Uuid, Uuid, Uuid, Option<String>, Option<String>, Option<DateTime<Utc>>, Option<DateTime<Utc>>, Option<String>, Option<bool>);
+type ConversationRow = (Uuid, Uuid, Uuid, Option<String>, Option<String>, Option<DateTime<Utc>>, Option<DateTime<Utc>>, Option<String>, Option<bool>, Option<String>);
 
 fn row_to_conversation(r: ConversationRow) -> Conversation {
     let fallback = Utc::now();
     Conversation {
         assistant_id: r.0, user_id: r.1, id: r.2,
         contact_number: r.3.unwrap_or_default(),
+        contact_name: r.9,
         channel: r.4.unwrap_or_default(),
         started_at: r.5.unwrap_or(fallback),
         last_message_at: r.6.unwrap_or(fallback),
@@ -1026,10 +1090,11 @@ fn row_to_conversation(r: ConversationRow) -> Conversation {
 
 async fn get_or_create_conversation(
     db: &DbSession, assistant_id: &Uuid, user_id: &Uuid, contact_number: &str, channel: &str,
+    contact_name: Option<&str>,
 ) -> Result<Conversation, AppError> {
     let result = db
         .query_unpaged(
-            "SELECT assistant_id, user_id, id, contact_number, channel, started_at, last_message_at, summary, ai_enabled FROM inertial_eclipse.conversations WHERE assistant_id = ? AND user_id = ? AND contact_number = ? ALLOW FILTERING",
+            "SELECT assistant_id, user_id, id, contact_number, channel, started_at, last_message_at, summary, ai_enabled, contact_name FROM inertial_eclipse.conversations WHERE assistant_id = ? AND user_id = ? AND contact_number = ? ALLOW FILTERING",
             (assistant_id, user_id, contact_number),
         )
         .await
@@ -1039,20 +1104,33 @@ async fn get_or_create_conversation(
         .maybe_first_row_typed::<ConversationRow>()
         .map_err(|e| AppError::DatabaseError(e.to_string()))?
     {
-        return Ok(row_to_conversation(row));
+        let mut conv = row_to_conversation(row);
+        // Update contact_name if a new non-empty value is provided and different
+        if let Some(name) = contact_name {
+            if !name.is_empty() && conv.contact_name.as_deref() != Some(name) {
+                db.query_unpaged(
+                    "UPDATE inertial_eclipse.conversations SET contact_name = ? WHERE assistant_id = ? AND user_id = ? AND id = ?",
+                    (name, assistant_id, user_id, &conv.id),
+                ).await.ok();
+                conv.contact_name = Some(name.to_string());
+            }
+        }
+        return Ok(conv);
     }
 
     let id = Uuid::new_v4();
     let now = ts_now();
 
     db.query_unpaged(
-        "INSERT INTO inertial_eclipse.conversations (assistant_id, user_id, id, contact_number, channel, started_at, last_message_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (assistant_id, user_id, &id, contact_number, channel, now, now),
+        "INSERT INTO inertial_eclipse.conversations (assistant_id, user_id, id, contact_number, channel, started_at, last_message_at, contact_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (assistant_id, user_id, &id, contact_number, channel, now, now, &contact_name),
     ).await.map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     Ok(Conversation {
         assistant_id: *assistant_id, user_id: *user_id, id,
-        contact_number: contact_number.to_string(), channel: channel.to_string(),
+        contact_number: contact_number.to_string(),
+        contact_name: contact_name.map(|s| s.to_string()),
+        channel: channel.to_string(),
         started_at: Utc::now(), last_message_at: Utc::now(), summary: None,
         ai_enabled: true,
     })
@@ -1099,14 +1177,55 @@ pub async fn get_recent_messages(db: &DbSession, conversation_id: &Uuid, limit: 
     Ok(messages)
 }
 
-pub async fn list_conversations(db: &DbSession, assistant_id: &Uuid, user_id: &Uuid) -> Result<Vec<Conversation>, AppError> {
-    let result = db
-        .query_unpaged(
-            "SELECT assistant_id, user_id, id, contact_number, channel, started_at, last_message_at, summary, ai_enabled FROM inertial_eclipse.conversations WHERE assistant_id = ? AND user_id = ?",
-            (assistant_id, user_id),
-        )
-        .await
-        .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+pub async fn get_messages_paged(
+    db: &DbSession, conversation_id: &Uuid, limit: i32, cursor: Option<&str>,
+) -> Result<crate::models::pagination::PaginatedResponse<Message>, AppError> {
+    let (result, next_cursor) = crate::db::query_paged(
+        db,
+        "SELECT conversation_id, id, role, content, media_url, media_type, tokens_used, sub_agent_id, created_at FROM inertial_eclipse.messages WHERE conversation_id = ? ORDER BY id DESC",
+        (conversation_id,),
+        limit,
+        cursor,
+    )
+    .await
+    .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+
+    let mut messages = Vec::new();
+    for row in result
+        .rows_typed::<(Uuid, CqlTimeuuid, Option<String>, Option<String>, Option<String>, Option<String>, Option<i32>, Option<Uuid>, Option<DateTime<Utc>>)>()
+        .map_err(|e| AppError::DatabaseError(e.to_string()))?
+    {
+        let r = row.map_err(|e| AppError::DatabaseError(e.to_string()))?;
+        messages.push(Message {
+            conversation_id: r.0, id: r.1.into(),
+            role: r.2.unwrap_or_default(), content: r.3,
+            media_url: r.4, media_type: r.5, tokens_used: r.6,
+            sub_agent_id: r.7, created_at: r.8.unwrap_or_else(Utc::now),
+        });
+    }
+
+    // Messages are returned newest-first (DESC), reverse to oldest-first for display
+    messages.reverse();
+
+    Ok(crate::models::pagination::PaginatedResponse {
+        items: messages,
+        cursor: next_cursor,
+    })
+}
+
+pub async fn list_conversations(
+    db: &DbSession, assistant_id: &Uuid, user_id: &Uuid,
+    limit: i32, cursor: Option<&str>, search: Option<&str>,
+) -> Result<crate::models::pagination::PaginatedResponse<Conversation>, AppError> {
+    let (result, next_cursor) = crate::db::query_paged(
+        db,
+        "SELECT assistant_id, user_id, id, contact_number, channel, started_at, last_message_at, summary, ai_enabled, contact_name FROM inertial_eclipse.conversations WHERE assistant_id = ? AND user_id = ?",
+        (assistant_id, user_id),
+        limit,
+        cursor,
+    )
+    .await
+    .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     let mut conversations = Vec::new();
     for row in result
@@ -1114,10 +1233,27 @@ pub async fn list_conversations(db: &DbSession, assistant_id: &Uuid, user_id: &U
         .map_err(|e| AppError::DatabaseError(e.to_string()))?
     {
         let r = row.map_err(|e| AppError::DatabaseError(e.to_string()))?;
-        conversations.push(row_to_conversation(r));
+        let conv = row_to_conversation(r);
+        // Application-level search filter (Cassandra can't efficiently filter text fields)
+        if let Some(q) = search {
+            if !q.is_empty() {
+                let q_lower = q.to_lowercase();
+                let matches_name = conv.contact_name.as_ref()
+                    .map(|n| n.to_lowercase().contains(&q_lower))
+                    .unwrap_or(false);
+                let matches_number = conv.contact_number.to_lowercase().contains(&q_lower);
+                if !matches_name && !matches_number {
+                    continue;
+                }
+            }
+        }
+        conversations.push(conv);
     }
 
-    Ok(conversations)
+    Ok(crate::models::pagination::PaginatedResponse {
+        items: conversations,
+        cursor: next_cursor,
+    })
 }
 
 pub async fn count_messages(db: &DbSession, conversation_id: &Uuid) -> Result<i64, AppError> {
@@ -1201,12 +1337,13 @@ pub async fn send_direct_message(
         (now, assistant_id, user_id, conversation_id),
     ).await.map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
-    // Publish SSE event
+    // Publish SSE event (includes contact name for live refresh)
     crate::services::events::publish_global(user_id, crate::services::events::SseEvent {
         event_type: "conversation_updated".into(),
         data: serde_json::json!({
             "conversationId": conversation_id.to_string(),
             "assistantId": assistant_id.to_string(),
+            "contactName": conv.contact_name.as_deref().unwrap_or(&conv.contact_number),
         }).to_string(),
     }).await;
 
@@ -1215,12 +1352,12 @@ pub async fn send_direct_message(
     messages.into_iter().last().ok_or_else(|| AppError::InternalError("Failed to retrieve saved message".into()))
 }
 
-async fn get_conversation(
+pub async fn get_conversation(
     db: &DbSession, assistant_id: &Uuid, user_id: &Uuid, conversation_id: &Uuid,
 ) -> Result<Conversation, AppError> {
     let result = db
         .query_unpaged(
-            "SELECT assistant_id, user_id, id, contact_number, channel, started_at, last_message_at, summary, ai_enabled FROM inertial_eclipse.conversations WHERE assistant_id = ? AND user_id = ? AND id = ?",
+            "SELECT assistant_id, user_id, id, contact_number, channel, started_at, last_message_at, summary, ai_enabled, contact_name FROM inertial_eclipse.conversations WHERE assistant_id = ? AND user_id = ? AND id = ?",
             (assistant_id, user_id, conversation_id),
         )
         .await
@@ -1301,10 +1438,12 @@ pub async fn playground_chat(
 
     let api_key = encryption.decrypt(&encrypted_key)?;
 
-    // Contact distinguishes who is chatting; DB partition key uses the owner's user_id
-    let contact = format!("playground-{requesting_user_id}");
+    // Contact distinguishes who is chatting; use hashed ID to avoid exposing the real UUID
+    use sha2::Digest;
+    let hash = sha2::Sha256::digest(requesting_user_id.as_bytes());
+    let contact = format!("playground-{}", &hex::encode(hash)[..12]);
     let conversation =
-        get_or_create_conversation(db, assistant_id, &owner_id, &contact, "playground").await?;
+        get_or_create_conversation(db, assistant_id, &owner_id, &contact, "playground", None).await?;
 
     save_message(db, &conversation.id, "user", user_message, None, None, None).await?;
 
@@ -1387,7 +1526,7 @@ pub async fn playground_chat(
         (now, assistant_id, &owner_id, &conversation.id),
     ).await.map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
-    update_usage_stats(db, &owner_id, assistant_id, llm_response.tokens_used).await?;
+    update_usage_stats(db, &owner_id, assistant_id, llm_response.tokens_used, false).await?;
 
     let replies = if assistant.config_split_messages {
         llm_response.content.split("\n\n")
@@ -1850,7 +1989,7 @@ async fn send_audio_via_provider(
     Ok(())
 }
 
-async fn update_usage_stats(db: &DbSession, user_id: &Uuid, assistant_id: &Uuid, tokens: i32) -> Result<(), AppError> {
+async fn update_usage_stats(db: &DbSession, user_id: &Uuid, assistant_id: &Uuid, tokens: i32, rate_limited_path: bool) -> Result<(), AppError> {
     let today = Utc::now().format("%Y-%m-%d").to_string();
 
     // Read current stats
@@ -1864,9 +2003,13 @@ async fn update_usage_stats(db: &DbSession, user_id: &Uuid, assistant_id: &Uuid,
         .map_err(|e| AppError::DatabaseError(e.to_string()))?
         .unwrap_or((0, 0));
 
+    // If rate limit was checked (rate_limited_path=true), messages were already incremented atomically in is_rate_limited.
+    // Only increment messages here if the rate limit path was NOT used.
+    let new_messages = if rate_limited_path { current_messages } else { current_messages + 2 };
+
     db.query_unpaged(
         "INSERT INTO inertial_eclipse.usage_stats (user_id, assistant_id, period, total_tokens, total_messages) VALUES (?, ?, ?, ?, ?)",
-        (user_id, assistant_id, &today as &str, current_tokens + tokens as i64, current_messages + 2),
+        (user_id, assistant_id, &today as &str, current_tokens + tokens as i64, new_messages),
     ).await.map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     Ok(())

@@ -1,7 +1,10 @@
 use axum::extract::{Extension, Path, Query};
 use axum::Json;
 use axum::response::IntoResponse;
+use axum::http::HeaderMap;
 use base64::Engine as _;
+use hmac::{Hmac, Mac};
+use sha2::Sha256;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
@@ -32,6 +35,14 @@ pub struct ConversationResponse {
     pub messages: Vec<MessageResponse>,
 }
 
+#[derive(Deserialize)]
+pub struct ConversationListQuery {
+    pub share_token: Option<String>,
+    pub limit: Option<i32>,
+    pub cursor: Option<String>,
+    pub search: Option<String>,
+}
+
 #[derive(Serialize)]
 pub struct MessageResponse {
     pub id: String,
@@ -56,15 +67,19 @@ pub async fn webhook_baileys(
     let event = payload["event"].as_str().unwrap_or("");
     let phone = format!("+{phone_from_path}");
 
-    // Validate webhookVerifyToken against the integration's stored token
+    // Validate webhookVerifyToken against BAILEYS_API_KEY (shared secret between backend and Baileys service)
     let webhook_token = payload["webhookVerifyToken"].as_str().unwrap_or("");
-    if let Ok(integration) = messaging::find_integration_by_phone(&db, &phone).await {
-        if let Some(ref expected) = integration.config_webhook_verify_token {
-            if !expected.is_empty() && webhook_token != expected {
-                tracing::warn!("Baileys webhook token mismatch for {phone}");
-                return Err(AppError::Unauthorized("Invalid webhook verify token".into()));
-            }
-        }
+    if !config.baileys_api_key.is_empty() && webhook_token != config.baileys_api_key {
+        tracing::warn!("Baileys webhook token mismatch for {phone}");
+        return Err(AppError::Unauthorized("Invalid webhook verify token".into()));
+    }
+
+    // connection.update events (QR codes, status changes) are allowed without a registered integration
+    // because the integration may not exist yet during the initial pairing flow.
+    let phone_integration = messaging::find_integration_by_phone(&db, &phone).await.ok();
+    if phone_integration.is_none() && event != "connection.update" {
+        tracing::warn!("Baileys webhook received for unknown phone: {phone} event={event}");
+        return Err(AppError::NotFound("No integration found for this phone number".into()));
     }
 
     match event {
@@ -264,6 +279,10 @@ pub async fn webhook_baileys(
                         continue;
                     }
 
+                    let push_name = msg["pushName"].as_str()
+                        .filter(|s| !s.is_empty())
+                        .map(|s| s.to_string());
+
                     let webhook = IncomingWebhook {
                         phone: phone.clone(),
                         connection_phone: format!("+{phone_from_path}"),
@@ -272,6 +291,7 @@ pub async fn webhook_baileys(
                         media_type,
                         media_base64,
                         message_id: None,
+                        contact_name: push_name,
                     };
 
                     match messaging::process_incoming_message(
@@ -449,14 +469,40 @@ pub async fn webhook_meta_verify(
 }
 
 /// POST /api/webhooks/meta — Receive messages from Meta WhatsApp Cloud API
-// TODO: Validate X-Hub-Signature-256 header against META_APP_SECRET for payload authenticity
 pub async fn webhook_meta(
     Extension(db): Extension<DbSession>,
     Extension(config): Extension<Config>,
     Extension(encryption): Extension<EncryptionService>,
     Extension(event_bus): Extension<crate::services::events::EventBus>,
-    Json(payload): Json<Value>,
+    headers: HeaderMap,
+    body: axum::body::Bytes,
 ) -> Result<Json<Value>, AppError> {
+    // Validate X-Hub-Signature-256 if META_APP_SECRET is configured
+    if !config.meta_app_secret.is_empty() {
+        let signature = headers
+            .get("x-hub-signature-256")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+
+        let expected = {
+            let mut mac = Hmac::<Sha256>::new_from_slice(config.meta_app_secret.as_bytes())
+                .map_err(|_| AppError::InternalError("HMAC init failed".into()))?;
+            mac.update(&body);
+            let result = mac.finalize();
+            format!("sha256={}", hex::encode(result.into_bytes()))
+        };
+
+        if signature != expected {
+            tracing::warn!("Meta webhook signature mismatch");
+            return Err(AppError::Unauthorized("Invalid webhook signature".into()));
+        }
+    } else {
+        tracing::warn!("META_APP_SECRET not configured — skipping webhook signature validation");
+    }
+
+    let payload: Value = serde_json::from_slice(&body)
+        .map_err(|e| AppError::BadRequest(format!("Invalid JSON: {e}")))?;
+
     let entries = payload["entry"].as_array();
 
     if let Some(entries) = entries {
@@ -466,6 +512,14 @@ pub async fn webhook_meta(
                 for change in changes {
                     let value = &change["value"];
                     let phone_number_id = value["metadata"]["phone_number_id"].as_str().unwrap_or("");
+
+                    // Extract contact name from the contacts array in the webhook payload
+                    let meta_contact_name = value["contacts"]
+                        .as_array()
+                        .and_then(|c| c.first())
+                        .and_then(|c| c["profile"]["name"].as_str())
+                        .filter(|s| !s.is_empty())
+                        .map(|s| s.to_string());
 
                     let messages = value["messages"].as_array();
                     if let Some(msgs) = messages {
@@ -532,6 +586,7 @@ pub async fn webhook_meta(
                                 media_type,
                                 media_base64: None,
                                 message_id: msg_id,
+                                contact_name: meta_contact_name.clone(),
                             };
 
                             match messaging::process_incoming_message(
@@ -569,6 +624,15 @@ pub async fn webhook_telegram(
     let chat_id = match message["chat"]["id"].as_i64() {
         Some(id) => id.to_string(),
         None => return Ok(Json(serde_json::json!({"status": "ok"}))),
+    };
+
+    // Extract contact name from Telegram message
+    let tg_first = message["from"]["first_name"].as_str().unwrap_or("");
+    let tg_last = message["from"]["last_name"].as_str().unwrap_or("");
+    let tg_contact_name = match (tg_first.is_empty(), tg_last.is_empty()) {
+        (false, false) => Some(format!("{tg_first} {tg_last}")),
+        (false, true) => Some(tg_first.to_string()),
+        _ => message["from"]["username"].as_str().map(|u| format!("@{u}")),
     };
 
     let text = message["text"].as_str().unwrap_or("");
@@ -666,6 +730,7 @@ pub async fn webhook_telegram(
         media_type,
         media_base64,
         message_id: None,
+        contact_name: tg_contact_name,
     };
 
     match messaging::process_incoming_message(&db, &config, &encryption, &event_bus, webhook).await {
@@ -706,16 +771,17 @@ pub async fn list_conversations(
     Extension(db): Extension<DbSession>,
     Extension(auth_user): Extension<AuthUser>,
     Path(assistant_id): Path<Uuid>,
-    Query(query): Query<crate::handlers::assistants::ShareTokenQuery>,
-) -> Result<Json<Vec<ConversationResponse>>, AppError> {
+    Query(query): Query<ConversationListQuery>,
+) -> Result<Json<crate::models::pagination::PaginatedResponse<ConversationResponse>>, AppError> {
     let owner_id = assistant_service::resolve_assistant_access(
         &db, &auth_user.user_id, &assistant_id, query.share_token.as_deref(), "read",
     ).await?;
-    let conversations =
-        messaging::list_conversations(&db, &assistant_id, &owner_id).await?;
+    let limit = query.limit.unwrap_or(30).min(100).max(1);
+    let paginated =
+        messaging::list_conversations(&db, &assistant_id, &owner_id, limit, query.cursor.as_deref(), query.search.as_deref()).await?;
 
     let mut responses = Vec::new();
-    for conv in &conversations {
+    for conv in &paginated.items {
         let messages = messaging::get_recent_messages(&db, &conv.id, 1).await.unwrap_or_default();
         let message_count = messaging::count_messages(&db, &conv.id).await.unwrap_or(0);
         let total_tokens = messaging::sum_tokens(&db, &conv.id).await.unwrap_or(0);
@@ -723,7 +789,7 @@ pub async fn list_conversations(
 
         responses.push(ConversationResponse {
             id: conv.id.to_string(),
-            contact_name: conv.contact_number.clone(),
+            contact_name: conv.contact_name.clone().unwrap_or_else(|| conv.contact_number.clone()),
             channel: conv.channel.clone(),
             last_message,
             last_message_at: conv.last_message_at.to_rfc3339(),
@@ -734,20 +800,33 @@ pub async fn list_conversations(
         });
     }
 
-    Ok(Json(responses))
+    Ok(Json(crate::models::pagination::PaginatedResponse {
+        items: responses,
+        cursor: paginated.cursor,
+    }))
+}
+
+#[derive(Deserialize)]
+pub struct MessageListQuery {
+    pub share_token: Option<String>,
+    pub limit: Option<i32>,
+    pub cursor: Option<String>,
 }
 
 pub async fn list_messages(
     Extension(db): Extension<DbSession>,
     Extension(auth_user): Extension<AuthUser>,
     Path((assistant_id, conversation_id)): Path<(Uuid, Uuid)>,
-    Query(query): Query<crate::handlers::assistants::ShareTokenQuery>,
-) -> Result<Json<Vec<MessageResponse>>, AppError> {
-    assistant_service::resolve_assistant_access(
+    Query(query): Query<MessageListQuery>,
+) -> Result<Json<crate::models::pagination::PaginatedResponse<MessageResponse>>, AppError> {
+    let owner_id = assistant_service::resolve_assistant_access(
         &db, &auth_user.user_id, &assistant_id, query.share_token.as_deref(), "read",
     ).await?;
-    let messages = messaging::get_recent_messages(&db, &conversation_id, 100).await?;
-    let responses: Vec<MessageResponse> = messages
+    // Validate conversation belongs to this assistant+user before returning messages
+    messaging::get_conversation(&db, &assistant_id, &owner_id, &conversation_id).await?;
+    let limit = query.limit.unwrap_or(50).min(200).max(1);
+    let paginated = messaging::get_messages_paged(&db, &conversation_id, limit, query.cursor.as_deref()).await?;
+    let responses: Vec<MessageResponse> = paginated.items
         .into_iter()
         .map(|m| MessageResponse {
             id: m.id.to_string(),
@@ -757,7 +836,10 @@ pub async fn list_messages(
             tokens_used: m.tokens_used,
         })
         .collect();
-    Ok(Json(responses))
+    Ok(Json(crate::models::pagination::PaginatedResponse {
+        items: responses,
+        cursor: paginated.cursor,
+    }))
 }
 
 // --- Delete conversation ---
