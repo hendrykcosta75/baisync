@@ -23,7 +23,7 @@ const mockAssistant = {
 export const handlers = [
   // Auth
   http.post('/api/auth/login', async ({ request }) => {
-    const body = await request.json() as any
+    const body = await request.json() as Record<string, string>
     if (body.email === 'test@example.com' && body.password === 'Password123!') {
       return HttpResponse.json({ token: 'mock-jwt-token', user: mockUser })
     }
@@ -31,7 +31,7 @@ export const handlers = [
   }),
 
   http.post('/api/auth/register', async ({ request }) => {
-    const body = await request.json() as any
+    const body = await request.json() as Record<string, string>
     return HttpResponse.json({
       token: 'mock-jwt-token',
       user: { ...mockUser, name: body.name, email: body.email },
@@ -48,7 +48,7 @@ export const handlers = [
   }),
 
   http.post('/api/assistants', async ({ request }) => {
-    const body = await request.json() as any
+    const body = await request.json() as Record<string, string>
     return HttpResponse.json({ ...mockAssistant, ...body, id: '770e8400-new' }, { status: 200 })
   }),
 
@@ -57,7 +57,7 @@ export const handlers = [
   }),
 
   http.put('/api/assistants/:id', async ({ request }) => {
-    const body = await request.json() as any
+    const body = await request.json() as Record<string, string>
     return HttpResponse.json({ ...mockAssistant, ...body })
   }),
 
@@ -96,7 +96,7 @@ export const handlers = [
 
   // User profile
   http.put('/api/user/profile', async ({ request }) => {
-    const body = await request.json() as any
+    const body = await request.json() as Record<string, string>
     return HttpResponse.json({ ...mockUser, ...body })
   }),
 
