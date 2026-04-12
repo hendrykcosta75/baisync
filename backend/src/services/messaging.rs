@@ -147,11 +147,8 @@ pub async fn process_incoming_message(
         match audio_bytes_opt {
             Some(bytes) => {
                 let audio_provider = assistant.config_audio_provider.as_deref().unwrap_or("openai");
-                let user = crate::services::auth::get_user_by_id(db, &user_id).await?;
-                let stt_key_opt = match audio_provider {
-                    "elevenlabs" => user.api_key_elevenlabs.as_ref().and_then(|k| encryption.decrypt(k).ok()),
-                    _ => user.api_key_openai.as_ref().and_then(|k| encryption.decrypt(k).ok()),
-                };
+                let stt_provider_key = if audio_provider == "elevenlabs" { "elevenlabs" } else { "openai" };
+                let stt_key_opt = crate::services::workspace::get_decrypted_api_key(db, encryption, &user_id, stt_provider_key).await.ok();
                 match stt_key_opt {
                     Some(stt_key) => {
                         let filename = audio_filename_for_mime(webhook.media_type.as_deref().unwrap_or("audio/ogg"));
@@ -265,16 +262,7 @@ pub async fn process_incoming_message(
 
     let history = get_recent_messages(db, &conversation.id, 20).await?;
 
-    let user = crate::services::auth::get_user_by_id(db, &user_id).await?;
-    let encrypted_key = match assistant.llm_provider.as_str() {
-        "openai" => user.api_key_openai,
-        "claude" => user.api_key_claude,
-        "gemini" => user.api_key_gemini,
-        _ => None,
-    }
-    .ok_or_else(|| AppError::BadRequest("API key not configured for this provider".into()))?;
-
-    let api_key = encryption.decrypt(&encrypted_key)?;
+    let api_key = crate::services::workspace::get_decrypted_api_key(db, encryption, &user_id, &assistant.llm_provider).await?;
 
     // RAG: retrieve relevant context from knowledge base
     let rag_contexts = crate::services::rag::retrieve_context(
@@ -1425,18 +1413,9 @@ pub async fn playground_chat(
         }
     };
 
-    // Always use the OWNER's credentials — never the requesting user's
+    // Always use the OWNER's (workspace's) credentials — never the requesting user's
     let owner_id = assistant.user_id;
-    let owner = crate::services::auth::get_user_by_id(db, &owner_id).await?;
-    let encrypted_key = match assistant.llm_provider.as_str() {
-        "openai" => owner.api_key_openai.clone(),
-        "claude" => owner.api_key_claude.clone(),
-        "gemini" => owner.api_key_gemini.clone(),
-        _ => None,
-    }
-    .ok_or_else(|| AppError::BadRequest("API key not configured for this provider".into()))?;
-
-    let api_key = encryption.decrypt(&encrypted_key)?;
+    let api_key = crate::services::workspace::get_decrypted_api_key(db, encryption, &owner_id, &assistant.llm_provider).await?;
 
     // Contact distinguishes who is chatting; use hashed ID to avoid exposing the real UUID
     use sha2::Digest;
@@ -1542,10 +1521,8 @@ pub async fn playground_chat(
     let audio_base64 = if audio_mode == "always" || audio_mode == "audio_to_audio" {
         if let Some(voice_id) = &assistant.config_audio_voice_id {
             let audio_provider = assistant.config_audio_provider.as_deref().unwrap_or("elevenlabs");
-            let tts_key_opt = match audio_provider {
-                "openai" => owner.api_key_openai.as_ref().and_then(|k| encryption.decrypt(k).ok()),
-                _ => owner.api_key_elevenlabs.as_ref().and_then(|k| encryption.decrypt(k).ok()),
-            };
+            let tts_provider_key = if audio_provider == "openai" { "openai" } else { "elevenlabs" };
+            let tts_key_opt = crate::services::workspace::get_decrypted_api_key(db, encryption, &owner_id, tts_provider_key).await.ok();
             if let Some(api_key) = tts_key_opt {
                 let tts_result = match audio_provider {
                     "openai" => crate::services::openai_audio::text_to_speech(
@@ -1817,8 +1794,6 @@ async fn send_responses_as_audio(
     contact_phone: &str,
     text: &str,
 ) -> Result<(), AppError> {
-    let user = crate::services::auth::get_user_by_id(db, user_id).await?;
-
     // Use OGG Opus for Telegram voice messages; MP3 for WhatsApp/others
     let (elevenlabs_format, mime) = if integration.provider == "telegram" {
         ("opus_48000_192", "audio/ogg")
@@ -1828,18 +1803,11 @@ async fn send_responses_as_audio(
 
     let audio_bytes = match audio_provider {
         "openai" => {
-            let encrypted_key = user
-                .api_key_openai
-                .ok_or_else(|| AppError::BadRequest("OpenAI API key not configured".into()))?;
-            let api_key = encryption.decrypt(&encrypted_key)?;
+            let api_key = crate::services::workspace::get_decrypted_api_key(db, encryption, user_id, "openai").await?;
             crate::services::openai_audio::text_to_speech(&api_key, voice_id, text).await?
         }
         _ => {
-            // Default: elevenlabs
-            let encrypted_key = user
-                .api_key_elevenlabs
-                .ok_or_else(|| AppError::BadRequest("ElevenLabs API key not configured".into()))?;
-            let api_key = encryption.decrypt(&encrypted_key)?;
+            let api_key = crate::services::workspace::get_decrypted_api_key(db, encryption, user_id, "elevenlabs").await?;
             crate::services::elevenlabs::text_to_speech(&api_key, voice_id, text, elevenlabs_format).await?
         }
     };
@@ -2086,17 +2054,8 @@ pub async fn summarize_conversation(
         return Err(AppError::BadRequest("Conversa sem mensagens para resumir".into()));
     }
 
-    // Get user's API key for the chosen provider
-    let user = crate::services::auth::get_user_by_id(db, user_id).await?;
-    let encrypted_key = match provider {
-        "openai" => user.api_key_openai,
-        "claude" => user.api_key_claude,
-        "gemini" => user.api_key_gemini,
-        _ => None,
-    }
-    .ok_or_else(|| AppError::BadRequest("Chave de API não configurada para este provedor".into()))?;
-
-    let api_key = encryption.decrypt(&encrypted_key)?;
+    // Get workspace API key for the chosen provider
+    let api_key = crate::services::workspace::get_decrypted_api_key(db, encryption, user_id, provider).await?;
 
     // Build conversation transcript
     let mut transcript = String::new();
@@ -2426,9 +2385,12 @@ async fn notify_human_agent(
         "Contato {contact_phone} precisa de atendimento humano. Motivo: {reason}"
     );
 
-    // Notify assistant owner
-    let owner = crate::services::auth::get_user_by_id(db, owner_user_id).await?;
-    crate::services::notification::create_notification(
+    // Notify assistant owner (resolve workspace → owner)
+    let ws_owner_id = crate::services::workspace::get_workspace(db, owner_user_id)
+        .await.map(|ws| ws.owner_id).unwrap_or(*owner_user_id);
+    let owner = crate::services::auth::get_user_by_id(db, &ws_owner_id).await?;
+    // Notify all workspace members
+    let _ = crate::services::notification::notify_workspace_members(
         db,
         owner_user_id,
         Some(assistant_id),
@@ -2437,7 +2399,7 @@ async fn notify_human_agent(
         &title,
         &message,
     )
-    .await?;
+    .await;
     if let Err(e) = crate::services::email::send_human_agent_email(
         config,
         &owner.email,
@@ -2506,9 +2468,12 @@ async fn notify_appointment_event(
         appointment.client_phone,
     );
 
-    // Notify assistant owner
-    let owner = crate::services::auth::get_user_by_id(db, owner_user_id).await?;
-    crate::services::notification::create_notification(
+    // Notify assistant owner (resolve workspace → owner)
+    let ws_owner_id2 = crate::services::workspace::get_workspace(db, owner_user_id)
+        .await.map(|ws| ws.owner_id).unwrap_or(*owner_user_id);
+    let owner = crate::services::auth::get_user_by_id(db, &ws_owner_id2).await?;
+    // Notify all workspace members
+    let _ = crate::services::notification::notify_workspace_members(
         db,
         owner_user_id,
         Some(assistant_id),
@@ -2517,7 +2482,7 @@ async fn notify_appointment_event(
         &title,
         &message,
     )
-    .await?;
+    .await;
     if let Err(e) = crate::services::email::send_appointment_email(
         config,
         &owner.email,

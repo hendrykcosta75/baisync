@@ -19,6 +19,8 @@ pub struct Claims {
     pub exp: usize,
     #[serde(default)]
     pub role: Option<String>,
+    #[serde(default)]
+    pub workspace_id: Option<String>,
 }
 
 pub fn hash_password(password: &str) -> Result<String, AppError> {
@@ -39,6 +41,16 @@ pub fn verify_password(password: &str, hash: &str) -> Result<bool, AppError> {
 }
 
 pub fn create_jwt(user_id: &Uuid, email: &str, secret: &str) -> Result<String, AppError> {
+    // Default: workspace_id = user_id (personal workspace)
+    create_jwt_with_workspace(user_id, email, user_id, secret)
+}
+
+pub fn create_jwt_with_workspace(
+    user_id: &Uuid,
+    email: &str,
+    workspace_id: &Uuid,
+    secret: &str,
+) -> Result<String, AppError> {
     let expiration = Utc::now()
         .checked_add_signed(chrono::Duration::hours(24))
         .expect("valid timestamp")
@@ -49,6 +61,7 @@ pub fn create_jwt(user_id: &Uuid, email: &str, secret: &str) -> Result<String, A
         email: email.to_string(),
         exp: expiration,
         role: None,
+        workspace_id: Some(workspace_id.to_string()),
     };
 
     encode(
@@ -83,6 +96,7 @@ pub fn create_admin_jwt(secret: &str) -> Result<String, AppError> {
         email: "admin".to_string(),
         exp: expiration,
         role: Some("admin".to_string()),
+        workspace_id: None,
     };
 
     encode(
@@ -126,11 +140,14 @@ pub async fn register_user(
     let now = ts_now();
 
     db.query_unpaged(
-        "INSERT INTO inertial_eclipse.users (id, email, password_hash, name, two_factor_enabled, created_at, updated_at) VALUES (?, ?, ?, ?, false, ?, ?)",
-        (id, email, &password_hash as &str, name, now, now),
+        "INSERT INTO inertial_eclipse.users (id, email, password_hash, name, two_factor_enabled, active_workspace_id, created_at, updated_at) VALUES (?, ?, ?, ?, false, ?, ?, ?)",
+        (id, email, &password_hash as &str, name, id, now, now),
     )
     .await
     .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+
+    // Create personal workspace (workspace_id = user_id)
+    crate::services::workspace::ensure_personal_workspace(db, &id, name).await?;
 
     let token = create_jwt(&id, email, jwt_secret)?;
     Ok(AuthResponse {
@@ -171,7 +188,15 @@ pub async fn login_user(
         return Err(AppError::Unauthorized("Invalid email or password".into()));
     }
 
-    let token = create_jwt(&id, &email, jwt_secret)?;
+    // Ensure personal workspace exists (migration safety)
+    let _ = crate::services::workspace::ensure_personal_workspace(db, &id, &name).await;
+
+    // Get active workspace_id (defaults to user_id)
+    let active_ws = crate::services::workspace::get_active_workspace_id(db, &id)
+        .await
+        .unwrap_or(id);
+
+    let token = create_jwt_with_workspace(&id, &email, &active_ws, jwt_secret)?;
     Ok(AuthResponse {
         token,
         user: UserPublic {

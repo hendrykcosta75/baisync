@@ -77,6 +77,33 @@ pub async fn create_notification(
     })
 }
 
+/// Create a notification for all members of a workspace.
+/// Used for workspace-level events (e.g. new message from customer, payment received).
+pub async fn notify_workspace_members(
+    db: &DbSession,
+    workspace_id: &Uuid,
+    assistant_id: Option<&Uuid>,
+    integration_id: Option<&Uuid>,
+    notification_type: &str,
+    title: &str,
+    message: &str,
+) -> Result<(), AppError> {
+    let members = crate::services::workspace::list_members(db, workspace_id).await?;
+    for member in &members {
+        let _ = create_notification(
+            db,
+            &member.user_id,
+            assistant_id,
+            integration_id,
+            notification_type,
+            title,
+            message,
+        )
+        .await;
+    }
+    Ok(())
+}
+
 pub async fn list_notifications(
     db: &DbSession,
     user_id: &Uuid,

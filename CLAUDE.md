@@ -69,6 +69,9 @@ Read `node_modules/next/dist/docs/` before writing code. APIs, conventions, and 
 ### API Client
 `lib/api.ts` — `apiFetch<T>()` wrapper that auto-includes Authorization header, handles 401 redirects. Base URL from `NEXT_PUBLIC_API_URL`.
 
+### Real-time Updates
+All dashboard data (channels, messages, notes, notifications, etc.) must appear in the UI without requiring a page refresh. Use SSE events (`lib/useRealtimeEvents.ts`) and Zustand store updates to push new data to the UI in real-time.
+
 ### Forms
 All forms use React Hook Form + Zod for validation.
 

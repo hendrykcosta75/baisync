@@ -32,23 +32,14 @@ pub async fn list_models(
     Query(query): Query<OwnerResolveQuery>,
 ) -> Result<Json<ModelsResponse>, AppError> {
     let user_id = assistant_service::resolve_api_key_user(
-        &db, &auth_user.user_id, query.assistant_id.as_ref(), query.share_token.as_deref(),
+        &db, &auth_user.workspace_id, query.assistant_id.as_ref(), query.share_token.as_deref(),
     ).await?;
-    let user = auth_service::get_user_by_id(&db, &user_id).await?;
 
-    let encrypted_key = match provider.as_str() {
-        "openai" => user.api_key_openai,
-        "claude" => user.api_key_claude,
-        "gemini" => user.api_key_gemini,
-        _ => return Err(AppError::BadRequest(format!("Unknown provider: {provider}"))),
+    if !matches!(provider.as_str(), "openai" | "claude" | "gemini") {
+        return Err(AppError::BadRequest(format!("Unknown provider: {provider}")));
     }
-    .ok_or_else(|| {
-        AppError::BadRequest(format!(
-            "No API key configured for {provider}. Configure it in API Keys settings."
-        ))
-    })?;
 
-    let api_key = encryption.decrypt(&encrypted_key)?;
+    let api_key = crate::services::workspace::get_decrypted_api_key(&db, &encryption, &user_id, &provider).await?;
 
     let models = match provider.as_str() {
         "openai" => fetch_openai_models(&api_key).await?,

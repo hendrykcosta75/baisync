@@ -12,52 +12,41 @@ fn wrap_email_html(title: &str, content: &str) -> String {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<meta name="color-scheme" content="dark">
-<meta name="supported-color-schemes" content="dark">
 <title>{title}</title>
+<style>
+  @media (prefers-color-scheme: dark) {{
+    .email-body {{ background-color: #111 !important; }}
+    .email-card {{ background-color: #1a1a1a !important; border-color: #2a2a2a !important; }}
+    .email-heading {{ color: #f0f0f0 !important; }}
+    .email-text {{ color: #c0c0c0 !important; }}
+    .email-muted {{ color: #888 !important; }}
+    .email-divider {{ background: #2a2a2a !important; }}
+    .email-data-card {{ background-color: #252525 !important; border-color: #333 !important; }}
+    .email-data-label {{ color: #888 !important; }}
+    .email-data-value {{ color: #f0f0f0 !important; }}
+  }}
+</style>
 </head>
-<body style="margin:0;padding:0;background-color:#050505;font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased;">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#050505;">
-  <tr><td align="center" style="padding:32px 16px;">
-    <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;border-radius:12px;overflow:hidden;border:1px solid #1F1F1F;">
-      <!-- Header with gradient bar -->
+<body style="margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" class="email-body" style="background-color:#f5f5f5;">
+  <tr><td align="center" style="padding:40px 16px;">
+    <table role="presentation" width="520" cellpadding="0" cellspacing="0" style="max-width:520px;width:100%;">
+      <!-- Logo -->
       <tr>
-        <td style="background:linear-gradient(135deg,#F97316,#F59E0B);padding:4px 0;"></td>
-      </tr>
-      <tr>
-        <td style="background-color:#0A0A0A;padding:24px 32px 16px 32px;">
-          <table role="presentation" cellpadding="0" cellspacing="0">
-            <tr>
-              <td style="padding-right:12px;vertical-align:middle;">
-                <div style="width:32px;height:32px;border-radius:8px;background:linear-gradient(135deg,#F97316,#F59E0B);text-align:center;line-height:32px;">
-                  <span style="color:#ffffff;font-size:18px;font-weight:bold;">B</span>
-                </div>
-              </td>
-              <td style="vertical-align:middle;">
-                <span style="color:#EDF0F7;font-size:18px;font-weight:700;letter-spacing:-0.3px;">Baisync</span>
-              </td>
-            </tr>
-          </table>
+        <td style="padding:0 0 24px 0;">
+          <span class="email-heading" style="color:#111;font-size:16px;font-weight:700;letter-spacing:-0.3px;">Baisync</span>
         </td>
       </tr>
-      <!-- Content card -->
+      <!-- Card -->
       <tr>
-        <td style="background-color:#0A0A0A;padding:0 32px 24px 32px;">
-          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#111111;border:1px solid #1F1F1F;border-radius:10px;">
-            <tr>
-              <td style="padding:28px 28px;">
-                {content}
-              </td>
-            </tr>
-          </table>
+        <td class="email-card" style="background-color:#ffffff;border:1px solid #e5e5e5;border-radius:12px;padding:32px;">
+          {content}
         </td>
       </tr>
       <!-- Footer -->
       <tr>
-        <td style="background-color:#0A0A0A;padding:0 32px 24px 32px;text-align:center;">
-          <p style="margin:0;color:#8892B0;font-size:12px;line-height:1.5;">
-            Baisync &mdash; Impulsionando Neg&oacute;cios com IA
-          </p>
+        <td style="padding:24px 0 0 0;text-align:center;">
+          <span class="email-muted" style="color:#999;font-size:12px;">Baisync</span>
         </td>
       </tr>
     </table>
@@ -71,18 +60,18 @@ fn wrap_email_html(title: &str, content: &str) -> String {
 fn styled_table_row(label: &str, value: &str) -> String {
     format!(
         r#"<tr>
-  <td style="padding:8px 16px 8px 0;color:#8892B0;font-size:14px;white-space:nowrap;vertical-align:top;">{label}</td>
-  <td style="padding:8px 0;color:#EDF0F7;font-size:14px;font-weight:600;">{value}</td>
+  <td class="email-muted" style="padding:6px 16px 6px 0;color:#888;font-size:13px;white-space:nowrap;vertical-align:top;">{label}</td>
+  <td class="email-heading" style="padding:6px 0;color:#111;font-size:13px;font-weight:600;">{value}</td>
 </tr>"#
     )
 }
 
 fn styled_button(url: &str, label: &str) -> String {
     format!(
-        r#"<table role="presentation" cellpadding="0" cellspacing="0" style="margin:24px 0 4px 0;">
+        r#"<table role="presentation" cellpadding="0" cellspacing="0" style="margin:20px 0 0 0;">
   <tr>
-    <td style="border-radius:8px;background:linear-gradient(135deg,#F97316,#F59E0B);">
-      <a href="{url}" target="_blank" style="display:inline-block;padding:12px 28px;color:#ffffff;font-size:14px;font-weight:600;text-decoration:none;letter-spacing:0.3px;">{label}</a>
+    <td style="border-radius:8px;background:#ff6b2c;">
+      <a href="{url}" target="_blank" style="display:inline-block;padding:12px 28px;color:#ffffff;font-size:14px;font-weight:600;text-decoration:none;">{label}</a>
     </td>
   </tr>
 </table>"#
@@ -91,7 +80,7 @@ fn styled_button(url: &str, label: &str) -> String {
 
 fn styled_data_table(rows: &str) -> String {
     format!(
-        r#"<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#141414;border:1px solid #1F1F1F;border-radius:8px;margin:16px 0;">
+        r#"<table role="presentation" width="100%" cellpadding="0" cellspacing="0" class="email-data-card" style="background-color:#f9f9f9;border:1px solid #e5e5e5;border-radius:8px;margin:16px 0;">
   <tr><td style="padding:12px 16px;">
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
       {rows}
@@ -99,6 +88,17 @@ fn styled_data_table(rows: &str) -> String {
   </td></tr>
 </table>"#
     )
+}
+
+pub fn wrap_invite_email(workspace_name: &str, role: &str, invite_url: &str) -> String {
+    let content = format!(
+        r#"<p class="email-heading" style="margin:0 0 6px 0;color:#111;font-size:18px;font-weight:700;">Convite para Workspace</p>
+<p class="email-text" style="margin:0 0 20px 0;color:#555;font-size:14px;line-height:1.6;">Você foi convidado para o workspace <strong class="email-heading" style="color:#111;">{workspace_name}</strong> com a função de <strong class="email-heading" style="color:#111;">{role}</strong>.</p>
+{button}
+<p class="email-muted" style="margin:16px 0 0 0;color:#999;font-size:12px;">Este convite expira em 7 dias.</p>"#,
+        button = styled_button(invite_url, "Aceitar Convite")
+    );
+    wrap_email_html("Convite para Workspace", &content)
 }
 
 pub async fn send_email(
@@ -141,18 +141,12 @@ pub async fn send_email(
 pub async fn send_2fa_code(config: &Config, to: &str, code: &str) -> Result<(), AppError> {
     let subject = "Código de verificação - Baisync";
     let content = format!(
-        r#"<h2 style="margin:0 0 8px 0;color:#EDF0F7;font-size:20px;font-weight:700;">Código de verificação</h2>
-<p style="margin:0 0 20px 0;color:#C4CCDF;font-size:14px;line-height:1.6;">Use o código abaixo para verificar sua identidade:</p>
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0">
-  <tr>
-    <td align="center" style="padding:20px 0;">
-      <div style="display:inline-block;background-color:#141414;border:1px solid #1F1F1F;border-radius:10px;padding:16px 40px;">
-        <span style="font-size:36px;font-weight:800;letter-spacing:8px;color:#EDF0F7;">{code}</span>
-      </div>
-    </td>
-  </tr>
-</table>
-<p style="margin:16px 0 0 0;color:#8892B0;font-size:13px;">Este código expira em 10 minutos.</p>"#
+        r#"<p class="email-heading" style="margin:0 0 6px 0;color:#111;font-size:18px;font-weight:700;">Código de verificação</p>
+<p class="email-text" style="margin:0 0 20px 0;color:#555;font-size:14px;line-height:1.6;">Use o código abaixo para verificar sua identidade.</p>
+<div class="email-data-card" style="background:#f9f9f9;border:1px solid #e5e5e5;border-radius:8px;padding:16px 0;text-align:center;margin:0 0 16px 0;">
+  <span class="email-heading" style="font-size:32px;font-weight:800;letter-spacing:8px;color:#111;">{code}</span>
+</div>
+<p class="email-muted" style="margin:0;color:#999;font-size:12px;">Expira em 10 minutos.</p>"#
     );
     let body = wrap_email_html("Código de Verificação", &content);
     send_email(config, to, subject, &body).await
@@ -162,19 +156,13 @@ pub async fn send_reset_email(config: &Config, to: &str, token: &str) -> Result<
     let subject = "Redefinição de senha - Baisync";
     let reset_url = format!("{}/reset-password?token={token}", config.app_url);
     let content = format!(
-        r#"<h2 style="margin:0 0 8px 0;color:#EDF0F7;font-size:20px;font-weight:700;">Redefinição de senha</h2>
-<p style="margin:0 0 20px 0;color:#C4CCDF;font-size:14px;line-height:1.6;">Recebemos uma solicitação para redefinir sua senha. Use o botão abaixo ou copie o token:</p>
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0">
-  <tr>
-    <td align="center" style="padding:16px 0;">
-      <div style="display:inline-block;background-color:#141414;border:1px solid #1F1F1F;border-radius:10px;padding:12px 32px;">
-        <span style="font-size:24px;font-weight:800;letter-spacing:4px;color:#EDF0F7;">{token}</span>
-      </div>
-    </td>
-  </tr>
-</table>
+        r#"<p class="email-heading" style="margin:0 0 6px 0;color:#111;font-size:18px;font-weight:700;">Redefinição de senha</p>
+<p class="email-text" style="margin:0 0 20px 0;color:#555;font-size:14px;line-height:1.6;">Recebemos uma solicitação para redefinir sua senha.</p>
+<div class="email-data-card" style="background:#f9f9f9;border:1px solid #e5e5e5;border-radius:8px;padding:12px 0;text-align:center;margin:0 0 4px 0;">
+  <span class="email-heading" style="font-size:20px;font-weight:800;letter-spacing:4px;color:#111;">{token}</span>
+</div>
 {button}
-<p style="margin:16px 0 0 0;color:#8892B0;font-size:13px;">Este token expira em 1 hora. Se você não solicitou a redefinição, ignore este email.</p>"#,
+<p class="email-muted" style="margin:16px 0 0 0;color:#999;font-size:12px;">Expira em 1 hora. Se você não solicitou, ignore este email.</p>"#,
         button = styled_button(&reset_url, "Redefinir Senha")
     );
     let body = wrap_email_html("Redefinição de Senha", &content);
@@ -196,8 +184,8 @@ pub async fn send_connection_lost_email(
         styled_table_row("Provedor", provider),
     );
     let content = format!(
-        r#"<h2 style="margin:0 0 8px 0;color:#EDF0F7;font-size:20px;font-weight:700;">Conexão perdida</h2>
-<p style="margin:0 0 4px 0;color:#C4CCDF;font-size:14px;line-height:1.6;">A integração do seu assistente <strong style="color:#EDF0F7;">{assistant_name}</strong> perdeu a conexão.</p>
+        r#"<p class="email-heading" style="margin:0 0 6px 0;color:#111;font-size:18px;font-weight:700;">Conexão perdida</p>
+<p class="email-text" style="margin:0 0 4px 0;color:#555;font-size:14px;line-height:1.6;">A integração do assistente <strong class="email-heading" style="color:#111;">{assistant_name}</strong> perdeu a conexão.</p>
 {table}
 {button}"#,
         table = styled_data_table(&rows),
@@ -249,8 +237,8 @@ pub async fn send_appointment_email(
     }
 
     let content = format!(
-        r#"<h2 style="margin:0 0 8px 0;color:#EDF0F7;font-size:20px;font-weight:700;">{action_label}</h2>
-<p style="margin:0 0 4px 0;color:#C4CCDF;font-size:14px;line-height:1.6;">O assistente <strong style="color:#EDF0F7;">{assistant_name}</strong> registrou uma atualização de agendamento.</p>
+        r#"<p class="email-heading" style="margin:0 0 6px 0;color:#111;font-size:18px;font-weight:700;">{action_label}</p>
+<p class="email-text" style="margin:0 0 4px 0;color:#555;font-size:14px;line-height:1.6;">O assistente <strong class="email-heading" style="color:#111;">{assistant_name}</strong> registrou uma atualização.</p>
 {table}
 {button}"#,
         table = styled_data_table(&rows),
@@ -267,7 +255,7 @@ pub async fn send_human_agent_email(
     contact_phone: &str,
     reason: &str,
 ) -> Result<(), AppError> {
-    let subject = format!("Solicitação de Agente Humano - {assistant_name} | Baisync");
+    let subject = format!("Agente Humano - {assistant_name} | Baisync");
     let dashboard_url = format!("{}/dashboard/assistants", config.app_url);
     let rows = format!(
         "{}{}",
@@ -275,8 +263,8 @@ pub async fn send_human_agent_email(
         styled_table_row("Motivo", reason),
     );
     let content = format!(
-        r#"<h2 style="margin:0 0 8px 0;color:#EDF0F7;font-size:20px;font-weight:700;">Solicitação de Agente Humano</h2>
-<p style="margin:0 0 4px 0;color:#C4CCDF;font-size:14px;line-height:1.6;">O assistente <strong style="color:#EDF0F7;">{assistant_name}</strong> solicitou a intervenção de um agente humano.</p>
+        r#"<p class="email-heading" style="margin:0 0 6px 0;color:#111;font-size:18px;font-weight:700;">Solicitação de Agente Humano</p>
+<p class="email-text" style="margin:0 0 4px 0;color:#555;font-size:14px;line-height:1.6;">O assistente <strong class="email-heading" style="color:#111;">{assistant_name}</strong> solicitou intervenção humana.</p>
 {table}
 {button}"#,
         table = styled_data_table(&rows),
@@ -296,19 +284,19 @@ pub async fn send_pix_payment_confirmed_email(
     customer_cpf: &str,
     contact_phone: &str,
 ) -> Result<(), AppError> {
-    let subject = format!("Pagamento PIX Confirmado - R$ {:.2} | Baisync", amount);
+    let subject = format!("PIX R$ {:.2} - {assistant_name} | Baisync", amount);
     let dashboard_url = format!("{}/dashboard/financeiro", config.app_url);
     let rows = format!(
         "{}{}{}{}{}",
         styled_table_row("Valor", &format!("R$ {:.2}", amount)),
-        styled_table_row("Descricao", description),
+        styled_table_row("Descrição", description),
         styled_table_row("Cliente", customer_name),
         styled_table_row("CPF", customer_cpf),
         styled_table_row("Contato", contact_phone),
     );
     let content = format!(
-        r#"<h2 style="margin:0 0 8px 0;color:#EDF0F7;font-size:20px;font-weight:700;">Pagamento PIX Confirmado</h2>
-<p style="margin:0 0 4px 0;color:#C4CCDF;font-size:14px;line-height:1.6;">O assistente <strong style="color:#EDF0F7;">{assistant_name}</strong> recebeu um pagamento PIX.</p>
+        r#"<p class="email-heading" style="margin:0 0 6px 0;color:#111;font-size:18px;font-weight:700;">Pagamento PIX Confirmado</p>
+<p class="email-text" style="margin:0 0 4px 0;color:#555;font-size:14px;line-height:1.6;">O assistente <strong class="email-heading" style="color:#111;">{assistant_name}</strong> recebeu um pagamento.</p>
 {table}
 {button}"#,
         table = styled_data_table(&rows),

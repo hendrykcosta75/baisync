@@ -316,6 +316,74 @@ pub async fn chat(
         assistant_details.join("\n\n")
     };
 
+    // ─── Workspace & Channel Context ─────────────────────────────────────
+    let active_ws_id = crate::services::workspace::get_active_workspace_id(&db, &user_id)
+        .await
+        .unwrap_or(user_id);
+    let active_ws = crate::services::workspace::get_workspace(&db, &active_ws_id).await.ok();
+    let user_workspaces = crate::services::workspace::list_user_workspaces(&db, &user_id)
+        .await
+        .unwrap_or_default();
+    let user_channels = crate::services::channel::list_user_channels(&db, &user_id, &active_ws_id)
+        .await
+        .unwrap_or_default();
+
+    let workspace_context = {
+        let active_ws_name = active_ws
+            .as_ref()
+            .map(|w| w.name.as_str())
+            .unwrap_or("Pessoal");
+
+        let ws_list: Vec<String> = user_workspaces
+            .iter()
+            .map(|w| {
+                let marker = if w.workspace_id == active_ws_id { " <- ativo" } else { "" };
+                format!(
+                    "  - {} (id: {}, tipo: {}, role: {}){}",
+                    w.workspace_name, w.workspace_id, w.workspace_type, w.role, marker
+                )
+            })
+            .collect();
+
+        let mut channel_lines: Vec<String> = user_channels
+            .iter()
+            .take(20)
+            .map(|c| {
+                let prefix = if c.channel_type == "dm" { "" } else { "#" };
+                format!(
+                    "  - {}{} ({}, {} não lidas) (id: {})",
+                    prefix, c.channel_name, c.channel_type, c.unread_count, c.channel_id
+                )
+            })
+            .collect();
+        if user_channels.len() > 20 {
+            channel_lines.push(format!(
+                "  - ... e mais {} canais (use list_channels para ver todos)",
+                user_channels.len() - 20
+            ));
+        }
+
+        let channels_section = if channel_lines.is_empty() {
+            "Nenhum canal no workspace ativo.".to_string()
+        } else {
+            channel_lines.join("\n")
+        };
+
+        format!(
+            r#"## Contexto de Workspaces
+- Workspace ativo: {active_ws_name} (id: {active_ws_id})
+- Workspaces do usuário:
+{ws_list}
+
+### Canais no workspace ativo
+{channels_section}"#,
+            active_ws_name = active_ws_name,
+            active_ws_id = active_ws_id,
+            ws_list = ws_list.join("\n"),
+            channels_section = channels_section,
+        )
+    };
+
     let mut system_prompt = format!(
         r#"Você é o Baisync Agent, o assistente inteligente da plataforma Baisync. Você ajuda os usuários a gerenciar seus assistentes de IA, configurar integrações e entender a plataforma.
 
@@ -324,6 +392,8 @@ pub async fn chat(
 - Email: {user_email}
 - Assistentes configurados:
 {assistant_list}
+
+{workspace_context}
 
 ## Skills Disponíveis
 Você tem acesso às seguintes skills. Quando uma skill for relevante para a conversa, use-a automaticamente:
@@ -463,8 +533,20 @@ IMPORTANTE: A integração com a API Oficial da Meta (WhatsApp Cloud API) e o Te
 - get_assistant_logs: data: {{assistant_id}}
 - get_activity: data: {{}} (retorna timeline de atividade)
 
+### Workspaces e Canais
+- list_workspaces: data: {{}} (lista todos os workspaces do usuário com IDs e roles)
+- switch_workspace: data: {{workspace_id}} (troca o workspace ativo — afeta toda a aplicação)
+- get_workspace_members: data: {{workspace_id}} (lista membros do workspace com roles)
+- list_channels: data: {{workspace_id?}} (lista canais do workspace, default = workspace ativo)
+- get_channel_messages: data: {{channel_id, limit?}} (últimas N mensagens do canal, default 20)
+- send_channel_message: data: {{channel_id, content}} (envia mensagem em um canal)
+- list_channel_notes: data: {{channel_id}} (lista notas do canal)
+- get_channel_note: data: {{channel_id, note_id}} (retorna conteúdo de uma nota)
+- create_channel: data: {{workspace_id?, name, description?, channel_type?}} (cria canal, default tipo "public")
+- mark_channel_read: data: {{channel_id}} (marca todas as mensagens do canal como lidas)
+
 ## REGRA CRÍTICA SOBRE IDs
-NUNCA invente, adivinhe ou use placeholders para IDs. Todo assistant_id, tool_id, conversation_id etc. DEVE ser um UUID real que aparece no "Contexto do Usuário" acima ou que foi retornado por uma ação anterior. Se você não sabe o ID, pergunte ao usuário ou use list_assistants/list_tools para descobrir. Ações com IDs inválidos falharão silenciosamente.
+NUNCA invente, adivinhe ou use placeholders para IDs. Todo assistant_id, tool_id, conversation_id, workspace_id, channel_id etc. DEVE ser um UUID real que aparece no "Contexto do Usuário" ou "Contexto de Workspaces" acima, ou que foi retornado por uma ação anterior. Se você não sabe o ID, pergunte ao usuário ou use list_assistants/list_tools/list_workspaces/list_channels para descobrir. Ações com IDs inválidos falharão silenciosamente.
 
 Exemplos de uso (substitua SEMPRE pelo UUID real do assistente):
 
@@ -514,6 +596,10 @@ O usuário pode enviar imagens e documentos diretamente no chat. Quando receber 
 - Configurar disponibilidade dos assistentes: horários, duração, buffer, máximo por dia
 - Gerenciar notificações: listar, marcar como lida, excluir
 - Consultar analytics: uso de tokens, estatísticas por assistente, logs, atividade
+- Ver workspaces, canais, mensagens e notas do usuário
+- Trocar workspace ativo e acessar informações de qualquer workspace
+- Enviar mensagens em canais, criar canais e gerenciar notas
+- Listar membros de workspaces
 - Sugerir melhorias nos prompts dos assistentes
 - Diagnosticar problemas com assistentes com base nas configurações visíveis
 
@@ -529,10 +615,14 @@ O usuário pode enviar imagens e documentos diretamente no chat. Quando receber 
 - SEMPRE use os IDs reais (UUIDs) dos assistentes que estão listados acima em "Contexto do Usuário". NUNCA invente IDs, use placeholders ou strings genéricas. Se não souber o ID, use list_assistants primeiro.
 - Se o usuário mencionar um assistente pelo nome, encontre o UUID correspondente na lista do "Contexto do Usuário" antes de executar qualquer ação.
 - Se não houver assistentes configurados e o usuário pedir para fazer algo em um assistente, informe que ele precisa criar um assistente primeiro.
-- Quando o usuário perguntar sobre um assistente, mostre todas as informações disponíveis (prompt, integrações, ferramentas, arquivos)"#,
+- Quando o usuário perguntar sobre um assistente, mostre todas as informações disponíveis (prompt, integrações, ferramentas, arquivos)
+- Para ações de workspace/canais, use os IDs do Contexto de Workspaces. Se o usuário mencionar um canal pelo nome (ex: #geral), encontre o channel_id na lista.
+- Quando o usuário pedir informações de outro workspace, use o workspace_id correspondente. Você só pode acessar workspaces listados no contexto.
+- Ações como get_channel_messages e send_channel_message funcionam com qualquer canal que o usuário tenha acesso, independente do workspace ativo."#,
         user_name = if user.name.is_empty() { "Usuário" } else { &user.name },
         user_email = user.email,
         assistant_list = assistant_list,
+        workspace_context = workspace_context,
         skills = skills_summary(),
     );
 

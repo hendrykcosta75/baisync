@@ -96,9 +96,17 @@ pub async fn verify_2fa(
 pub async fn me(
     Extension(db): Extension<DbSession>,
     Extension(auth_user): Extension<AuthUser>,
-) -> Result<Json<UserPublic>, AppError> {
+) -> Result<Json<Value>, AppError> {
     let user = auth_service::get_user_by_id(&db, &auth_user.user_id).await?;
-    Ok(Json(user.into()))
+    let public: UserPublic = user.into();
+    Ok(Json(json!({
+        "id": public.id,
+        "email": public.email,
+        "name": public.name,
+        "two_factor_enabled": public.two_factor_enabled,
+        "created_at": public.created_at,
+        "workspace_id": auth_user.workspace_id,
+    })))
 }
 
 pub async fn update_profile(

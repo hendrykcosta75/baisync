@@ -9,6 +9,7 @@ use crate::errors::AppError;
 use crate::middleware::auth::AuthUser;
 use crate::models::assistant::{AssistantTool, CreateToolRequest, ToolCallLog, UpdateToolRequest};
 use crate::services::assistant as assistant_service;
+use crate::services::workspace as ws_service;
 
 use crate::handlers::assistants::ShareTokenQuery;
 
@@ -19,7 +20,7 @@ pub async fn list(
     Query(query): Query<ShareTokenQuery>,
 ) -> Result<Json<Vec<AssistantTool>>, AppError> {
     assistant_service::resolve_assistant_access(
-        &db, &auth_user.user_id, &assistant_id, query.share_token.as_deref(), "read",
+        &db, &auth_user.workspace_id, &assistant_id, query.share_token.as_deref(), "read",
     ).await?;
     let tools = assistant_service::list_tools(&db, &assistant_id).await?;
     Ok(Json(tools))
@@ -32,8 +33,11 @@ pub async fn create(
     Query(query): Query<ShareTokenQuery>,
     Json(req): Json<CreateToolRequest>,
 ) -> Result<Json<AssistantTool>, AppError> {
+    if query.share_token.is_none() {
+        ws_service::require_editor_role(&db, &auth_user.workspace_id, &auth_user.user_id).await?;
+    }
     assistant_service::resolve_assistant_access(
-        &db, &auth_user.user_id, &assistant_id, query.share_token.as_deref(), "admin",
+        &db, &auth_user.workspace_id, &assistant_id, query.share_token.as_deref(), "admin",
     ).await?;
     let tool = assistant_service::create_tool(&db, &assistant_id, req).await?;
     Ok(Json(tool))
@@ -46,8 +50,11 @@ pub async fn update(
     Query(query): Query<ShareTokenQuery>,
     Json(req): Json<UpdateToolRequest>,
 ) -> Result<Json<AssistantTool>, AppError> {
+    if query.share_token.is_none() {
+        ws_service::require_editor_role(&db, &auth_user.workspace_id, &auth_user.user_id).await?;
+    }
     assistant_service::resolve_assistant_access(
-        &db, &auth_user.user_id, &assistant_id, query.share_token.as_deref(), "admin",
+        &db, &auth_user.workspace_id, &assistant_id, query.share_token.as_deref(), "admin",
     ).await?;
     let tool = assistant_service::update_tool(&db, &assistant_id, &tool_id, req).await?;
     Ok(Json(tool))
@@ -59,8 +66,11 @@ pub async fn delete(
     Path((assistant_id, tool_id)): Path<(Uuid, Uuid)>,
     Query(query): Query<ShareTokenQuery>,
 ) -> Result<Json<Value>, AppError> {
+    if query.share_token.is_none() {
+        ws_service::require_editor_role(&db, &auth_user.workspace_id, &auth_user.user_id).await?;
+    }
     assistant_service::resolve_assistant_access(
-        &db, &auth_user.user_id, &assistant_id, query.share_token.as_deref(), "admin",
+        &db, &auth_user.workspace_id, &assistant_id, query.share_token.as_deref(), "admin",
     ).await?;
     assistant_service::delete_tool(&db, &assistant_id, &tool_id).await?;
     Ok(Json(json!({"message": "Tool deleted"})))
@@ -80,7 +90,7 @@ pub async fn list_calls(
     Query(query): Query<CallLogsQuery>,
 ) -> Result<Json<crate::models::pagination::PaginatedResponse<ToolCallLog>>, AppError> {
     assistant_service::resolve_assistant_access(
-        &db, &auth_user.user_id, &assistant_id, query.share_token.as_deref(), "read",
+        &db, &auth_user.workspace_id, &assistant_id, query.share_token.as_deref(), "read",
     ).await?;
     let limit = query.limit.unwrap_or(50).min(200);
     let paginated = assistant_service::list_tool_call_logs_paged(&db, &assistant_id, &tool_id, limit, query.cursor.as_deref()).await?;

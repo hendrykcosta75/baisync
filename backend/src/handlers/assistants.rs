@@ -9,6 +9,7 @@ use crate::errors::AppError;
 use crate::middleware::auth::AuthUser;
 use crate::models::assistant::{Assistant, CreateAssistantRequest, UpdateAssistantRequest};
 use crate::services::assistant as assistant_service;
+use crate::services::workspace as ws_service;
 
 #[derive(Deserialize)]
 pub struct ShareTokenQuery {
@@ -25,7 +26,7 @@ pub async fn list(
     Extension(db): Extension<DbSession>,
     Extension(auth_user): Extension<AuthUser>,
 ) -> Result<Json<Vec<Assistant>>, AppError> {
-    let assistants = assistant_service::list_assistants(&db, &auth_user.user_id).await?;
+    let assistants = assistant_service::list_assistants(&db, &auth_user.workspace_id).await?;
     Ok(Json(assistants))
 }
 
@@ -34,7 +35,8 @@ pub async fn create(
     Extension(auth_user): Extension<AuthUser>,
     Json(req): Json<CreateAssistantRequest>,
 ) -> Result<Json<Assistant>, AppError> {
-    let assistant = assistant_service::create_assistant(&db, &auth_user.user_id, req).await?;
+    ws_service::require_editor_role(&db, &auth_user.workspace_id, &auth_user.user_id).await?;
+    let assistant = assistant_service::create_assistant(&db, &auth_user.workspace_id, req).await?;
     Ok(Json(assistant))
 }
 
@@ -45,7 +47,7 @@ pub async fn get(
     Query(query): Query<ShareTokenQuery>,
 ) -> Result<Json<Assistant>, AppError> {
     // Try ownership first
-    if let Ok(asst) = assistant_service::get_assistant(&db, &auth_user.user_id, &id).await {
+    if let Ok(asst) = assistant_service::get_assistant(&db, &auth_user.workspace_id, &id).await {
         return Ok(Json(asst));
     }
     // Fall back to any token (share_token field or access_tokens table)
@@ -65,9 +67,10 @@ pub async fn update(
     Query(query): Query<ShareTokenQuery>,
     Json(req): Json<UpdateAssistantRequest>,
 ) -> Result<Json<Assistant>, AppError> {
+    ws_service::require_editor_role(&db, &auth_user.workspace_id, &auth_user.user_id).await?;
     // Try ownership first
     if let Ok(assistant) =
-        assistant_service::update_assistant(&db, &auth_user.user_id, &id, req.clone()).await
+        assistant_service::update_assistant(&db, &auth_user.workspace_id, &id, req.clone()).await
     {
         return Ok(Json(assistant));
     }
@@ -100,6 +103,7 @@ pub async fn delete(
     Extension(auth_user): Extension<AuthUser>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<Value>, AppError> {
-    assistant_service::delete_assistant(&db, &auth_user.user_id, &id).await?;
+    ws_service::require_editor_role(&db, &auth_user.workspace_id, &auth_user.user_id).await?;
+    assistant_service::delete_assistant(&db, &auth_user.workspace_id, &id).await?;
     Ok(Json(json!({"message": "Assistant deleted"})))
 }

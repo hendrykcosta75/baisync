@@ -230,16 +230,15 @@ async fn fetch_mp_payment_status(access_token: &str, mp_payment_id: &str) -> Res
 
 // ─── User MP Token Helper ───────────────────────────────────────────────────
 
-/// Decrypt and return the user's Mercado Pago access token.
+/// Decrypt and return the workspace's Mercado Pago access token.
 pub async fn get_user_mp_token(
     db: &DbSession,
     encryption: &EncryptionService,
     user_id: &Uuid,
 ) -> Result<Option<String>, AppError> {
-    let user = crate::services::auth::get_user_by_id(db, user_id).await?;
-    match user.api_key_mercadopago {
-        Some(encrypted) => Ok(Some(encryption.decrypt(&encrypted)?)),
-        None => Ok(None),
+    match crate::services::workspace::get_decrypted_api_key(db, encryption, user_id, "mercadopago").await {
+        Ok(key) => Ok(Some(key)),
+        Err(_) => Ok(None),
     }
 }
 
@@ -373,16 +372,15 @@ async fn fetch_stripe_payment_status(secret_key: &str, payment_intent_id: &str) 
 
 // ─── User Stripe Token Helper ──────────────────────────────────────────────
 
-/// Decrypt and return the user's Stripe secret key.
+/// Decrypt and return the workspace's Stripe secret key.
 pub async fn get_user_stripe_token(
     db: &DbSession,
     encryption: &EncryptionService,
     user_id: &Uuid,
 ) -> Result<Option<String>, AppError> {
-    let user = crate::services::auth::get_user_by_id(db, user_id).await?;
-    match user.api_key_stripe {
-        Some(encrypted) => Ok(Some(encryption.decrypt(&encrypted)?)),
-        None => Ok(None),
+    match crate::services::workspace::get_decrypted_api_key(db, encryption, user_id, "stripe").await {
+        Ok(key) => Ok(Some(key)),
+        Err(_) => Ok(None),
     }
 }
 

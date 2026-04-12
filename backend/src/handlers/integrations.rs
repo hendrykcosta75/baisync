@@ -13,6 +13,7 @@ use crate::models::integration::{
 };
 use crate::services::assistant as assistant_service;
 use crate::services::connection_state::ConnectionStateStore;
+use crate::services::workspace as ws_service;
 
 use crate::handlers::assistants::ShareTokenQuery;
 
@@ -36,7 +37,7 @@ pub async fn list(
     Query(query): Query<ShareTokenQuery>,
 ) -> Result<Json<Vec<AssistantIntegration>>, AppError> {
     let owner_id = assistant_service::resolve_assistant_access(
-        &db, &auth_user.user_id, &assistant_id, query.share_token.as_deref(), "read",
+        &db, &auth_user.workspace_id, &assistant_id, query.share_token.as_deref(), "read",
     ).await?;
     let integrations =
         assistant_service::list_integrations(&db, &assistant_id, &owner_id).await?;
@@ -50,8 +51,11 @@ pub async fn create(
     Query(query): Query<ShareTokenQuery>,
     Json(req): Json<CreateIntegrationRequest>,
 ) -> Result<Json<AssistantIntegration>, AppError> {
+    if query.share_token.is_none() {
+        ws_service::require_editor_role(&db, &auth_user.workspace_id, &auth_user.user_id).await?;
+    }
     let owner_id = assistant_service::resolve_assistant_access(
-        &db, &auth_user.user_id, &assistant_id, query.share_token.as_deref(), "admin",
+        &db, &auth_user.workspace_id, &assistant_id, query.share_token.as_deref(), "admin",
     ).await?;
     let integration =
         assistant_service::create_integration(&db, &assistant_id, &owner_id, req).await?;
@@ -65,8 +69,11 @@ pub async fn update(
     Query(query): Query<ShareTokenQuery>,
     Json(req): Json<UpdateIntegrationRequest>,
 ) -> Result<Json<AssistantIntegration>, AppError> {
+    if query.share_token.is_none() {
+        ws_service::require_editor_role(&db, &auth_user.workspace_id, &auth_user.user_id).await?;
+    }
     let owner_id = assistant_service::resolve_assistant_access(
-        &db, &auth_user.user_id, &assistant_id, query.share_token.as_deref(), "admin",
+        &db, &auth_user.workspace_id, &assistant_id, query.share_token.as_deref(), "admin",
     ).await?;
     let integration = assistant_service::update_integration(
         &db,
@@ -85,8 +92,11 @@ pub async fn delete(
     Path((assistant_id, integration_id)): Path<(Uuid, Uuid)>,
     Query(query): Query<ShareTokenQuery>,
 ) -> Result<Json<Value>, AppError> {
+    if query.share_token.is_none() {
+        ws_service::require_editor_role(&db, &auth_user.workspace_id, &auth_user.user_id).await?;
+    }
     let owner_id = assistant_service::resolve_assistant_access(
-        &db, &auth_user.user_id, &assistant_id, query.share_token.as_deref(), "admin",
+        &db, &auth_user.workspace_id, &assistant_id, query.share_token.as_deref(), "admin",
     ).await?;
     assistant_service::delete_integration(
         &db,
@@ -105,8 +115,11 @@ pub async fn connect(
     Path((assistant_id, integration_id)): Path<(Uuid, Uuid)>,
     Query(query): Query<ShareTokenQuery>,
 ) -> Result<Json<Value>, AppError> {
+    if query.share_token.is_none() {
+        ws_service::require_editor_role(&db, &auth_user.workspace_id, &auth_user.user_id).await?;
+    }
     let owner_id = assistant_service::resolve_assistant_access(
-        &db, &auth_user.user_id, &assistant_id, query.share_token.as_deref(), "admin",
+        &db, &auth_user.workspace_id, &assistant_id, query.share_token.as_deref(), "admin",
     ).await?;
     let integration =
         get_integration(&db, &assistant_id, &owner_id, &integration_id).await?;
@@ -121,7 +134,14 @@ pub async fn connect(
         "baileys" => {
             let client = Client::new();
             let phone_clean = phone.replace('+', "");
-            let webhook_url = format!("http://backend:3001/api/webhooks/baileys/{phone_clean}");
+            // When BAILEYS_URL points to localhost, the backend is running outside Docker
+            // so Baileys (inside Docker) must reach us via host.docker.internal
+            let webhook_host = if config.baileys_url.contains("localhost") || config.baileys_url.contains("127.0.0.1") {
+                "host.docker.internal:3001"
+            } else {
+                "backend:3001"
+            };
+            let webhook_url = format!("http://{webhook_host}/api/webhooks/baileys/{phone_clean}");
             let url = format!("{}/connections/{}", config.baileys_url, phone);
             let resp = client
                 .post(&url)
@@ -198,7 +218,7 @@ pub async fn status(
     Query(query): Query<ShareTokenQuery>,
 ) -> Result<Json<Value>, AppError> {
     let owner_id = assistant_service::resolve_assistant_access(
-        &db, &auth_user.user_id, &assistant_id, query.share_token.as_deref(), "read",
+        &db, &auth_user.workspace_id, &assistant_id, query.share_token.as_deref(), "read",
     ).await?;
     let integration =
         get_integration(&db, &assistant_id, &owner_id, &integration_id).await?;
@@ -245,8 +265,11 @@ pub async fn disconnect(
     Path((assistant_id, integration_id)): Path<(Uuid, Uuid)>,
     Query(query): Query<ShareTokenQuery>,
 ) -> Result<Json<Value>, AppError> {
+    if query.share_token.is_none() {
+        ws_service::require_editor_role(&db, &auth_user.workspace_id, &auth_user.user_id).await?;
+    }
     let owner_id = assistant_service::resolve_assistant_access(
-        &db, &auth_user.user_id, &assistant_id, query.share_token.as_deref(), "admin",
+        &db, &auth_user.workspace_id, &assistant_id, query.share_token.as_deref(), "admin",
     ).await?;
     let integration =
         get_integration(&db, &assistant_id, &owner_id, &integration_id).await?;

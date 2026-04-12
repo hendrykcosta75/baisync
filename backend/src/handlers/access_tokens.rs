@@ -61,14 +61,14 @@ pub async fn list_tokens(
     Extension(auth_user): Extension<AuthUser>,
     Path(assistant_id): Path<Uuid>,
 ) -> Result<Json<Vec<AccessToken>>, AppError> {
-    assistant::get_assistant(&db, &auth_user.user_id, &assistant_id).await?;
+    assistant::get_assistant(&db, &auth_user.workspace_id, &assistant_id).await?;
 
     let result = db
         .query_unpaged(
             "SELECT id, name, \"token\", permission_level, email, expires_at, created_at, is_revoked \
              FROM inertial_eclipse.access_tokens \
              WHERE user_id = ? AND assistant_id = ?",
-            (&auth_user.user_id, &assistant_id),
+            (&auth_user.workspace_id, &assistant_id),
         )
         .await
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
@@ -112,7 +112,7 @@ pub async fn create_token(
     Path(assistant_id): Path<Uuid>,
     Json(req): Json<CreateTokenRequest>,
 ) -> Result<Json<AccessToken>, AppError> {
-    assistant::get_assistant(&db, &auth_user.user_id, &assistant_id).await?;
+    assistant::get_assistant(&db, &auth_user.workspace_id, &assistant_id).await?;
 
     let id = Uuid::new_v4();
     let token = generate_token();
@@ -127,7 +127,7 @@ pub async fn create_token(
          (user_id, assistant_id, id, name, \"token\", permission_level, email, expires_at, created_at, is_revoked) \
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
-            &auth_user.user_id,
+            &auth_user.workspace_id,
             &assistant_id,
             &id,
             &req.name,
@@ -174,12 +174,12 @@ pub async fn delete_token(
     Extension(auth_user): Extension<AuthUser>,
     Path((assistant_id, token_id)): Path<(Uuid, Uuid)>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    assistant::get_assistant(&db, &auth_user.user_id, &assistant_id).await?;
+    assistant::get_assistant(&db, &auth_user.workspace_id, &assistant_id).await?;
 
     db.query_unpaged(
         "DELETE FROM inertial_eclipse.access_tokens \
          WHERE user_id = ? AND assistant_id = ? AND id = ?",
-        (&auth_user.user_id, &assistant_id, &token_id),
+        (&auth_user.workspace_id, &assistant_id, &token_id),
     )
     .await
     .map_err(|e| AppError::DatabaseError(e.to_string()))?;
@@ -194,7 +194,7 @@ pub async fn token_users(
     Path(assistant_id): Path<Uuid>,
 ) -> Result<Json<Vec<TokenUserResponse>>, AppError> {
     // Verify ownership
-    assistant::get_assistant(&db, &auth_user.user_id, &assistant_id).await?;
+    assistant::get_assistant(&db, &auth_user.workspace_id, &assistant_id).await?;
 
     let users = assistant::list_token_users(&db, &assistant_id).await?;
     let result: Vec<TokenUserResponse> = users
@@ -228,12 +228,12 @@ pub async fn revoke_token(
     Extension(auth_user): Extension<AuthUser>,
     Path((assistant_id, token_id)): Path<(Uuid, Uuid)>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    assistant::get_assistant(&db, &auth_user.user_id, &assistant_id).await?;
+    assistant::get_assistant(&db, &auth_user.workspace_id, &assistant_id).await?;
 
     db.query_unpaged(
         "UPDATE inertial_eclipse.access_tokens SET is_revoked = true \
          WHERE user_id = ? AND assistant_id = ? AND id = ?",
-        (&auth_user.user_id, &assistant_id, &token_id),
+        (&auth_user.workspace_id, &assistant_id, &token_id),
     )
     .await
     .map_err(|e| AppError::DatabaseError(e.to_string()))?;

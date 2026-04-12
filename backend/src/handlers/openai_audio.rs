@@ -68,13 +68,9 @@ pub async fn preview_voice(
     Json(body): Json<PreviewRequest>,
 ) -> Result<Json<PreviewResponse>, AppError> {
     let user_id = assistant_service::resolve_api_key_user(
-        &db, &auth_user.user_id, query.assistant_id.as_ref(), query.share_token.as_deref(),
+        &db, &auth_user.workspace_id, query.assistant_id.as_ref(), query.share_token.as_deref(),
     ).await?;
-    let user = auth_service::get_user_by_id(&db, &user_id).await?;
-    let encrypted_key = user
-        .api_key_openai
-        .ok_or_else(|| AppError::BadRequest("OpenAI API key not configured".into()))?;
-    let api_key = encryption.decrypt(&encrypted_key)?;
+    let api_key = crate::services::workspace::get_decrypted_api_key(&db, &encryption, &user_id, "openai").await?;
 
     let text = body
         .text

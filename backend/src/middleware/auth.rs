@@ -10,6 +10,7 @@ use crate::services::auth::decode_jwt;
 pub struct AuthUser {
     pub user_id: Uuid,
     pub email: String,
+    pub workspace_id: Uuid,
 }
 
 pub async fn auth_middleware(mut request: Request, next: Next) -> Result<Response, StatusCode> {
@@ -33,9 +34,17 @@ pub async fn auth_middleware(mut request: Request, next: Next) -> Result<Respons
         .parse::<Uuid>()
         .map_err(|_| StatusCode::UNAUTHORIZED)?;
 
+    // Extract workspace_id from JWT, fallback to user_id for backward compatibility
+    let workspace_id = claims
+        .workspace_id
+        .as_ref()
+        .and_then(|w| w.parse::<Uuid>().ok())
+        .unwrap_or(user_id);
+
     request.extensions_mut().insert(AuthUser {
         user_id,
         email: claims.email,
+        workspace_id,
     });
 
     Ok(next.run(request).await)

@@ -33,7 +33,7 @@ pub async fn upload(
     mut multipart: Multipart,
 ) -> Result<Json<Value>, AppError> {
     let owner_id = assistant_service::resolve_assistant_access(
-        &db, &auth_user.user_id, &assistant_id, query.share_token.as_deref(), "admin",
+        &db, &auth_user.workspace_id, &assistant_id, query.share_token.as_deref(), "admin",
     ).await?;
 
     let mut file_name = String::new();
@@ -113,7 +113,7 @@ pub async fn list(
     Query(query): Query<ShareTokenQuery>,
 ) -> Result<Json<Vec<FileResponse>>, AppError> {
     let owner_id = assistant_service::resolve_assistant_access(
-        &db, &auth_user.user_id, &assistant_id, query.share_token.as_deref(), "read",
+        &db, &auth_user.workspace_id, &assistant_id, query.share_token.as_deref(), "read",
     ).await?;
     let files = rag::list_files(&db, &assistant_id, &owner_id).await?;
 
@@ -138,7 +138,7 @@ pub async fn delete(
     Query(query): Query<ShareTokenQuery>,
 ) -> Result<Json<Value>, AppError> {
     let owner_id = assistant_service::resolve_assistant_access(
-        &db, &auth_user.user_id, &assistant_id, query.share_token.as_deref(), "admin",
+        &db, &auth_user.workspace_id, &assistant_id, query.share_token.as_deref(), "admin",
     ).await?;
     rag::delete_file(&db, &assistant_id, &owner_id, &file_id).await?;
     Ok(Json(json!({"message": "File deleted"})))

@@ -757,7 +757,7 @@ pub async fn playground_chat(
     Json(req): Json<ChatRequest>,
 ) -> Result<Json<PlaygroundResponse>, AppError> {
     let response = messaging::playground_chat(
-        &db, &encryption, &auth_user.user_id, &assistant_id,
+        &db, &encryption, &auth_user.workspace_id, &assistant_id,
         query.share_token.as_deref(),
         &req.message,
     )
@@ -774,7 +774,7 @@ pub async fn list_conversations(
     Query(query): Query<ConversationListQuery>,
 ) -> Result<Json<crate::models::pagination::PaginatedResponse<ConversationResponse>>, AppError> {
     let owner_id = assistant_service::resolve_assistant_access(
-        &db, &auth_user.user_id, &assistant_id, query.share_token.as_deref(), "read",
+        &db, &auth_user.workspace_id, &assistant_id, query.share_token.as_deref(), "read",
     ).await?;
     let limit = query.limit.unwrap_or(30).min(100).max(1);
     let paginated =
@@ -820,7 +820,7 @@ pub async fn list_messages(
     Query(query): Query<MessageListQuery>,
 ) -> Result<Json<crate::models::pagination::PaginatedResponse<MessageResponse>>, AppError> {
     let owner_id = assistant_service::resolve_assistant_access(
-        &db, &auth_user.user_id, &assistant_id, query.share_token.as_deref(), "read",
+        &db, &auth_user.workspace_id, &assistant_id, query.share_token.as_deref(), "read",
     ).await?;
     // Validate conversation belongs to this assistant+user before returning messages
     messaging::get_conversation(&db, &assistant_id, &owner_id, &conversation_id).await?;
@@ -851,7 +851,7 @@ pub async fn delete_conversation(
     Query(query): Query<crate::handlers::assistants::ShareTokenQuery>,
 ) -> Result<Json<Value>, AppError> {
     let owner_id = assistant_service::resolve_assistant_access(
-        &db, &auth_user.user_id, &assistant_id, query.share_token.as_deref(), "write",
+        &db, &auth_user.workspace_id, &assistant_id, query.share_token.as_deref(), "write",
     ).await?;
     messaging::delete_conversation(&db, &assistant_id, &owner_id, &conversation_id).await?;
     Ok(Json(serde_json::json!({"message": "Conversation deleted"})))
@@ -874,7 +874,7 @@ pub async fn send_message(
     Json(req): Json<SendMessageRequest>,
 ) -> Result<Json<MessageResponse>, AppError> {
     let owner_id = assistant_service::resolve_assistant_access(
-        &db, &auth_user.user_id, &assistant_id, query.share_token.as_deref(), "write",
+        &db, &auth_user.workspace_id, &assistant_id, query.share_token.as_deref(), "write",
     ).await?;
     let response = messaging::send_direct_message(
         &db, &config, &encryption, &owner_id, &assistant_id, &conversation_id, &req.message,
@@ -904,7 +904,7 @@ pub async fn toggle_ai(
     Json(req): Json<ToggleAiRequest>,
 ) -> Result<Json<Value>, AppError> {
     let owner_id = assistant_service::resolve_assistant_access(
-        &db, &auth_user.user_id, &assistant_id, query.share_token.as_deref(), "write",
+        &db, &auth_user.workspace_id, &assistant_id, query.share_token.as_deref(), "write",
     ).await?;
     messaging::toggle_ai_enabled(&db, &assistant_id, &owner_id, &conversation_id, req.ai_enabled).await?;
     Ok(Json(serde_json::json!({"aiEnabled": req.ai_enabled})))
@@ -927,7 +927,7 @@ pub async fn summarize_conversation(
     Json(req): Json<SummarizeRequest>,
 ) -> Result<Json<SummaryResponse>, AppError> {
     let owner_id = assistant_service::resolve_assistant_access(
-        &db, &auth_user.user_id, &assistant_id, query.share_token.as_deref(), "read",
+        &db, &auth_user.workspace_id, &assistant_id, query.share_token.as_deref(), "read",
     ).await?;
     let response = messaging::summarize_conversation(
         &db, &encryption, &owner_id, &assistant_id, &conversation_id,

@@ -85,6 +85,8 @@ services:
 
   baileys:
     image: ghcr.io/fazer-ai/baileys-api:latest
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     command:
       - sh
       - '-c'

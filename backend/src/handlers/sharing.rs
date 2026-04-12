@@ -43,7 +43,7 @@ pub async fn get_share_token(
     Extension(auth_user): Extension<AuthUser>,
     Path(assistant_id): Path<Uuid>,
 ) -> Result<Json<Option<ShareTokenInfo>>, AppError> {
-    let asst = assistant::get_assistant(&db, &auth_user.user_id, &assistant_id).await?;
+    let asst = assistant::get_assistant(&db, &auth_user.workspace_id, &assistant_id).await?;
     if let Some(token) = asst.share_token {
         Ok(Json(Some(ShareTokenInfo {
             token,
@@ -62,10 +62,10 @@ pub async fn create_share_token(
     Path(assistant_id): Path<Uuid>,
     Json(req): Json<SetShareTokenRequest>,
 ) -> Result<Json<ShareTokenInfo>, AppError> {
-    let asst = assistant::get_assistant(&db, &auth_user.user_id, &assistant_id).await?;
+    let asst = assistant::get_assistant(&db, &auth_user.workspace_id, &assistant_id).await?;
     let token = generate_token();
     let permissions = req.permissions.clone().unwrap_or_else(|| vec!["read".to_string()]);
-    assistant::set_share_token(&db, &auth_user.user_id, &assistant_id, Some(token.clone()), Some(permissions.clone())).await?;
+    assistant::set_share_token(&db, &auth_user.workspace_id, &assistant_id, Some(token.clone()), Some(permissions.clone())).await?;
 
     if let Some(ref recipient) = req.email {
         let perm_label = permissions.join(", ");
@@ -91,8 +91,8 @@ pub async fn revoke_share_token(
     Extension(auth_user): Extension<AuthUser>,
     Path(assistant_id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    assistant::get_assistant(&db, &auth_user.user_id, &assistant_id).await?;
-    assistant::set_share_token(&db, &auth_user.user_id, &assistant_id, None, None).await?;
+    assistant::get_assistant(&db, &auth_user.workspace_id, &assistant_id).await?;
+    assistant::set_share_token(&db, &auth_user.workspace_id, &assistant_id, None, None).await?;
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
@@ -103,7 +103,7 @@ pub async fn get_shared_assistant(
     Path(token): Path<String>,
 ) -> Result<Json<SharedAssistantInfo>, AppError> {
     let (asst, permissions) = assistant::get_by_any_token(&db, &token).await?;
-    let is_own = asst.user_id == auth_user.user_id;
+    let is_own = asst.user_id == auth_user.workspace_id;
     Ok(Json(SharedAssistantInfo {
         id: asst.id.to_string(),
         name: asst.name,
@@ -136,12 +136,12 @@ pub async fn accept_share(
     Json(req): Json<AcceptShareRequest>,
 ) -> Result<Json<AcceptedShareInfo>, AppError> {
     let (asst, permissions) = assistant::get_by_any_token(&db, &req.token).await?;
-    let is_own = asst.user_id == auth_user.user_id;
+    let is_own = asst.user_id == auth_user.workspace_id;
 
     if !is_own {
         assistant::accept_share(
             &db,
-            &auth_user.user_id,
+            &auth_user.workspace_id,
             &asst.id,
             &req.token,
             &asst.name,
@@ -165,7 +165,7 @@ pub async fn list_accepted_shares(
     Extension(db): Extension<DbSession>,
     Extension(auth_user): Extension<AuthUser>,
 ) -> Result<Json<Vec<assistant::AcceptedShare>>, AppError> {
-    let shares = assistant::list_accepted_shares(&db, &auth_user.user_id).await?;
+    let shares = assistant::list_accepted_shares(&db, &auth_user.workspace_id).await?;
     Ok(Json(shares))
 }
 
@@ -175,6 +175,6 @@ pub async fn remove_accepted_share(
     Extension(auth_user): Extension<AuthUser>,
     Path(assistant_id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    assistant::remove_accepted_share(&db, &auth_user.user_id, &assistant_id).await?;
+    assistant::remove_accepted_share(&db, &auth_user.workspace_id, &assistant_id).await?;
     Ok(Json(serde_json::json!({ "ok": true })))
 }

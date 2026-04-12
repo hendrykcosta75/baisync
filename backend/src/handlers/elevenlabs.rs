@@ -8,7 +8,6 @@ use crate::errors::AppError;
 use crate::handlers::assistants::OwnerResolveQuery;
 use crate::middleware::auth::AuthUser;
 use crate::services::assistant as assistant_service;
-use crate::services::auth as auth_service;
 use crate::services::encryption::EncryptionService;
 
 #[derive(Debug, Serialize)]
@@ -45,13 +44,9 @@ pub async fn list_voices(
     Query(query): Query<OwnerResolveQuery>,
 ) -> Result<Json<VoicesResponse>, AppError> {
     let user_id = assistant_service::resolve_api_key_user(
-        &db, &auth_user.user_id, query.assistant_id.as_ref(), query.share_token.as_deref(),
+        &db, &auth_user.workspace_id, query.assistant_id.as_ref(), query.share_token.as_deref(),
     ).await?;
-    let user = auth_service::get_user_by_id(&db, &user_id).await?;
-    let encrypted_key = user
-        .api_key_elevenlabs
-        .ok_or_else(|| AppError::BadRequest("ElevenLabs API key not configured".into()))?;
-    let api_key = encryption.decrypt(&encrypted_key)?;
+    let api_key = crate::services::workspace::get_decrypted_api_key(&db, &encryption, &user_id, "elevenlabs").await?;
 
     let client = reqwest::Client::new();
     let resp = client
@@ -101,13 +96,9 @@ pub async fn preview_voice(
     Json(body): Json<PreviewRequest>,
 ) -> Result<Json<PreviewResponse>, AppError> {
     let user_id = assistant_service::resolve_api_key_user(
-        &db, &auth_user.user_id, query.assistant_id.as_ref(), query.share_token.as_deref(),
+        &db, &auth_user.workspace_id, query.assistant_id.as_ref(), query.share_token.as_deref(),
     ).await?;
-    let user = auth_service::get_user_by_id(&db, &user_id).await?;
-    let encrypted_key = user
-        .api_key_elevenlabs
-        .ok_or_else(|| AppError::BadRequest("ElevenLabs API key not configured".into()))?;
-    let api_key = encryption.decrypt(&encrypted_key)?;
+    let api_key = crate::services::workspace::get_decrypted_api_key(&db, &encryption, &user_id, "elevenlabs").await?;
 
     let text = body
         .text

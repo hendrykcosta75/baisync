@@ -38,16 +38,7 @@ pub async fn chat(
     Extension(auth_user): Extension<AuthUser>,
     Json(req): Json<TestAgentChatRequest>,
 ) -> Result<Json<TestAgentChatResponse>, AppError> {
-    let user = crate::services::auth::get_user_by_id(&db, &auth_user.user_id).await?;
-    let encrypted_key = match req.provider.as_str() {
-        "openai" => user.api_key_openai,
-        "claude" => user.api_key_claude,
-        "gemini" => user.api_key_gemini,
-        _ => None,
-    }
-    .ok_or_else(|| AppError::BadRequest("API key not configured for this provider".into()))?;
-
-    let api_key = encryption.decrypt(&encrypted_key)?;
+    let api_key = crate::services::workspace::get_decrypted_api_key(&db, &encryption, &auth_user.workspace_id, &req.provider).await?;
 
     let mut llm_messages = vec![LlmMessage {
         role: "system".into(),
@@ -99,16 +90,7 @@ pub async fn generate_prompt(
     Extension(auth_user): Extension<AuthUser>,
     Json(req): Json<GeneratePromptRequest>,
 ) -> Result<Json<GeneratePromptResponse>, AppError> {
-    let user = crate::services::auth::get_user_by_id(&db, &auth_user.user_id).await?;
-    let encrypted_key = match req.provider.as_str() {
-        "openai" => user.api_key_openai,
-        "claude" => user.api_key_claude,
-        "gemini" => user.api_key_gemini,
-        _ => None,
-    }
-    .ok_or_else(|| AppError::BadRequest("API key not configured for this provider".into()))?;
-
-    let api_key = encryption.decrypt(&encrypted_key)?;
+    let api_key = crate::services::workspace::get_decrypted_api_key(&db, &encryption, &auth_user.workspace_id, &req.provider).await?;
 
     let system = "Você é um especialista em QA e testes de chatbots. Sua tarefa é criar um prompt de sistema para um agente de teste que vai simular um cliente conversando com um chatbot de atendimento.\n\n\
         O prompt deve instruir o agente de teste a:\n\
@@ -169,16 +151,7 @@ pub async fn evaluate(
     Extension(auth_user): Extension<AuthUser>,
     Json(req): Json<EvaluateRequest>,
 ) -> Result<Json<EvaluateResponse>, AppError> {
-    let user = crate::services::auth::get_user_by_id(&db, &auth_user.user_id).await?;
-    let encrypted_key = match req.provider.as_str() {
-        "openai" => user.api_key_openai,
-        "claude" => user.api_key_claude,
-        "gemini" => user.api_key_gemini,
-        _ => None,
-    }
-    .ok_or_else(|| AppError::BadRequest("API key not configured for this provider".into()))?;
-
-    let api_key = encryption.decrypt(&encrypted_key)?;
+    let api_key = crate::services::workspace::get_decrypted_api_key(&db, &encryption, &auth_user.workspace_id, &req.provider).await?;
 
     let mut transcript = String::new();
     for msg in &req.messages {

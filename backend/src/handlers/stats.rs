@@ -66,7 +66,7 @@ pub async fn user_usage(
     let days = params.days.unwrap_or(14).min(90);
     let periods = resolve_periods(params.dates.as_deref(), days);
 
-    let assistants = assistant::list_assistants(&db, &auth_user.user_id).await?;
+    let assistants = assistant::list_assistants(&db, &auth_user.workspace_id).await?;
 
     // Map period → (messages, tokens)
     let mut daily: std::collections::HashMap<String, (i64, i64)> =
@@ -78,7 +78,7 @@ pub async fn user_usage(
                 "SELECT period, total_messages, total_tokens \
                  FROM inertial_eclipse.usage_stats \
                  WHERE user_id = ? AND assistant_id = ?",
-                (&auth_user.user_id, &asst.id),
+                (&auth_user.workspace_id, &asst.id),
             )
             .await
             .map_err(|e| AppError::DatabaseError(e.to_string()))?;
@@ -147,7 +147,7 @@ pub async fn assistant_stats(
 
     // Verify ownership or share_token access
     let owner_id = assistant::resolve_assistant_access(
-        &db, &auth_user.user_id, &assistant_id, params.share_token.as_deref(), "read",
+        &db, &auth_user.workspace_id, &assistant_id, params.share_token.as_deref(), "read",
     ).await?;
 
     let periods = resolve_periods(params.dates.as_deref(), days);
@@ -278,7 +278,7 @@ pub async fn assistant_logs(
 
     // Verify ownership or share_token access
     assistant::resolve_assistant_access(
-        &db, &auth_user.user_id, &assistant_id, params.share_token.as_deref(), "read",
+        &db, &auth_user.workspace_id, &assistant_id, params.share_token.as_deref(), "read",
     ).await?;
 
     // Get all tools, then batch-fetch their logs
@@ -325,13 +325,13 @@ pub async fn user_activity(
 ) -> Result<Json<Vec<ActivityEvent>>, AppError> {
     let limit = params.limit.unwrap_or(10).min(50);
 
-    let assistants = assistant::list_assistants(&db, &auth_user.user_id).await?;
+    let assistants = assistant::list_assistants(&db, &auth_user.workspace_id).await?;
 
     let mut events: Vec<(chrono::DateTime<Utc>, ActivityEvent)> = Vec::new();
 
     for asst in &assistants {
         let convs_page =
-            messaging::list_conversations(&db, &asst.id, &auth_user.user_id, 10000, None, None).await?;
+            messaging::list_conversations(&db, &asst.id, &auth_user.workspace_id, 10000, None, None).await?;
         for conv in convs_page.items {
             events.push((
                 conv.last_message_at,

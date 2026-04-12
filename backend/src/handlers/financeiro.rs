@@ -20,7 +20,7 @@ pub async fn overview(
     Extension(db): Extension<DbSession>,
     Extension(auth_user): Extension<AuthUser>,
 ) -> Result<Json<Value>, AppError> {
-    let overviews = crate::services::pix::get_user_financial_overview(&db, &auth_user.user_id).await?;
+    let overviews = crate::services::pix::get_user_financial_overview(&db, &auth_user.workspace_id).await?;
 
     let data: Vec<Value> = overviews.into_iter().map(|(assistant_id, summary)| {
         json!({
@@ -41,7 +41,7 @@ pub async fn summary(
     Extension(auth_user): Extension<AuthUser>,
     Path(assistant_id): Path<Uuid>,
 ) -> Result<Json<Value>, AppError> {
-    let _ = crate::services::assistant::get_assistant(&db, &auth_user.user_id, &assistant_id).await?;
+    let _ = crate::services::assistant::get_assistant(&db, &auth_user.workspace_id, &assistant_id).await?;
 
     let summary = crate::services::pix::get_assistant_financial_summary(&db, &assistant_id).await?;
 
@@ -60,7 +60,7 @@ pub async fn charges(
     Path(assistant_id): Path<Uuid>,
     Query(query): Query<ChargesQuery>,
 ) -> Result<Json<Value>, AppError> {
-    let _ = crate::services::assistant::get_assistant(&db, &auth_user.user_id, &assistant_id).await?;
+    let _ = crate::services::assistant::get_assistant(&db, &auth_user.workspace_id, &assistant_id).await?;
 
     let limit = query.limit.unwrap_or(50).min(500);
 
@@ -135,7 +135,7 @@ pub async fn update_charge_status_handler(
     Json(body): Json<Value>,
 ) -> Result<Json<Value>, AppError> {
     // Verify assistant ownership
-    let _ = crate::services::assistant::get_assistant(&db, &auth_user.user_id, &assistant_id).await?;
+    let _ = crate::services::assistant::get_assistant(&db, &auth_user.workspace_id, &assistant_id).await?;
 
     let new_status = body.get("status")
         .and_then(|v| v.as_str())
@@ -148,7 +148,7 @@ pub async fn update_charge_status_handler(
 
     // Try PIX charges first, then card charges
     let pix_charge = crate::services::pix::check_charge_status(
-        &db, &auth_user.user_id, &charge_id, None,
+        &db, &auth_user.workspace_id, &charge_id, None,
     ).await;
 
     if let Ok(charge) = pix_charge {
@@ -163,7 +163,7 @@ pub async fn update_charge_status_handler(
         }
 
         crate::services::pix::update_charge_status(
-            &db, &auth_user.user_id, &charge_id, &assistant_id, charge.created_at, new_status,
+            &db, &auth_user.workspace_id, &charge_id, &assistant_id, charge.created_at, new_status,
         ).await?;
 
         if new_status == "approved" {
@@ -185,7 +185,7 @@ pub async fn update_charge_status_handler(
 
     // Try card charges
     let card_charge = crate::services::card_payment::check_charge_status(
-        &db, &auth_user.user_id, &charge_id, None,
+        &db, &auth_user.workspace_id, &charge_id, None,
     ).await?;
 
     if card_charge.assistant_id != assistant_id {
@@ -200,7 +200,7 @@ pub async fn update_charge_status_handler(
     }
 
     crate::services::card_payment::update_charge_status(
-        &db, &auth_user.user_id, &charge_id, &assistant_id, card_charge.created_at, new_status,
+        &db, &auth_user.workspace_id, &charge_id, &assistant_id, card_charge.created_at, new_status,
     ).await?;
 
     event_bus.publish(&auth_user.user_id, crate::services::events::SseEvent {

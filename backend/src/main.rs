@@ -333,6 +333,93 @@ async fn main() {
             "/api/test-agent/evaluate",
             post(handlers::test_agent::evaluate),
         )
+        // Workspaces
+        .route(
+            "/api/workspaces",
+            get(handlers::workspaces::list).post(handlers::workspaces::create),
+        )
+        .route(
+            "/api/workspaces/{id}",
+            get(handlers::workspaces::get).put(handlers::workspaces::update),
+        )
+        .route(
+            "/api/workspaces/{id}/switch",
+            post(handlers::workspaces::switch),
+        )
+        .route(
+            "/api/workspaces/{id}/members",
+            get(handlers::workspaces::list_members),
+        )
+        .route(
+            "/api/workspaces/{id}/invite",
+            post(handlers::workspaces::invite_member),
+        )
+        .route(
+            "/api/workspaces/{id}/members/{user_id}",
+            put(handlers::workspaces::update_member_role)
+                .delete(handlers::workspaces::remove_member),
+        )
+        .route(
+            "/api/workspaces/{id}/api-keys",
+            get(handlers::workspaces::get_api_keys)
+                .put(handlers::workspaces::update_api_keys),
+        )
+        .route(
+            "/api/workspace-invites/{token}/accept",
+            post(handlers::workspaces::accept_invite),
+        )
+        // Channels
+        .route(
+            "/api/workspaces/{id}/channels",
+            get(handlers::channels::list_channels)
+                .post(handlers::channels::create_channel),
+        )
+        .route(
+            "/api/channels/{id}",
+            get(handlers::channels::get_channel)
+                .put(handlers::channels::update_channel)
+                .delete(handlers::channels::delete_channel),
+        )
+        .route(
+            "/api/channels/{id}/members",
+            get(handlers::channels::list_channel_members)
+                .post(handlers::channels::add_channel_member),
+        )
+        .route(
+            "/api/channels/{id}/members/{user_id}",
+            delete(handlers::channels::remove_channel_member),
+        )
+        .route(
+            "/api/channels/{id}/messages",
+            get(handlers::channels::list_messages)
+                .post(handlers::channels::send_message),
+        )
+        .route(
+            "/api/channels/{channel_id}/messages/{message_id}",
+            put(handlers::channels::edit_message)
+                .delete(handlers::channels::delete_message),
+        )
+        .route(
+            "/api/channels/{id}/read",
+            post(handlers::channels::mark_read),
+        )
+        // Channel Notes
+        .route(
+            "/api/channels/{id}/notes",
+            get(handlers::channels::list_notes)
+                .post(handlers::channels::create_note),
+        )
+        .route(
+            "/api/channels/{channel_id}/notes/{note_id}",
+            get(handlers::channels::get_note)
+                .put(handlers::channels::update_note)
+                .delete(handlers::channels::delete_note),
+        )
+        .route(
+            "/api/workspaces/{id}/dms",
+            get(handlers::channels::list_dms)
+                .post(handlers::channels::create_dm),
+        )
         // Playground chat
         .route(
             "/api/assistants/{id}/chat",
