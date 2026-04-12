@@ -20,7 +20,7 @@ function extractBackendRoutes(): Set<string> {
 function extractFrontendApiCalls(): Set<string> {
   const calls = new Set<string>()
 
-  const files = glob.sync('frontend/{store,lib}/**/*.{ts,tsx}', { cwd: ROOT })
+  const files = glob.sync('frontend/{store,lib,components,app}/**/*.{ts,tsx}', { cwd: ROOT, ignore: ['**/node_modules/**'] })
 
   for (const file of files) {
     const content = readFileSync(path.join(ROOT, file), 'utf-8')
@@ -29,11 +29,22 @@ function extractFrontendApiCalls(): Set<string> {
     let match
     while ((match = urlRegex.exec(content)) !== null) {
       let url = match[0].replace(/[`"']/g, '')
-      // Remove query params
+      // Remove query params (both literal ? and template expressions that are query strings)
       url = url.split('?')[0]
-      // Normalize template expressions ${...} to :param
-      url = url.replace(/\$\{[^}]+\}/g, ':param')
-      calls.add(url)
+      // Remove trailing template expressions that are query params (e.g. ${shareQs})
+      // These don't start with / so they're appended to the last segment
+      url = url.replace(/\$\{[^}]*[Qq]s[^}]*\}/g, '')
+      url = url.replace(/\$\{[^}]*[Qq]uery[^}]*\}/g, '')
+      url = url.replace(/\$\{[^}]*[Pp]aram[^}]*\}/g, '')
+      // Normalize path-segment template expressions ${...} to :param
+      // Only replace when preceded by /
+      url = url.replace(/\/\$\{[^}]+\}/g, '/:param')
+      // Remove any remaining template expressions (likely query strings appended without ?)
+      url = url.replace(/\$\{[^}]+\}/g, '')
+      // Clean up trailing slashes and double slashes
+      url = url.replace(/\/\//g, '/')
+      url = url.replace(/\/$/, '')
+      if (url) calls.add(url)
     }
   }
   return calls
@@ -50,6 +61,13 @@ const BACKEND_EXCEPTIONS = new Set([
   '/health',
 ])
 
+// Frontend-only API routes (Next.js route handlers, not backend calls)
+const FRONTEND_ONLY_ROUTES = new Set([
+  '/api/auth/logout',
+  '/api/admin/logout',
+  '/api/health',
+])
+
 function main() {
   const backendRoutes = extractBackendRoutes()
   const frontendCalls = extractFrontendApiCalls()
@@ -63,6 +81,7 @@ function main() {
 
   // Check frontend calls against backend
   for (const call of frontendCalls) {
+    if (FRONTEND_ONLY_ROUTES.has(call)) continue
     if (!backendRoutes.has(call)) {
       // Check if it matches with different param names
       const callParts = call.split('/')
