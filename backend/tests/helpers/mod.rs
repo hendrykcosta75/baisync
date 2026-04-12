@@ -122,3 +122,4 @@ pub async fn spawn_app() -> TestApp {
         client: Client::new(),
     }
 }
+
