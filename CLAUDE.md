@@ -148,8 +148,8 @@ Pre-commit runs: frontend lint + backend cargo check
 Pre-push runs: frontend tests + backend unit tests + consistency checks
 
 ### CI/CD
-- Backend: `backend/.github/workflows/deploy.yml` — tests → deploy (on push to master)
-- Frontend: `frontend/.github/workflows/deploy.yml` — tests → deploy (on push to main)
+- Backend: `.github/workflows/backend-deploy.yml` — tests → deploy (on push to master)
+- Frontend: `.github/workflows/frontend-deploy.yml` — tests → deploy (on push to master)
 - Consistency: `.github/workflows/consistency.yml` — runs on all PRs
 
 All deploys are gated behind passing tests.

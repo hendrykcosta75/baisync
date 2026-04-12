@@ -2,7 +2,13 @@ name: Deploy Frontend
 
 on:
   push:
-    branches: [main]
+    branches: [master]
+    paths:
+      - 'frontend/**'
+  pull_request:
+    branches: [master]
+    paths:
+      - 'frontend/**'
 
 jobs:
   test:
@@ -29,7 +35,9 @@ jobs:
         run: npx tsc --noEmit
 
   deploy:
+    name: Deploy Frontend
     needs: [test]
+    if: github.ref == 'refs/heads/master' && github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
