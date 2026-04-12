@@ -114,3 +114,42 @@ Key design decisions:
 ## Environment Variables
 
 Copy `.env.example` to `.env` at project root. Key vars: `CASSANDRA_HOST`, `JWT_SECRET`, `SMTP_*`, `ENCRYPTION_KEY`, `BAILEYS_URL`, `BAILEYS_API_KEY`, `NEXT_PUBLIC_API_URL`.
+
+## Testing
+
+### Backend Tests
+```bash
+cd backend
+cargo test --lib          # Unit tests only (no Cassandra needed)
+cargo test                # All tests (needs Cassandra running)
+cargo test --test auth_tests  # Single integration test file
+```
+
+### Frontend Tests
+```bash
+cd frontend
+yarn test                 # All tests
+yarn test:watch           # Watch mode
+yarn test:coverage        # With coverage report
+```
+
+### Consistency Tests
+```bash
+bash tests/consistency/check.sh           # All consistency checks
+npx --prefix tests/consistency tsx tests/consistency/routes-consistency.ts  # Single check
+```
+
+### Pre-commit Hooks (lefthook)
+```bash
+lefthook install    # Set up hooks (run once after clone)
+```
+
+Pre-commit runs: frontend lint + backend cargo check
+Pre-push runs: frontend tests + backend unit tests + consistency checks
+
+### CI/CD
+- Backend: `backend/.github/workflows/deploy.yml` — tests → deploy (on push to master)
+- Frontend: `frontend/.github/workflows/deploy.yml` — tests → deploy (on push to main)
+- Consistency: `.github/workflows/consistency.yml` — runs on all PRs
+
+All deploys are gated behind passing tests.

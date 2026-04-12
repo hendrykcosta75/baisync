@@ -1,0 +1,9 @@
+{
+  "name": "consistency-tests",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "tsx": "^4.0.0",
+    "glob": "^11.0.0"
+  }
+}

@@ -71,3 +71,64 @@ impl EncryptionService {
         String::from_utf8(plaintext).map_err(|e| AppError::EncryptionError(e.to_string()))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_encrypt_decrypt_roundtrip() {
+        let key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let service = EncryptionService::new(key).unwrap();
+        let plaintext = "my secret api key";
+        let encrypted = service.encrypt(plaintext).unwrap();
+        let decrypted = service.decrypt(&encrypted).unwrap();
+        assert_eq!(decrypted, plaintext);
+    }
+
+    #[test]
+    fn test_encrypt_produces_different_ciphertext() {
+        let key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let service = EncryptionService::new(key).unwrap();
+        let plaintext = "test";
+        let enc1 = service.encrypt(plaintext).unwrap();
+        let enc2 = service.encrypt(plaintext).unwrap();
+        assert_ne!(enc1, enc2); // Different nonces
+    }
+
+    #[test]
+    fn test_decrypt_invalid_base64() {
+        let key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let service = EncryptionService::new(key).unwrap();
+        let result = service.decrypt("not-valid-base64!!!");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_decrypt_too_short() {
+        let key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let service = EncryptionService::new(key).unwrap();
+        let short = BASE64.encode(&[0u8; 5]);
+        let result = service.decrypt(&short);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_new_with_valid_hex_key() {
+        let key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let service = EncryptionService::new(key);
+        assert!(service.is_ok());
+    }
+
+    #[test]
+    fn test_new_with_non_hex_key_fallback() {
+        let key = "this-is-not-hex-but-should-work";
+        let service = EncryptionService::new(key);
+        assert!(service.is_ok());
+        // Should still encrypt/decrypt
+        let svc = service.unwrap();
+        let encrypted = svc.encrypt("hello").unwrap();
+        let decrypted = svc.decrypt(&encrypted).unwrap();
+        assert_eq!(decrypted, "hello");
+    }
+}

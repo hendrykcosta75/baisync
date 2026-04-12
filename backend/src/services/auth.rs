@@ -420,3 +420,79 @@ pub async fn reset_password(
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_hash_and_verify_password() {
+        let password = "MyStr0ngP@ss!";
+        let hash = hash_password(password).unwrap();
+        assert!(verify_password(password, &hash).unwrap());
+    }
+
+    #[test]
+    fn test_verify_wrong_password() {
+        let hash = hash_password("correct").unwrap();
+        assert!(!verify_password("wrong", &hash).unwrap());
+    }
+
+    #[test]
+    fn test_create_and_decode_jwt() {
+        let user_id = Uuid::new_v4();
+        let email = "test@example.com";
+        let secret = "test-secret-key";
+
+        let token = create_jwt(&user_id, email, secret).unwrap();
+        let claims = decode_jwt(&token, secret).unwrap();
+
+        assert_eq!(claims.sub, user_id.to_string());
+        assert_eq!(claims.email, email);
+        assert!(claims.workspace_id.is_some());
+    }
+
+    #[test]
+    fn test_decode_jwt_wrong_secret() {
+        let user_id = Uuid::new_v4();
+        let token = create_jwt(&user_id, "test@test.com", "secret1").unwrap();
+        let result = decode_jwt(&token, "secret2");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_create_admin_jwt_has_admin_role() {
+        let secret = "admin-secret";
+        let token = create_admin_jwt(secret).unwrap();
+        let claims = decode_jwt(&token, secret).unwrap();
+        assert_eq!(claims.role, Some("admin".to_string()));
+        assert_eq!(claims.email, "admin");
+    }
+
+    #[test]
+    fn test_jwt_with_workspace_id() {
+        let user_id = Uuid::new_v4();
+        let workspace_id = Uuid::new_v4();
+        let secret = "ws-secret";
+
+        let token = create_jwt_with_workspace(&user_id, "u@e.com", &workspace_id, secret).unwrap();
+        let claims = decode_jwt(&token, secret).unwrap();
+
+        assert_eq!(claims.workspace_id, Some(workspace_id.to_string()));
+    }
+
+    #[test]
+    fn test_generate_reset_token_uniqueness() {
+        let t1 = generate_reset_token();
+        let t2 = generate_reset_token();
+        assert_ne!(t1, t2);
+        assert!(!t1.is_empty());
+    }
+
+    #[test]
+    fn test_generate_2fa_code_format() {
+        let code = generate_2fa_code();
+        assert_eq!(code.len(), 6);
+        assert!(code.chars().all(|c| c.is_ascii_digit()));
+    }
+}

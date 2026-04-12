@@ -53,3 +53,65 @@ impl IntoResponse for AppError {
         (status, axum::Json(body)).into_response()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::http::StatusCode;
+
+    #[test]
+    fn test_not_found_returns_404() {
+        let err = AppError::NotFound("x".into());
+        let response = err.into_response();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[test]
+    fn test_unauthorized_returns_401() {
+        let err = AppError::Unauthorized("x".into());
+        let response = err.into_response();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[test]
+    fn test_bad_request_returns_400() {
+        let err = AppError::BadRequest("x".into());
+        let response = err.into_response();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn test_forbidden_returns_403() {
+        let err = AppError::Forbidden("x".into());
+        let response = err.into_response();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[test]
+    fn test_rate_limit_returns_429() {
+        let err = AppError::RateLimitExceeded;
+        let response = err.into_response();
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+    }
+
+    #[test]
+    fn test_internal_error_returns_500() {
+        let err = AppError::InternalError("x".into());
+        let response = err.into_response();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[test]
+    fn test_database_error_returns_500() {
+        let err = AppError::DatabaseError("x".into());
+        let response = err.into_response();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[test]
+    fn test_encryption_error_returns_500() {
+        let err = AppError::EncryptionError("x".into());
+        let response = err.into_response();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+}

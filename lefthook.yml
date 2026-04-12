@@ -1,0 +1,22 @@
+pre-commit:
+  parallel: true
+  commands:
+    frontend-lint:
+      root: frontend/
+      glob: "*.{ts,tsx}"
+      run: yarn lint
+    backend-check:
+      root: backend/
+      glob: "*.rs"
+      run: cargo check
+
+pre-push:
+  commands:
+    frontend-test:
+      root: frontend/
+      run: yarn test
+    backend-unit-test:
+      root: backend/
+      run: cargo test --lib
+    consistency:
+      run: bash tests/consistency/check.sh
