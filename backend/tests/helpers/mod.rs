@@ -1,5 +1,4 @@
 use reqwest::{Client, Response};
-use std::net::TcpListener;
 
 pub struct TestApp {
     pub address: String,
@@ -108,11 +107,12 @@ pub async fn spawn_app() -> TestApp {
 
     let app = backend::app::build_router(db, config, encryption, event_bus, conn_store);
 
-    let listener = TcpListener::bind("127.0.0.1:0").expect("Failed to bind random port");
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("Failed to bind random port");
     let port = listener.local_addr().unwrap().port();
     let address = format!("http://127.0.0.1:{}", port);
 
-    let listener = tokio::net::TcpListener::from_std(listener).unwrap();
     tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap();
     });

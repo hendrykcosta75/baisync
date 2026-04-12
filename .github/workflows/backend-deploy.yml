@@ -37,6 +37,7 @@ jobs:
       - name: Run integration tests
         working-directory: backend
         env:
+          RUSTFLAGS: "--cfg tokio_allow_from_blocking_fd"
           DATABASE_URL: "127.0.0.1:9042"
           JWT_SECRET: "ci-test-secret-key"
           ENCRYPTION_KEY: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
