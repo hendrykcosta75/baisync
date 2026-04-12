@@ -67,7 +67,7 @@ jobs:
           password: ${{ secrets.DOCKERHUB_TOKEN }}
       - uses: docker/build-push-action@v6
         with:
-          context: .
+          context: ./backend
           push: true
           tags: enki10/intertial-codebase:backend-latest
           cache-from: type=gha
