@@ -47,7 +47,8 @@ export default function AssistantsPage() {
           <div className="flex items-center justify-between w-full">
             <div>
               <h1
-                className="text-2xl font-bold tracking-tight text-foreground"
+                className="text-2xl font-light tracking-tight text-foreground"
+                style={{ fontFamily: "'Fira Code', 'JetBrains Mono', monospace" }}
               >
                 Assistentes de IA
               </h1>

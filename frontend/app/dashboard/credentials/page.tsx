@@ -521,7 +521,8 @@ export default function CredentialsPage() {
         <div className="flex items-center justify-between flex-wrap gap-4 mb-6">
           <div>
             <h1
-              className="text-2xl font-bold tracking-tight text-heading"
+              className="text-2xl font-light tracking-tight text-heading"
+              style={{ fontFamily: "'Fira Code', 'JetBrains Mono', monospace" }}
             >
               Credenciais
             </h1>

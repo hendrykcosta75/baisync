@@ -97,7 +97,7 @@ export default function SettingsPage() {
   return (
     <div className="flex flex-col gap-8 pb-10 max-w-full sm:max-w-2xl">
       <div>
-        <h1 className="text-2xl font-bold tracking-tight text-foreground">Minhas Configurações</h1>
+        <h1 className="text-2xl font-light tracking-tight text-foreground" style={{ fontFamily: "'Fira Code', 'JetBrains Mono', monospace" }}>Minhas Configurações</h1>
         <p className="text-sm text-muted mt-1">
           Gerencie seu perfil, segurança e configurações da conta.
         </p>

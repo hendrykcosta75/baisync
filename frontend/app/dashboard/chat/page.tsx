@@ -243,7 +243,7 @@ function ChannelSettingsModal({ channel, onClose }: { channel: Channel; onClose:
                       onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
                       onClick={() => handleAddMember(m.user_id)}
                     >
-                      <div className="w-6 h-6 rounded-full flex items-center justify-center text-[9px] font-bold" style={{ background: 'linear-gradient(135deg, #ff6b2c, #ff8533)', color: '#fff' }}>
+                      <div className="w-6 h-6 rounded-[8px] flex items-center justify-center text-[9px] font-semibold" style={{ background: '#121212', boxShadow: '3px 3px 7px rgba(0,0,0,0.45), -1px -1px 5px rgba(255,255,255,0.03)', color: '#D4835A' }}>
                         {(m.user_name || '?').slice(0, 2).toUpperCase()}
                       </div>
                       <span className="text-[12px] truncate" style={{ fontFamily: mono }}>{m.user_name || m.user_email}</span>
@@ -262,7 +262,7 @@ function ChannelSettingsModal({ channel, onClose }: { channel: Channel; onClose:
                     onMouseEnter={e => e.currentTarget.style.background = '#252525'}
                     onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
                   >
-                    <div className="w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0" style={{ background: 'linear-gradient(135deg, #ff6b2c, #ff8533)', color: '#fff' }}>
+                    <div className="w-7 h-7 rounded-[10px] flex items-center justify-center text-[10px] font-semibold shrink-0" style={{ background: '#121212', boxShadow: '3px 3px 7px rgba(0,0,0,0.45), -1px -1px 5px rgba(255,255,255,0.03)', color: '#D4835A' }}>
                       {(m.user_name || '?').slice(0, 2).toUpperCase()}
                     </div>
                     <div className="flex-1 min-w-0">
@@ -479,7 +479,7 @@ function ChannelListPanel() {
                     onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
                     onClick={() => handleCreateDm(m.user_id)}
                   >
-                    <div className="w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold" style={{ background: 'linear-gradient(135deg, #ff6b2c, #ff8533)', color: '#fff' }}>
+                    <div className="w-5 h-5 rounded-[8px] flex items-center justify-center text-[9px] font-semibold" style={{ background: '#121212', boxShadow: '3px 3px 7px rgba(0,0,0,0.45), -1px -1px 5px rgba(255,255,255,0.03)', color: '#D4835A' }}>
                       {(m.user_name || '?').slice(0, 2).toUpperCase()}
                     </div>
                     <span className="text-[12px] truncate" style={{ fontFamily: mono }}>{m.user_name || m.user_email}</span>
@@ -505,7 +505,7 @@ function ChannelListPanel() {
                 onMouseLeave={e => { if (!isActive) e.currentTarget.style.background = '' }}
                 onClick={() => setActiveChannel(dm)}
               >
-                <div className="w-5 h-5 rounded-full flex items-center justify-center text-[8px] font-bold shrink-0" style={{ background: 'linear-gradient(135deg, #ff6b2c, #ff8533)', color: '#fff' }}>
+                <div className="w-5 h-5 rounded-[7px] flex items-center justify-center text-[8px] font-semibold shrink-0" style={{ background: '#121212', boxShadow: '3px 3px 7px rgba(0,0,0,0.45), -1px -1px 5px rgba(255,255,255,0.03)', color: '#D4835A' }}>
                   {(other?.name || '?').slice(0, 2).toUpperCase()}
                 </div>
                 <span className={`truncate text-[13px] ${unread > 0 ? 'font-bold' : ''}`} style={{ fontFamily: mono }}>
@@ -1186,34 +1186,36 @@ function MessageArea() {
               return (
                 <div
                   key={msg.id}
-                  className="flex gap-3 group -mx-2 px-2 py-1 rounded-lg transition-colors"
+                  className={`flex gap-3 group -mx-2 px-2 py-1 rounded-lg transition-colors ${isOwn ? 'justify-end' : ''}`}
                   style={{ background: 'transparent' }}
                   onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.02)'}
                   onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
                 >
-                  <div
-                    className="w-8 h-8 rounded-lg flex items-center justify-center text-[10px] font-bold shrink-0 mt-0.5"
-                    style={{
-                      background: isOwn
-                        ? 'linear-gradient(135deg, #ff6b2c, #ff8533)'
-                        : '#252525',
-                      color: isOwn ? '#fff' : '#8a8a8a',
-                      fontFamily: mono,
-                      border: isOwn ? '2px solid rgba(249,115,22,0.4)' : 'none',
-                    }}
-                  >
-                    {msg.sender_name.slice(0, 2).toUpperCase()}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-baseline gap-2">
-                      <span className="text-[13px] font-bold" style={{ fontFamily: mono, color: '#e2e0da' }}>
-                        {msg.sender_name}
-                      </span>
-                      <span className="text-[11px] text-[#555555]" style={{ fontFamily: mono }}>
-                        {new Date(msg.created_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
-                      </span>
-                      {msg.edited_at && <span className="text-[10px] text-[#4a4a4a]">(editado)</span>}
+                  {!isOwn && (
+                    <div
+                      className="w-8 h-8 rounded-[10px] flex items-center justify-center text-[10px] font-semibold shrink-0 mt-0.5"
+                      style={{
+                        background: '#121212',
+                        boxShadow: '3px 3px 7px rgba(0,0,0,0.45), -1px -1px 5px rgba(255,255,255,0.03)',
+                        color: '#D4835A',
+                        fontFamily: mono,
+                      }}
+                    >
+                      {msg.sender_name.slice(0, 2).toUpperCase()}
                     </div>
+                  )}
+                  <div className={`${isOwn ? 'max-w-[75%]' : 'flex-1'} min-w-0 ${isOwn ? 'text-right' : ''}`}>
+                    {!isOwn && (
+                      <div className="flex items-baseline gap-2">
+                        <span className="text-[13px] font-bold" style={{ fontFamily: mono, color: '#e2e0da' }}>
+                          {msg.sender_name}
+                        </span>
+                        <span className="text-[11px] text-[#555555]" style={{ fontFamily: mono }}>
+                          {new Date(msg.created_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+                        </span>
+                        {msg.edited_at && <span className="text-[10px] text-[#4a4a4a]">(editado)</span>}
+                      </div>
+                    )}
                     <div
                       className="text-[#c0c0c0] text-[13px] leading-relaxed break-words prose prose-sm prose-invert max-w-none
                         prose-headings:text-[#e2e0da] prose-headings:font-bold prose-headings:mt-2 prose-headings:mb-1
@@ -1229,6 +1231,14 @@ function MessageArea() {
                     >
                       <Markdown remarkPlugins={[remarkGfm]}>{msg.content}</Markdown>
                     </div>
+                    {isOwn && (
+                      <div className="flex items-center gap-1.5 justify-end mt-0.5">
+                        <span className="text-[10px] text-[#555555]" style={{ fontFamily: mono }}>
+                          {new Date(msg.created_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+                        </span>
+                        {msg.edited_at && <span className="text-[10px] text-[#4a4a4a]">(editado)</span>}
+                      </div>
+                    )}
                   </div>
                 </div>
               )
@@ -1269,10 +1279,13 @@ function MessageArea() {
               <button
                 onClick={handleSend}
                 disabled={!input.trim()}
-                className="m-1.5 w-8 h-8 rounded-lg flex items-center justify-center transition-colors disabled:opacity-30"
+                className="m-1.5 w-8 h-8 rounded-[10px] flex items-center justify-center transition-all disabled:opacity-30"
                 style={{
-                  background: input.trim() ? 'linear-gradient(135deg, #ff6b2c, #ff8533)' : 'transparent',
-                  color: input.trim() ? '#fff' : '#555555',
+                  background: '#121212',
+                  boxShadow: input.trim()
+                    ? '3px 3px 7px rgba(0,0,0,0.45), -1px -1px 5px rgba(255,255,255,0.03)'
+                    : 'none',
+                  color: input.trim() ? '#D4835A' : '#555555',
                 }}
               >
                 <Send size={15} />

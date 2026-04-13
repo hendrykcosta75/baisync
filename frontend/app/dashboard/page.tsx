@@ -71,8 +71,8 @@ function Sparkline({ data }: { data: number[] }) {
     <svg width={w} height={h} className="overflow-visible shrink-0">
       <defs>
         <linearGradient id="sparkGrad" x1="0" y1="0" x2="72" y2="0" gradientUnits="userSpaceOnUse">
-          <stop offset="0%" stopColor="#ff6b2c" />
-          <stop offset="100%" stopColor="#ff8533" />
+          <stop offset="0%" stopColor="#D4835A" />
+          <stop offset="100%" stopColor="#D4835A" />
         </linearGradient>
       </defs>
       <polyline points={pts} fill="none" stroke="url(#sparkGrad)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
@@ -104,84 +104,165 @@ function fmtChartDate(iso: string): string {
 
 function UsageChart({ data, loading, error }: { data: DailyUsage[]; loading: boolean; error: string | null }) {
   const [mode, setMode] = React.useState<'requests' | 'tokens'>('requests')
+  const [hoverIdx, setHoverIdx] = React.useState<number | null>(null)
   const values = data.map(d => mode === 'requests' ? d.requests : d.tokens)
   const max = Math.max(...values, 1)
   const fmt = (v: number) => mode === 'tokens' ? `${(v / 1000).toFixed(1)}k` : `${v}`
   const hasData = values.some(v => v > 0)
 
+  const w = 510
+  const h = 170
+  const padX = 5
+  const padY = 10
+  const chartW = w - padX * 2
+  const chartH = h - padY * 2
+
+  // Build smooth cubic bezier path
+  const points = values.map((v, i) => ({
+    x: padX + (i / Math.max(values.length - 1, 1)) * chartW,
+    y: padY + chartH - (v / max) * chartH,
+  }))
+
+  let linePath = ''
+  let areaPath = ''
+  if (points.length > 1) {
+    const segs: string[] = [`M${points[0].x},${points[0].y}`]
+    for (let i = 0; i < points.length - 1; i++) {
+      const p0 = points[i]
+      const p1 = points[i + 1]
+      const cpx = (p0.x + p1.x) / 2
+      segs.push(`C${cpx},${p0.y} ${cpx},${p1.y} ${p1.x},${p1.y}`)
+    }
+    linePath = segs.join(' ')
+    areaPath = `${linePath} L${points[points.length - 1].x},${padY + chartH} L${points[0].x},${padY + chartH} Z`
+  }
+
+  // Pick ~4 evenly spaced label indices for date labels
+  const labelIndices: number[] = []
+  if (data.length > 0) {
+    const step = Math.max(Math.floor((data.length - 1) / 3), 1)
+    for (let i = 0; i < data.length; i += step) labelIndices.push(i)
+    if (labelIndices[labelIndices.length - 1] !== data.length - 1) labelIndices.push(data.length - 1)
+  }
+
   return (
     <div>
-      <div className="flex gap-1 h-28 px-1">
-        {loading ? (
-          <div className="w-full flex items-center justify-center text-[#8a8a8a] text-xs animate-pulse">Carregando...</div>
-        ) : error ? (
-          <div className="w-full flex flex-col items-center justify-center gap-1 text-center">
-            <AlertTriangle size={24} className="text-red-400" />
-            <p className="text-xs text-red-500">Erro ao carregar dados</p>
-            <p className="text-[10px] text-[#8a8a8a] max-w-xs truncate" style={{ fontFamily: "'JetBrains Mono', 'Fira Code', monospace" }} title={error}>{error}</p>
-          </div>
-        ) : !hasData ? (
-          <div className="w-full flex flex-col items-center justify-center gap-1 text-center">
-            <InboxIcon size={24} className="text-[#8a8a8a]" />
-            <p className="text-xs text-[#8a8a8a]">Nenhuma requisição nos últimos 14 dias</p>
-          </div>
-        ) : data.map((d, i) => {
-          const val = mode === 'requests' ? d.requests : d.tokens
-          const pct = Math.max((val / max) * 100, 3)
-          return (
-            <div key={i} className="flex-1 h-full flex flex-col justify-end items-center group relative">
-              <div
-                className={`w-full rounded-t transition-opacity cursor-default ${
-                  val > 0
-                    ? 'opacity-80 group-hover:opacity-100'
-                    : 'opacity-40'
-                }`}
-                style={{
-                  height: `${pct}%`,
-                  background: val > 0
-                    ? 'linear-gradient(to top, #ff8533, #ff6b2c)'
-                    : 'var(--c-raised)',
-                  borderRadius: '4px 4px 0 0',
-                  transformOrigin: 'bottom',
-                  animation: val > 0 ? `grow-up 0.5s ${i * 0.03}s ease-out both` : undefined,
-                }}
-              >
-                {/* Tooltip */}
-                <div
-                  className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 px-2 py-1 rounded-lg text-[11px] whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10"
-                  style={{
-                    background: '#1a1a1a',
-                    backdropFilter: 'blur(12px)',
-                    border: '1px solid #1e1e1e',
-                    color: '#f0f0f0',
-                    boxShadow: '0 4px 16px rgba(0,0,0,0.3)',
-                  }}
-                >
-                  {fmt(val)} {mode === 'requests' ? 'req' : 'tokens'}
-                </div>
-              </div>
-            </div>
-          )
-        })}
-      </div>
-      {!loading && !error && (
-        <div className="flex items-center gap-1 px-1 mt-2">
-          {data.map((d, i) => {
-            const isLast = i === data.length - 1
-            const show = i % 2 === 0 || isLast
+      {loading ? (
+        <div className="w-full h-[180px] flex items-center justify-center text-[#8a8a8a] text-xs animate-pulse">Carregando...</div>
+      ) : error ? (
+        <div className="w-full h-[180px] flex flex-col items-center justify-center gap-1 text-center">
+          <AlertTriangle size={24} className="text-red-400" />
+          <p className="text-xs text-red-500">Erro ao carregar dados</p>
+          <p className="text-[10px] text-[#8a8a8a] max-w-xs truncate" style={{ fontFamily: "'JetBrains Mono', 'Fira Code', monospace" }} title={error}>{error}</p>
+        </div>
+      ) : !hasData ? (
+        <div className="w-full h-[180px] flex flex-col items-center justify-center gap-1 text-center">
+          <InboxIcon size={24} className="text-[#8a8a8a]" />
+          <p className="text-xs text-[#8a8a8a]">Nenhuma requisição nos últimos 14 dias</p>
+        </div>
+      ) : (
+        <div className="relative" style={{ height: 180 }}>
+          <svg viewBox={`0 0 ${w} ${h}`} className="w-full" style={{ height: '100%', display: 'block' }} preserveAspectRatio="none">
+            <defs>
+              <linearGradient id="usageAreaGrad" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor="#E8712A" stopOpacity="0.15" />
+                <stop offset="100%" stopColor="#E8712A" stopOpacity="0" />
+              </linearGradient>
+            </defs>
+            {/* Grid lines */}
+            <line x1="0" y1={h * 0.25} x2={w} y2={h * 0.25} stroke="rgba(255,255,255,0.03)" />
+            <line x1="0" y1={h * 0.5} x2={w} y2={h * 0.5} stroke="rgba(255,255,255,0.03)" />
+            <line x1="0" y1={h * 0.75} x2={w} y2={h * 0.75} stroke="rgba(255,255,255,0.03)" />
+            {/* Area fill */}
+            {areaPath && <path d={areaPath} fill="url(#usageAreaGrad)" />}
+            {/* Line */}
+            {linePath && <path d={linePath} fill="none" stroke="#D4835A" strokeWidth="2" />}
+            {/* Invisible hit areas for hover */}
+            {points.map((p, i) => (
+              <rect
+                key={i}
+                x={p.x - w / values.length / 2}
+                y={0}
+                width={w / values.length}
+                height={h}
+                fill="transparent"
+                onMouseEnter={() => setHoverIdx(i)}
+                onMouseLeave={() => setHoverIdx(null)}
+              />
+            ))}
+          </svg>
+          {/* Dots as HTML elements (not distorted by preserveAspectRatio=none) */}
+          {labelIndices.map((idx) => {
+            const p = points[idx]
+            const isLast = idx === data.length - 1
             return (
-              <div key={i} className="flex-1 text-center">
-                {show && (
-                  <span
-                    className={`text-[9px] ${isLast ? 'text-[#ff6b2c] font-semibold' : 'text-subtle'}`}
-                    style={{ fontFamily: "'JetBrains Mono', 'Fira Code', monospace" }}
-                  >
-                    {fmtChartDate(d.date)}
-                  </span>
-                )}
-              </div>
+              <div
+                key={idx}
+                className="absolute pointer-events-none"
+                style={{
+                  left: `${(p.x / w) * 100}%`,
+                  top: `${(p.y / h) * 100}%`,
+                  transform: 'translate(-50%, -50%)',
+                  width: 7,
+                  height: 7,
+                  borderRadius: '50%',
+                  background: isLast ? '#D4835A' : '#1E1E1E',
+                  border: isLast ? 'none' : '1.5px solid #D4835A',
+                }}
+              />
             )
           })}
+          {/* Hover dot */}
+          {hoverIdx !== null && points[hoverIdx] && (
+            <div
+              className="absolute pointer-events-none"
+              style={{
+                left: `${(points[hoverIdx].x / w) * 100}%`,
+                top: `${(points[hoverIdx].y / h) * 100}%`,
+                transform: 'translate(-50%, -50%)',
+                width: 9,
+                height: 9,
+                borderRadius: '50%',
+                background: '#D4835A',
+                border: '2px solid #1E1E1E',
+              }}
+            />
+          )}
+          {/* Tooltip */}
+          {hoverIdx !== null && points[hoverIdx] && (
+            <div
+              className="absolute pointer-events-none z-10 px-2.5 py-1.5 rounded-lg text-[11px] whitespace-nowrap"
+              style={{
+                left: `${(points[hoverIdx].x / w) * 100}%`,
+                top: `${(points[hoverIdx].y / h) * 100}%`,
+                transform: 'translate(-50%, -130%)',
+                background: '#1a1a1a',
+                border: '1px solid #2a2a2a',
+                color: '#f0f0f0',
+                boxShadow: '0 4px 16px rgba(0,0,0,0.4)',
+                fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+              }}
+            >
+              <span style={{ color: '#D4835A', fontWeight: 600 }}>{fmt(values[hoverIdx])}</span>
+              {' '}{mode === 'requests' ? 'req' : 'tokens'}
+              <span style={{ color: 'rgba(255,255,255,0.3)', marginLeft: 6 }}>{fmtChartDate(data[hoverIdx].date)}</span>
+            </div>
+          )}
+          {/* Date labels below chart */}
+          <div className="flex justify-between px-0 mt-1">
+            {labelIndices.map((idx) => {
+              const isLast = idx === data.length - 1
+              return (
+                <span
+                  key={idx}
+                  className="text-[9px]"
+                  style={{ color: 'rgba(255,255,255,0.15)', fontFamily: "'JetBrains Mono', monospace" }}
+                >
+                  {isLast ? 'Hoje' : fmtChartDate(data[idx].date)}
+                </span>
+              )
+            })}
+          </div>
         </div>
       )}
       <div className="flex justify-end mt-3">
@@ -233,8 +314,9 @@ function PieChart({ data }: { data: { label: string; value: number; color: strin
   let cumulativeOffset = 0
 
   return (
-    <div className="flex flex-col items-center gap-4">
+    <div className="flex flex-col items-center gap-5">
       <svg width={180} height={180} viewBox="0 0 180 180">
+        <circle cx={cx} cy={cy} r={r} fill="none" stroke="rgba(255,255,255,0.04)" strokeWidth={14} />
         {data.filter(d => d.value > 0).map((d, i) => {
           const pct = d.value / total
           const dashLen = pct * circumference
@@ -247,22 +329,23 @@ function PieChart({ data }: { data: { label: string; value: number; color: strin
               cx={cx} cy={cy} r={r}
               fill="none"
               stroke={d.color}
-              strokeWidth={28}
+              strokeWidth={14}
               strokeDasharray={`${dashLen} ${dashGap}`}
               strokeDashoffset={offset}
+              strokeLinecap="round"
               style={{ transform: 'rotate(-90deg)', transformOrigin: '90px 90px' }}
             />
           )
         })}
-        <text x={cx} y={cy - 6} textAnchor="middle" className="text-lg font-bold" fill="#f0f0f0">{total > 1000 ? `${(total / 1000).toFixed(1)}k` : total}</text>
-        <text x={cx} y={cy + 12} textAnchor="middle" className="text-[10px]" fill="#8a8a8a">tokens</text>
+        <text x={cx} y={cy - 4} textAnchor="middle" fill="rgba(255,255,255,0.85)" fontSize="22" fontFamily="Fira Code" fontWeight="300">{total > 1000 ? `${(total / 1000).toFixed(1)}k` : total}</text>
+        <text x={cx} y={cy + 14} textAnchor="middle" fill="rgba(255,255,255,0.2)" fontSize="9" fontFamily="JetBrains Mono">TOKENS</text>
       </svg>
-      <div className="flex flex-wrap justify-center gap-x-4 gap-y-1.5">
+      <div className="flex flex-wrap justify-center gap-x-5 gap-y-2">
         {data.filter(d => d.value > 0).map((d, i) => (
-          <div key={i} className="flex items-center gap-1.5">
-            <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: d.color }} />
-            <span className="text-xs text-[#8a8a8a] truncate max-w-[100px]" title={d.label}>{d.label}</span>
-            <span className="text-xs text-[#f0f0f0] font-medium">{Math.round((d.value / total) * 100)}%</span>
+          <div key={i} className="flex items-center gap-2 text-[11px]" style={{ color: 'rgba(255,255,255,0.45)' }}>
+            <span className="w-2 h-2 rounded-sm shrink-0" style={{ background: d.color }} />
+            <span className="truncate max-w-[100px]" title={d.label}>{d.label}</span>
+            <span className="ml-auto font-medium" style={{ fontFamily: "'JetBrains Mono', monospace", color: 'rgba(255,255,255,0.88)' }}>{Math.round((d.value / total) * 100)}%</span>
           </div>
         ))}
       </div>
@@ -303,12 +386,8 @@ function AreaChart({ data }: { data: { date: string; value: number }[] }) {
       <svg viewBox={`0 0 ${w} ${h + 24}`} className="w-full" preserveAspectRatio="xMidYMid meet">
         <defs>
           <linearGradient id="areaGradNew" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="#ff6b2c" stopOpacity="0.3" />
-            <stop offset="100%" stopColor="#ff6b2c" stopOpacity="0" />
-          </linearGradient>
-          <linearGradient id="lineGradNew" x1="0" y1="0" x2="1" y2="0">
-            <stop offset="0%" stopColor="#ff6b2c" />
-            <stop offset="100%" stopColor="#ff8533" />
+            <stop offset="0%" stopColor="#D4835A" stopOpacity="0.15" />
+            <stop offset="100%" stopColor="#D4835A" stopOpacity="0" />
           </linearGradient>
         </defs>
         {[0, 0.25, 0.5, 0.75, 1].map((pct, i) => {
@@ -322,9 +401,9 @@ function AreaChart({ data }: { data: { date: string; value: number }[] }) {
           return <text key={i} x={padX - 6} y={y + 3} textAnchor="end" fill="#8a8a8a" fontSize="9">{label}</text>
         })}
         <path d={areaPath} fill="url(#areaGradNew)" />
-        <path d={linePath} fill="none" stroke="url(#lineGradNew)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+        <path d={linePath} fill="none" stroke="#D4835A" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
         {points.map((p, i) => (
-          <circle key={i} cx={p.x} cy={p.y} r={2.5} fill="#ff6b2c" />
+          <circle key={i} cx={p.x} cy={p.y} r={2.5} fill="#D4835A" />
         ))}
         {data.map((d, i) => {
           if (i % 3 !== 0 && i !== data.length - 1) return null
@@ -464,7 +543,12 @@ function ChatTestModal({ assistant, onClose, onMessageSent }: { assistant: Assis
           <button
             onClick={send}
             disabled={sending || !input.trim()}
-            className="px-4 py-2.5 bg-[#ff6b2c] text-black rounded-xl text-sm font-medium disabled:opacity-40 hover:opacity-90 transition-opacity"
+            className="px-4 py-2.5 rounded-[10px] text-sm font-medium disabled:opacity-40 transition-all"
+            style={{
+              background: '#121212',
+              boxShadow: '3px 3px 7px rgba(0,0,0,0.45), -1px -1px 5px rgba(255,255,255,0.03)',
+              color: '#D4835A',
+            }}
           >
             Enviar
           </button>
@@ -716,7 +800,8 @@ export default function DashboardPage() {
         <StaggerItem>
           <div className="flex flex-col gap-1">
             <h2
-              className="text-3xl font-bold tracking-tight text-heading"
+              className="text-3xl font-light tracking-tight text-heading"
+              style={{ fontFamily: "'Fira Code', 'JetBrains Mono', monospace" }}
             >
               Visão Geral
             </h2>
@@ -806,7 +891,7 @@ export default function DashboardPage() {
               <div className="flex items-center justify-center">
                 <PieChart
                   data={(() => {
-                    const colors = ['#ff6b2c', '#ff8533', '#ff6b2c', '#cc5500', '#ff6b2c', '#ff8533', '#b34700', '#ffbf80']
+                    const colors = ['#D4835A', '#5B8DEF', '#5CB87A', '#C75050', '#8b5cf6', '#D4A35A', '#5BA0EF', '#7ACB87']
                     return assistants.map((a, i) => ({
                       label: a.name,
                       value: assistantStats[a.id]?.total_tokens ?? 0,
@@ -887,10 +972,11 @@ export default function DashboardPage() {
                         >
                           <div className="flex items-start gap-3">
                             <div
-                              className="w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold text-white shrink-0"
+                              className="w-9 h-9 rounded-[10px] flex items-center justify-center text-sm font-semibold shrink-0"
                               style={{
-                                background: 'linear-gradient(135deg, #ff6b2c, #ff8533)',
-                                border: '2px solid rgba(255,107,44,0.3)',
+                                background: '#121212',
+                                boxShadow: '3px 3px 7px rgba(0,0,0,0.45), -1px -1px 5px rgba(255,255,255,0.03)',
+                                color: '#D4835A',
                               }}
                             >
                               {assistant.name.charAt(0).toUpperCase()}

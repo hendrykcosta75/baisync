@@ -119,14 +119,14 @@ function SummaryProviderPicker({ onGenerate, isGenerating }: { onGenerate: (prov
         </p>
       )}
 
-      <Button
-        variant="primary"
-        isDisabled={!model || !hasKey || isGenerating}
-        onPress={() => onGenerate(provider, model)}
-        className="w-full"
+      <button
+        disabled={!model || !hasKey || isGenerating}
+        onClick={() => onGenerate(provider, model)}
+        className="w-full py-2.5 rounded-[10px] text-sm font-medium transition-all disabled:opacity-40 flex items-center justify-center gap-2"
+        style={{ background: '#121212', boxShadow: '3px 3px 7px rgba(0,0,0,0.45), -1px -1px 5px rgba(255,255,255,0.03)', color: '#D4835A' }}
       >
         {isGenerating ? 'Gerando resumo...' : 'Gerar Resumo'}
-      </Button>
+      </button>
     </div>
   )
 }
@@ -441,15 +441,14 @@ export function ConversationsTab({ assistant, shareToken, isReadOnly }: Conversa
                 <>
                   {/* Header */}
                   <div className="flex items-center gap-4 px-6 py-4 border-b border-dim shrink-0">
-                    <Button
-                      variant="ghost"
-                      className="shrink-0 font-medium px-3 text-subtle hover:text-heading border-none bg-transparent"
-                      onPress={() => setOpenConvId(null)}
+                    <button
+                      className="shrink-0 font-medium px-3 py-1.5 text-[12px] transition-colors text-[#8a8a8a] hover:text-[#f0f0f0] bg-transparent border-none"
+                      onClick={() => setOpenConvId(null)}
                     >
                       ← Voltar
-                    </Button>
+                    </button>
                     <div className="flex items-center gap-3 flex-1 min-w-0">
-                      <div className="w-10 h-10 rounded-full bg-raised flex items-center justify-center text-sm font-bold text-subtle shrink-0">
+                      <div className="w-10 h-10 rounded-[10px] flex items-center justify-center text-sm font-semibold shrink-0" style={{ background: '#121212', boxShadow: '3px 3px 7px rgba(0,0,0,0.45), -1px -1px 5px rgba(255,255,255,0.03)', color: '#D4835A' }}>
                         {(openConv.contactName || '?').split(' ').map(n => n[0]).join('').slice(0, 2)}
                       </div>
                       <div className="min-w-0">
@@ -471,13 +470,13 @@ export function ConversationsTab({ assistant, shareToken, isReadOnly }: Conversa
                         </div>
                       </div>
                     </div>
-                    <Button
-                      variant="ghost"
-                      className="text-xs text-red-500 hover:text-red-700 px-3 py-1 min-w-0 shrink-0"
-                      onPress={() => setDeleteModalConvId(openConv.id)}
+                    <button
+                      className="text-xs px-3 py-1.5 rounded-[10px] min-w-0 shrink-0 transition-all"
+                      style={{ background: '#121212', boxShadow: '3px 3px 7px rgba(0,0,0,0.45), -1px -1px 5px rgba(255,255,255,0.03)', color: '#C75050' }}
+                      onClick={() => setDeleteModalConvId(openConv.id)}
                     >
                       Excluir
-                    </Button>
+                    </button>
                   </div>
 
                   {/* Messages */}
@@ -534,18 +533,20 @@ export function ConversationsTab({ assistant, shareToken, isReadOnly }: Conversa
                       </div>
                     )}
                     <div className="flex gap-3 max-w-3xl mx-auto">
-                      <Button
-                        variant={openConv.aiEnabled ? 'primary' : 'outline'}
-                        className={`shrink-0 min-w-0 px-3 text-xs ${
-                          openConv.aiEnabled
-                            ? ''
-                            : 'border-amber-400 text-amber-600 dark:border-amber-600 dark:text-amber-400'
-                        }`}
-                        isDisabled={isTogglingAi}
-                        onPress={() => handleToggleAi(openConv.id, openConv.aiEnabled)}
+                      <button
+                        className="shrink-0 min-w-0 px-3 py-1.5 text-xs rounded-[10px] flex items-center gap-1 transition-all disabled:opacity-40"
+                        style={{
+                          background: '#121212',
+                          boxShadow: openConv.aiEnabled
+                            ? 'inset 2px 2px 6px rgba(0,0,0,0.5), inset -1px -1px 4px rgba(255,255,255,0.03)'
+                            : '3px 3px 7px rgba(0,0,0,0.45), -1px -1px 5px rgba(255,255,255,0.03)',
+                          color: openConv.aiEnabled ? '#D4835A' : '#8a8a8a',
+                        }}
+                        disabled={isTogglingAi}
+                        onClick={() => handleToggleAi(openConv.id, openConv.aiEnabled)}
                       >
-                        <Bot size={13} className="mr-1 inline-block" />{openConv.aiEnabled ? 'IA Ligada' : 'IA Desligada'}
-                      </Button>
+                        <Bot size={13} />{openConv.aiEnabled ? 'IA Ligada' : 'IA Desligada'}
+                      </button>
                       <Input
                         className="flex-1"
                         placeholder="Digite uma mensagem..."
@@ -558,24 +559,25 @@ export function ConversationsTab({ assistant, shareToken, isReadOnly }: Conversa
                           }
                         }}
                       />
-                      <Button
-                        variant="outline"
-                        className="shrink-0 min-w-0 px-3 text-xs"
-                        onPress={() => {
+                      <button
+                        className="shrink-0 min-w-0 px-3 py-1.5 text-xs rounded-[10px] flex items-center gap-1 transition-all"
+                        style={{ background: '#121212', boxShadow: '3px 3px 7px rgba(0,0,0,0.45), -1px -1px 5px rgba(255,255,255,0.03)', color: '#D4835A' }}
+                        onClick={() => {
                           setSummaryResult(null)
                           setSummaryError(null)
                           setSummaryModalOpen(true)
                         }}
                       >
-                        <BarChart3 size={13} className="mr-1 inline-block" />Resumo
-                      </Button>
-                      <Button
-                        variant="primary"
-                        isDisabled={!messageInput.trim() || isSending}
-                        onPress={() => openConvId && handleSendMessage(openConvId)}
+                        <BarChart3 size={13} />Resumo
+                      </button>
+                      <button
+                        className="px-4 py-1.5 text-xs rounded-[10px] transition-all disabled:opacity-40"
+                        style={{ background: '#121212', boxShadow: '3px 3px 7px rgba(0,0,0,0.45), -1px -1px 5px rgba(255,255,255,0.03)', color: '#D4835A' }}
+                        disabled={!messageInput.trim() || isSending}
+                        onClick={() => openConvId && handleSendMessage(openConvId)}
                       >
                         {isSending ? 'Enviando...' : 'Enviar'}
-                      </Button>
+                      </button>
                     </div>
                   </div>
                 </>
@@ -643,16 +645,16 @@ export function ConversationsTab({ assistant, shareToken, isReadOnly }: Conversa
                 {summaryError && (
                   <div className="px-4 py-3 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800">
                     <p className="text-sm text-red-700 dark:text-red-400">{summaryError}</p>
-                    <Button
-                      variant="outline"
-                      className="mt-3 text-xs"
-                      onPress={() => {
+                    <button
+                      className="mt-3 text-xs px-4 py-1.5 rounded-[10px] transition-all"
+                      style={{ background: '#121212', boxShadow: '3px 3px 7px rgba(0,0,0,0.45), -1px -1px 5px rgba(255,255,255,0.03)', color: '#D4835A' }}
+                      onClick={() => {
                         setSummaryError(null)
                         setSummaryResult(null)
                       }}
                     >
                       Tentar novamente
-                    </Button>
+                    </button>
                   </div>
                 )}
 
@@ -660,24 +662,28 @@ export function ConversationsTab({ assistant, shareToken, isReadOnly }: Conversa
                   <div className="prose prose-sm dark:prose-invert max-w-none text-foreground">
                     <Markdown>{summaryResult}</Markdown>
                     <div className="mt-4 pt-3 border-t border-dim">
-                      <Button
-                        variant="outline"
-                        className="text-xs"
-                        onPress={() => {
+                      <button
+                        className="text-xs px-4 py-1.5 rounded-[10px] transition-all"
+                        style={{ background: '#121212', boxShadow: '3px 3px 7px rgba(0,0,0,0.45), -1px -1px 5px rgba(255,255,255,0.03)', color: '#D4835A' }}
+                        onClick={() => {
                           setSummaryResult(null)
                           setSummaryError(null)
                         }}
                       >
                         Gerar novo resumo
-                      </Button>
+                      </button>
                     </div>
                   </div>
                 )}
               </Modal.Body>
               <Modal.Footer>
-                <Button variant="secondary" slot="close">
+                <button
+                  className="px-4 py-1.5 rounded-[10px] text-sm transition-all"
+                  style={{ background: '#121212', boxShadow: '3px 3px 7px rgba(0,0,0,0.45), -1px -1px 5px rgba(255,255,255,0.03)', color: '#8a8a8a' }}
+                  onClick={() => setSummaryModalOpen(false)}
+                >
                   Fechar
-                </Button>
+                </button>
               </Modal.Footer>
             </Modal.Dialog>
           </Modal.Container>

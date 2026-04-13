@@ -688,15 +688,15 @@ export function BaisyncPanel() {
               <button
                 onClick={handleSend}
                 disabled={isStreaming || (!input.trim() && attachments.length === 0)}
-                className="w-10 h-10 rounded-full flex items-center justify-center shrink-0 disabled:opacity-30 cursor-pointer transition-all duration-200 hover:scale-105"
+                className="w-10 h-10 rounded-[10px] flex items-center justify-center shrink-0 disabled:opacity-30 cursor-pointer transition-all duration-200 hover:scale-105"
                 style={{
-                  background: 'linear-gradient(135deg, #ff6b2c, #ff8533)',
-                  boxShadow: '0 2px 12px rgba(249,115,22,0.25)',
+                  background: '#121212',
+                  boxShadow: '3px 3px 7px rgba(0,0,0,0.45), -1px -1px 5px rgba(255,255,255,0.03)',
                 }}
-                onMouseEnter={(e) => { if (!e.currentTarget.disabled) e.currentTarget.style.boxShadow = '0 4px 20px rgba(249,115,22,0.4)' }}
-                onMouseLeave={(e) => { e.currentTarget.style.boxShadow = '0 2px 12px rgba(249,115,22,0.25)' }}
+                onMouseEnter={(e) => { if (!e.currentTarget.disabled) e.currentTarget.style.boxShadow = '2px 2px 6px rgba(0,0,0,0.6), -1px -1px 4px rgba(255,255,255,0.06)' }}
+                onMouseLeave={(e) => { e.currentTarget.style.boxShadow = '3px 3px 7px rgba(0,0,0,0.45), -1px -1px 5px rgba(255,255,255,0.03)' }}
               >
-                <Send size={16} className="text-white" />
+                <Send size={16} className="text-[#D4835A]" />
               </button>
             </div>
           </div>

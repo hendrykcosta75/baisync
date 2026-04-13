@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState, useCallback } from 'react'
 import { Button, Modal, Spinner } from '@heroui/react'
-import { Banknote, TrendingUp, Clock, XCircle, CheckCircle2, AlertCircle, ChevronDown } from 'lucide-react'
+import { Banknote, TrendingUp, Clock, XCircle, CheckCircle2, AlertCircle, ChevronDown, RefreshCw } from 'lucide-react'
 import { useAssistantStore } from '@/store/useAssistantStore'
 import { apiFetch } from '@/lib/api'
 import { useInfiniteScroll } from '@/lib/useInfiniteScroll'
@@ -69,6 +69,7 @@ export default function FinanceiroPage() {
   }, [chargesAssistantId, statusFilter])
 
   const [chargesResetKey, setChargesResetKey] = useState(0)
+  const [refreshing, setRefreshing] = useState(false)
 
   const { items: charges, setItems: setCharges, isLoading: chargesLoading, isLoadingMore: chargesLoadingMore, hasMore: chargesHasMore, sentinelRef: chargesSentinelRef, reset: resetCharges } = useInfiniteScroll<PixChargeSummary>({
     fetchFn: fetchCharges,
@@ -205,8 +206,8 @@ export default function FinanceiroPage() {
             <div className="flex items-center justify-between">
               <div>
                 <h1
-                  className="text-2xl font-bold text-white"
-                  style={{ fontFamily: "var(--font-jetbrains-mono, 'JetBrains Mono', monospace)" }}
+                  className="text-2xl font-light text-white"
+                  style={{ fontFamily: "'Fira Code', 'JetBrains Mono', monospace" }}
                 >
                   Financeiro
                 </h1>
@@ -401,14 +402,24 @@ export default function FinanceiroPage() {
                         </button>
                       ))}
                     </div>
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      onPress={() => setChargesResetKey(k => k + 1)}
-                      isDisabled={chargesLoading}
+                    <button
+                      onClick={() => {
+                        setRefreshing(true)
+                        setChargesResetKey(k => k + 1)
+                        setTimeout(() => setRefreshing(false), 1500)
+                      }}
+                      disabled={refreshing}
+                      className="w-8 h-8 rounded-[10px] flex items-center justify-center transition-all"
+                      style={{
+                        background: '#121212',
+                        boxShadow: refreshing
+                          ? 'inset 2px 2px 6px rgba(0,0,0,0.5), inset -1px -1px 4px rgba(255,255,255,0.03)'
+                          : '3px 3px 7px rgba(0,0,0,0.45), -1px -1px 5px rgba(255,255,255,0.03)',
+                        color: '#D4835A',
+                      }}
                     >
-                      {chargesLoading ? 'Carregando...' : 'Atualizar'}
-                    </Button>
+                      <RefreshCw size={14} className={refreshing ? 'animate-spin' : ''} />
+                    </button>
                   </div>
                 </div>
               </div>

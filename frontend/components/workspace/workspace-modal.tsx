@@ -169,8 +169,8 @@ export function WorkspaceModal({ isOpen, onClose }: { isOpen: boolean; onClose: 
                         <button
                           onClick={handleSaveName}
                           disabled={saving || !wsName.trim()}
-                          className="px-4 py-2 rounded-lg text-[12px] font-semibold transition-all disabled:opacity-40"
-                          style={{ background: '#ff6b2c', color: '#fff', fontFamily: mono }}
+                          className="px-4 py-2 rounded-[10px] text-[12px] font-semibold transition-all disabled:opacity-40"
+                          style={{ background: '#121212', boxShadow: '3px 3px 7px rgba(0,0,0,0.45), -1px -1px 5px rgba(255,255,255,0.03)', color: '#D4835A', fontFamily: mono }}
                         >
                           {saving ? '...' : 'Salvar'}
                         </button>
@@ -206,12 +206,15 @@ export function WorkspaceModal({ isOpen, onClose }: { isOpen: boolean; onClose: 
                             <button
                               key={role}
                               onClick={() => setInviteRole(role)}
-                              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12px] font-medium transition-all"
+                              className="flex items-center gap-1.5 px-3 py-1.5 rounded-[10px] text-[12px] font-medium transition-all"
                               style={{
                                 fontFamily: mono,
-                                background: sel ? '#ff6b2c' : '#252525',
-                                color: sel ? '#fff' : '#8a8a8a',
-                                border: sel ? '1px solid #ff6b2c' : '1px solid #2a2a2a',
+                                background: '#121212',
+                                boxShadow: sel
+                                  ? 'inset 2px 2px 6px rgba(0,0,0,0.5), inset -1px -1px 4px rgba(255,255,255,0.03)'
+                                  : '3px 3px 7px rgba(0,0,0,0.45), -1px -1px 5px rgba(255,255,255,0.03)',
+                                color: sel ? '#D4835A' : '#8a8a8a',
+                                border: 'none',
                               }}
                             >
                               <Icon size={12} />
@@ -222,8 +225,8 @@ export function WorkspaceModal({ isOpen, onClose }: { isOpen: boolean; onClose: 
                         <button
                           onClick={handleInvite}
                           disabled={isInviting || !inviteEmail.trim()}
-                          className="ml-auto px-4 py-1.5 rounded-md text-[12px] font-semibold transition-all disabled:opacity-40"
-                          style={{ background: '#ff6b2c', color: '#fff', fontFamily: mono }}
+                          className="ml-auto px-4 py-1.5 rounded-[10px] text-[12px] font-semibold transition-all disabled:opacity-40"
+                          style={{ background: '#121212', boxShadow: '3px 3px 7px rgba(0,0,0,0.45), -1px -1px 5px rgba(255,255,255,0.03)', color: '#D4835A', fontFamily: mono }}
                         >
                           {isInviting ? '...' : 'Enviar'}
                         </button>
@@ -261,8 +264,8 @@ export function WorkspaceModal({ isOpen, onClose }: { isOpen: boolean; onClose: 
                             className="flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-[#1a1a1a] transition-colors group"
                           >
                             <div
-                              className="w-8 h-8 rounded-lg flex items-center justify-center text-[10px] font-bold shrink-0"
-                              style={{ background: 'linear-gradient(135deg, #ff6b2c, #ff8533)', color: '#fff', fontFamily: mono }}
+                              className="w-8 h-8 rounded-[10px] flex items-center justify-center text-[10px] font-semibold shrink-0"
+                              style={{ background: '#121212', boxShadow: '3px 3px 7px rgba(0,0,0,0.45), -1px -1px 5px rgba(255,255,255,0.03)', color: '#D4835A', fontFamily: mono }}
                             >
                               {(member.user_name || member.user_email || '?').slice(0, 2).toUpperCase()}
                             </div>

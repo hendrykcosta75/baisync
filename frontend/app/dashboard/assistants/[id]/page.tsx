@@ -42,7 +42,8 @@ export default function AssistantDetailPage() {
           </Button>
           <div className="flex-1">
             <h1
-              className="text-2xl font-bold tracking-tight text-foreground"
+              className="text-2xl font-light tracking-tight text-foreground"
+              style={{ fontFamily: "'Fira Code', 'JetBrains Mono', monospace" }}
             >
               {assistant.name}
             </h1>

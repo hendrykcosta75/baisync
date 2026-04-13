@@ -298,24 +298,11 @@
    SIDEBAR
    ============================================================ */
 .sidebar-item-active {
-  position: relative;
-  background: rgba(255, 107, 44, 0.08);
-  color: #ff6b2c;
-}
-.sidebar-item-active::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 0;
-  width: 3px;
-  height: 100%;
-  background: linear-gradient(180deg, #ff6b2c, #ff8533);
-  border-radius: 0 2px 2px 0;
-  animation: slideIn 0.3s ease-out;
-}
-@keyframes slideIn {
-  from { transform: scaleY(0); }
-  to { transform: scaleY(1); }
+  background: #121212;
+  color: #D4835A;
+  box-shadow: inset 2px 2px 6px rgba(0,0,0,0.5), inset -1px -1px 4px rgba(255,255,255,0.03);
+  border-radius: 10px;
+  font-weight: 500;
 }
 
 /* ============================================================

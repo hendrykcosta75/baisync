@@ -144,19 +144,19 @@ export function Sidebar({
                       <Link href={link.href} title={collapsed ? link.name : undefined}>
                         <div
                           className={`
-                            flex items-center gap-2.5 rounded-lg transition-all duration-200
-                            ${collapsed ? 'justify-center py-2.5 px-0' : 'py-2 px-3'}
+                            flex items-center gap-2.5 rounded-[10px] transition-all duration-200
+                            ${collapsed ? 'justify-center py-2.5 px-0' : 'py-2.5 px-3'}
                             ${isActive
                               ? 'sidebar-item-active'
-                              : 'text-[#8a8a8a] hover:text-[#f0f0f0] hover:bg-[#252525]'}
+                              : 'text-[rgba(255,255,255,0.45)] hover:text-[rgba(255,255,255,0.88)] hover:bg-[rgba(255,255,255,0.03)]'}
                           `}
                           style={{
-                            fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
-                            fontWeight: isActive ? 600 : 500,
-                            fontSize: 13.5,
+                            fontFamily: "'Fira Code', 'JetBrains Mono', monospace",
+                            fontWeight: isActive ? 500 : 400,
+                            fontSize: 13,
                           }}
                         >
-                          <link.icon size={collapsed ? 20 : 18} className="shrink-0" style={{ opacity: isActive ? 1 : 0.7 }} />
+                          <link.icon size={collapsed ? 20 : 18} className="shrink-0" style={{ opacity: isActive ? 1 : 0.6, color: isActive ? '#D4835A' : undefined }} />
                           {!collapsed && (
                             <span style={{ whiteSpace: 'nowrap', overflow: 'hidden' }}>
                               {link.name}
