@@ -179,9 +179,9 @@ export function IntegrationsTab({ assistant }: IntegrationsTabProps) {
                             Desconectar
                           </Button>
                         )}
-                        <Button variant="primary" size="sm" type="submit">
+                        <button type="submit" className="btn-neu text-sm">
                           {telegramIntegration?.status === 'connected' ? 'Atualizar' : 'Conectar'}
-                        </Button>
+                        </button>
                       </div>
                     </Form>
                   </div>
@@ -223,9 +223,9 @@ export function IntegrationsTab({ assistant }: IntegrationsTabProps) {
                             Desconectar
                           </Button>
                         )}
-                        <Button variant="primary" size="sm" type="submit">
+                        <button type="submit" className="btn-neu text-sm">
                           {whatsappIntegration?.status === 'connected' ? 'Atualizar' : 'Conectar'}
-                        </Button>
+                        </button>
                       </div>
                     </Form>
                   </div>

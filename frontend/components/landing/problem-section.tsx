@@ -173,7 +173,7 @@ export function ProblemSection() {
             <div
               key={i}
               data-card-index={i}
-              className="group relative rounded-xl border border-[#1a1a1a] bg-[#0a0a0a] p-6 transition-all duration-300 hover:-translate-y-1 hover:border-red-500/40"
+              className="group relative rounded-xl border border-dim bg-app p-6 transition-all duration-300 hover:-translate-y-1 hover:border-red-500/40"
               style={{
                 opacity: visibleCards.has(i) ? 1 : 0,
                 transform: visibleCards.has(i)

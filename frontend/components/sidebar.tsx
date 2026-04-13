@@ -144,7 +144,7 @@ export function Sidebar({
                       <Link href={link.href} title={collapsed ? link.name : undefined}>
                         <div
                           className={`
-                            flex items-center gap-2.5 rounded-[10px] transition-all duration-200
+                            flex items-center gap-2.5 rounded-[10px] transition-all duration-200 focus-visible:ring-2 focus-visible:ring-[#ff6b2c]/40 focus-visible:outline-none
                             ${collapsed ? 'justify-center py-2.5 px-0' : 'py-2.5 px-3'}
                             ${isActive
                               ? 'sidebar-item-active'
@@ -178,7 +178,7 @@ export function Sidebar({
             <button
               className={`
                 flex items-center gap-2.5 w-full rounded-lg transition-colors duration-200
-                text-[#8a8a8a] hover:text-red-400 hover:bg-[rgba(239,68,68,0.05)]
+                text-subtle hover:text-red-400 hover:bg-[rgba(239,68,68,0.05)]
                 ${collapsed ? 'justify-center py-2.5 px-0' : 'py-2 px-3'}
               `}
               style={{ fontFamily: "'JetBrains Mono', 'Fira Code', monospace", fontSize: 13, fontWeight: 500 }}

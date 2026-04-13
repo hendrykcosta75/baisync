@@ -10,7 +10,7 @@ import {
 } from 'recharts'
 
 const mono = "'JetBrains Mono', 'Fira Code', monospace"
-const COLORS = ['#FF6B00', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899']
+const COLORS = ['#ff6b2c', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899']
 
 function formatNumber(n: number) {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
@@ -82,7 +82,7 @@ export default function AdminUsagePage() {
         <div className="bg-surface border border-dim rounded-xl p-5 transition-all duration-300 hover:border-dim-hover hover:shadow-lg hover:shadow-[rgba(255,107,0,0.05)]">
           <div className="flex items-center gap-3 mb-3">
             <div className="w-9 h-9 rounded-lg bg-raised flex items-center justify-center">
-              <Cpu size={18} className="text-[#FF6B00]" />
+              <Cpu size={18} className="text-[#ff6b2c]" />
             </div>
             <span className="text-subtle" style={{ fontFamily: mono, fontSize: 11, letterSpacing: 1, textTransform: 'uppercase' }}>
               Tokens (Mes Atual)
@@ -142,14 +142,14 @@ export default function AdminUsagePage() {
               <AreaChart data={chartData}>
                 <defs>
                   <linearGradient id="tokensGradient" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#FF6B00" stopOpacity={0.3} />
-                    <stop offset="95%" stopColor="#FF6B00" stopOpacity={0} />
+                    <stop offset="5%" stopColor="#ff6b2c" stopOpacity={0.3} />
+                    <stop offset="95%" stopColor="#ff6b2c" stopOpacity={0} />
                   </linearGradient>
                 </defs>
                 <XAxis dataKey="label" tick={{ fill: '#8892B0', fontSize: 11, fontFamily: mono }} axisLine={false} tickLine={false} />
                 <YAxis tick={{ fill: '#8892B0', fontSize: 11, fontFamily: mono }} axisLine={false} tickLine={false} tickFormatter={formatNumber} />
                 <Tooltip content={<CustomTooltip />} />
-                <Area type="monotone" dataKey="tokens" name="Tokens" stroke="#FF6B00" fill="url(#tokensGradient)" strokeWidth={2} />
+                <Area type="monotone" dataKey="tokens" name="Tokens" stroke="#ff6b2c" fill="url(#tokensGradient)" strokeWidth={2} />
               </AreaChart>
             </ResponsiveContainer>
           ) : (
@@ -219,7 +219,7 @@ export default function AdminUsagePage() {
                     </span>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center justify-between mb-1">
-                        <p className="text-heading text-sm font-medium truncate group-hover:text-[#FF6B00] transition-colors duration-200" style={{ fontFamily: mono }}>
+                        <p className="text-heading text-sm font-medium truncate group-hover:text-[#ff6b2c] transition-colors duration-200" style={{ fontFamily: mono }}>
                           {u.user_name}
                         </p>
                         <span className="text-heading text-sm font-semibold shrink-0 ml-2" style={{ fontFamily: mono }}>

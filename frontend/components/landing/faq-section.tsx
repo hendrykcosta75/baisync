@@ -58,12 +58,12 @@ export function FaqSection() {
           {faqs.map((faq, i) => {
             const isOpen = openIndex === i;
             return (
-              <div key={i} className="border-b border-[#1a1a1a]">
+              <div key={i} className="border-b border-dim">
                 <button
                   type="button"
                   onClick={() => toggle(i)}
                   aria-expanded={isOpen}
-                  className="flex w-full items-center justify-between py-5 text-left transition-colors duration-200 hover:text-[#FF6B00]"
+                  className="flex w-full items-center justify-between py-5 text-left transition-colors duration-200 hover:text-[#ff6b2c]"
                 >
                   <span className="pr-4 text-sm font-medium text-white">
                     {faq.question}

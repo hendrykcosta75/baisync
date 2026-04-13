@@ -8,7 +8,7 @@ import { Plug, Wifi, WifiOff, Search, Phone } from 'lucide-react'
 import { PieChart, Pie, Cell, ResponsiveContainer } from 'recharts'
 
 const mono = "'JetBrains Mono', 'Fira Code', monospace"
-const COLORS = ['#FF6B00', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899']
+const COLORS = ['#ff6b2c', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899']
 
 function StatCard({ icon: Icon, label, value, color }: {
   icon: React.ElementType
@@ -22,7 +22,7 @@ function StatCard({ icon: Icon, label, value, color }: {
         <div
           className="w-9 h-9 rounded-lg bg-raised flex items-center justify-center"
         >
-          <Icon size={18} style={{ color: color || '#FF6B00' }} />
+          <Icon size={18} style={{ color: color || '#ff6b2c' }} />
         </div>
         <span className="text-subtle" style={{ fontFamily: mono, fontSize: 11, letterSpacing: 1, textTransform: 'uppercase' }}>
           {label}
@@ -169,14 +169,14 @@ export default function AdminIntegrationsPage() {
             placeholder="Buscar por usuario, assistente, telefone..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="w-full bg-raised border border-dim rounded-lg pl-8 pr-3 py-2 text-body text-sm placeholder:text-subtle/50 focus:border-[#FF6B00]/50 focus:ring-1 focus:ring-[#FF6B00]/20 transition-all duration-200 outline-none"
+            className="w-full bg-raised border border-dim rounded-lg pl-8 pr-3 py-2 text-body text-sm placeholder:text-subtle/50 focus:border-[#ff6b2c]/50 focus:ring-1 focus:ring-[#ff6b2c]/20 transition-all duration-200 outline-none"
             style={{ fontFamily: mono }}
           />
         </div>
         <select
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value)}
-          className="bg-raised border border-dim rounded-lg px-3 py-2 text-body text-sm outline-none focus:border-[#FF6B00]/50 transition-colors duration-200"
+          className="bg-raised border border-dim rounded-lg px-3 py-2 text-body text-sm outline-none focus:border-[#ff6b2c]/50 transition-colors duration-200"
           style={{ fontFamily: mono }}
         >
           <option value="all">Todos os status</option>
@@ -187,7 +187,7 @@ export default function AdminIntegrationsPage() {
         <select
           value={channelFilter}
           onChange={(e) => setChannelFilter(e.target.value)}
-          className="bg-raised border border-dim rounded-lg px-3 py-2 text-body text-sm outline-none focus:border-[#FF6B00]/50 transition-colors duration-200"
+          className="bg-raised border border-dim rounded-lg px-3 py-2 text-body text-sm outline-none focus:border-[#ff6b2c]/50 transition-colors duration-200"
           style={{ fontFamily: mono }}
         >
           <option value="all">Todos os canais</option>
@@ -229,7 +229,7 @@ export default function AdminIntegrationsPage() {
                     style={{ animationDelay: `${i * 30}ms`, animationFillMode: 'forwards' }}
                   >
                     <td className="px-5 py-3.5">
-                      <Link href={`/admin/users/${int.user_id}`} className="hover:text-[#FF6B00] transition-colors duration-200">
+                      <Link href={`/admin/users/${int.user_id}`} className="hover:text-[#ff6b2c] transition-colors duration-200">
                         <p className="text-heading text-sm font-medium">{int.user_name}</p>
                         <p className="text-subtle text-xs">{int.user_email}</p>
                       </Link>

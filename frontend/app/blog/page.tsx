@@ -70,8 +70,8 @@ function CategoryPill({ label, active, onClick }: { label: string; active: boole
       style={{
         fontFamily: mono,
         background: active ? 'rgba(255, 107, 0, 0.12)' : 'transparent',
-        border: active ? '1px solid #FF6B00' : '1px solid #222',
-        color: active ? '#FF6B00' : '#666',
+        border: active ? '1px solid #ff6b2c' : '1px solid #222',
+        color: active ? '#ff6b2c' : '#666',
         letterSpacing: 0.5,
       }}
     >
@@ -84,7 +84,7 @@ function BlogCard({ post, index }: { post: typeof posts[number]; index: number }
   return (
     <Link href={`/blog/${post.slug}`}>
       <article
-        className="group glow-card rounded-xl border border-[#1a1a1a] bg-[#0a0a0a] overflow-hidden transition-all duration-300 hover:-translate-y-1 hover:border-[#FF6B00]/30 h-full"
+        className="group glow-card rounded-xl border border-dim bg-app overflow-hidden transition-all duration-300 hover:-translate-y-1 hover:border-[#ff6b2c]/30 h-full"
         style={{
           animation: `fadeSlideUp 0.6s ease ${index * 0.08}s both`,
         }}
@@ -93,7 +93,7 @@ function BlogCard({ post, index }: { post: typeof posts[number]; index: number }
           className="h-1 w-full"
           style={{
             background: post.featured
-              ? 'linear-gradient(90deg, #FF6B00, #ff8533, #FFB366)'
+              ? 'linear-gradient(90deg, #ff6b2c, #ff8533, #FFB366)'
               : 'linear-gradient(90deg, #1a1a1a, #222, #1a1a1a)',
             transition: 'background 0.3s',
           }}
@@ -106,7 +106,7 @@ function BlogCard({ post, index }: { post: typeof posts[number]; index: number }
               style={{
                 fontFamily: mono,
                 background: 'rgba(255,107,0,0.08)',
-                color: '#FF6B00',
+                color: '#ff6b2c',
                 border: '1px solid rgba(255,107,0,0.15)',
               }}
             >
@@ -128,7 +128,7 @@ function BlogCard({ post, index }: { post: typeof posts[number]; index: number }
           </div>
 
           <h3
-            className="mb-3 text-base font-bold text-white leading-snug group-hover:text-[#FF6B00] transition-colors duration-200"
+            className="mb-3 text-base font-bold text-white leading-snug group-hover:text-[#ff6b2c] transition-colors duration-200"
             style={{ fontFamily: mono }}
           >
             {post.title}
@@ -151,7 +151,7 @@ function BlogCard({ post, index }: { post: typeof posts[number]; index: number }
                 {post.readTime} leitura
               </span>
             </div>
-            <span className="text-xs text-[#555] group-hover:text-[#FF6B00] transition-colors duration-200" style={{ fontFamily: mono }}>
+            <span className="text-xs text-[#555] group-hover:text-[#ff6b2c] transition-colors duration-200" style={{ fontFamily: mono }}>
               Ler →
             </span>
           </div>
@@ -165,7 +165,7 @@ function FeaturedPost({ post }: { post: typeof posts[number] }) {
   return (
     <Link href={`/blog/${post.slug}`}>
       <article
-        className="group glow-card rounded-2xl border border-[#1a1a1a] bg-[#0a0a0a] overflow-hidden transition-all duration-300 hover:border-[#FF6B00]/30 mb-12"
+        className="group glow-card rounded-2xl border border-dim bg-app overflow-hidden transition-all duration-300 hover:border-[#ff6b2c]/30 mb-12"
         style={{ animation: 'fadeSlideUp 0.6s ease both' }}
       >
         <div className="grid grid-cols-1 lg:grid-cols-2">
@@ -177,7 +177,7 @@ function FeaturedPost({ post }: { post: typeof posts[number] }) {
               <div
                 className="w-64 h-64 rounded-full opacity-20"
                 style={{
-                  background: 'radial-gradient(circle, #FF6B00 0%, transparent 70%)',
+                  background: 'radial-gradient(circle, #ff6b2c 0%, transparent 70%)',
                   filter: 'blur(60px)',
                 }}
               />
@@ -190,11 +190,11 @@ function FeaturedPost({ post }: { post: typeof posts[number] }) {
                   border: '1px solid rgba(255,107,0,0.25)',
                 }}
               >
-                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#FF6B00" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#ff6b2c" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
                   <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
                 </svg>
               </div>
-              <span className="text-[10px] font-semibold uppercase tracking-[3px] text-[#FF6B00]" style={{ fontFamily: mono }}>
+              <span className="text-[10px] font-semibold uppercase tracking-[3px] text-[#ff6b2c]" style={{ fontFamily: mono }}>
                 ARTIGO EM DESTAQUE
               </span>
             </div>
@@ -207,7 +207,7 @@ function FeaturedPost({ post }: { post: typeof posts[number] }) {
                 style={{
                   fontFamily: mono,
                   background: 'rgba(255,107,0,0.08)',
-                  color: '#FF6B00',
+                  color: '#ff6b2c',
                   border: '1px solid rgba(255,107,0,0.15)',
                 }}
               >
@@ -219,7 +219,7 @@ function FeaturedPost({ post }: { post: typeof posts[number] }) {
             </div>
 
             <h2
-              className="text-xl lg:text-2xl font-bold text-white leading-tight mb-4 group-hover:text-[#FF6B00] transition-colors duration-200"
+              className="text-xl lg:text-2xl font-bold text-white leading-tight mb-4 group-hover:text-[#ff6b2c] transition-colors duration-200"
               style={{ fontFamily: mono }}
             >
               {post.title}
@@ -234,7 +234,7 @@ function FeaturedPost({ post }: { post: typeof posts[number] }) {
 
             <div className="flex items-center gap-4">
               <span
-                className="inline-flex items-center gap-2 text-xs font-semibold text-[#FF6B00] group-hover:gap-3 transition-all duration-200"
+                className="inline-flex items-center gap-2 text-xs font-semibold text-[#ff6b2c] group-hover:gap-3 transition-all duration-200"
                 style={{ fontFamily: mono }}
               >
                 Ler artigo completo
@@ -271,7 +271,7 @@ export default function BlogPage() {
       <div className="max-w-[1200px] mx-auto px-6 lg:px-12 pt-24 pb-16">
         <div className="mb-12" style={{ animation: 'fadeSlideUp 0.6s ease both' }}>
           <span
-            className="inline-block text-[#FF6B00] text-xs tracking-[0.25em] uppercase font-semibold mb-4"
+            className="inline-block text-[#ff6b2c] text-xs tracking-[0.25em] uppercase font-semibold mb-4"
             style={{ fontFamily: mono }}
           >
             BLOG
@@ -325,7 +325,7 @@ export default function BlogPage() {
 
         <div className="flex justify-center mt-16">
           <button
-            className="px-8 py-3 rounded-xl text-sm font-medium transition-all duration-300 hover:border-[#FF6B00] hover:text-[#FF6B00] cursor-pointer"
+            className="px-8 py-3 rounded-xl text-sm font-medium transition-all duration-300 hover:border-[#ff6b2c] hover:text-[#ff6b2c] cursor-pointer"
             style={{
               fontFamily: mono,
               color: '#aaa',

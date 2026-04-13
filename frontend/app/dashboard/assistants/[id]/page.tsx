@@ -36,7 +36,7 @@ export default function AssistantDetailPage() {
           <Button
             variant="ghost"
             onPress={() => router.push('/dashboard/assistants')}
-            className="shrink-0 font-medium px-3 text-[#8a8a8a] hover:text-[#f0f0f0] border-none bg-transparent"
+            className="shrink-0 font-medium px-3 text-subtle hover:text-heading border-none bg-transparent"
           >
             ← Voltar
           </Button>
@@ -47,7 +47,7 @@ export default function AssistantDetailPage() {
             >
               {assistant.name}
             </h1>
-            <p className="text-[#8a8a8a] text-sm mt-1">
+            <p className="text-subtle text-sm mt-1">
               Gerencie configuração, conhecimento e ferramentas do assistente.
             </p>
           </div>

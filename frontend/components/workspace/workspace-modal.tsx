@@ -39,6 +39,7 @@ export function WorkspaceModal({ isOpen, onClose }: { isOpen: boolean; onClose: 
     removeMember,
     updateMemberRole,
     updateWorkspace,
+    deleteWorkspace,
   } = useWorkspaceStore()
 
   const [tab, setTab] = useState<'members' | 'permissions'>('members')
@@ -93,11 +94,11 @@ export function WorkspaceModal({ isOpen, onClose }: { isOpen: boolean; onClose: 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
       <div
-        className="rounded-xl border border-[#2a2a2a] w-full max-w-lg max-h-[85vh] flex flex-col overflow-hidden"
+        className="rounded-xl border border-dim-hover w-full max-w-lg max-h-[85vh] flex flex-col overflow-hidden"
         style={{ background: '#141414' }}
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-[#2a2a2a] shrink-0">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-dim-hover shrink-0">
           <div>
             <h2 className="text-[15px] font-bold text-white" style={{ fontFamily: mono }}>
               {isPersonal ? 'Workspace Pessoal' : activeWorkspace?.workspace_name || 'Workspace'}
@@ -108,7 +109,7 @@ export function WorkspaceModal({ isOpen, onClose }: { isOpen: boolean; onClose: 
           </div>
           <button
             onClick={onClose}
-            className="w-8 h-8 rounded-lg flex items-center justify-center text-[#5a5a5a] hover:text-white hover:bg-[#252525] transition-colors"
+            className="w-8 h-8 rounded-lg flex items-center justify-center text-[#5a5a5a] hover:text-white hover:bg-dim-hover transition-colors"
           >
             <X size={16} />
           </button>
@@ -127,7 +128,7 @@ export function WorkspaceModal({ isOpen, onClose }: { isOpen: boolean; onClose: 
         {!isPersonal && (
           <>
             {/* Tabs */}
-            <div className="flex border-b border-[#2a2a2a] px-5 shrink-0">
+            <div className="flex border-b border-dim-hover px-5 shrink-0">
               {([
                 { id: 'members' as const, label: 'Membros' },
                 { id: 'permissions' as const, label: 'Permissões' },
@@ -148,22 +149,22 @@ export function WorkspaceModal({ isOpen, onClose }: { isOpen: boolean; onClose: 
             </div>
 
             {/* Scrollable body */}
-            <div className="flex-1 overflow-y-auto p-5 space-y-5">
+            <div className="flex-1 overflow-y-auto overflow-x-hidden p-5 space-y-5">
 
               {tab === 'members' && (
                 <>
                   {/* Workspace Name (inline) */}
                   {canManage && (
-                    <div>
+                    <div className="overflow-hidden">
                       <label className="text-[11px] text-[#5a5a5a] uppercase tracking-wide mb-1.5 block" style={{ fontFamily: mono }}>
                         Nome do Workspace
                       </label>
-                      <div className="flex gap-2">
+                      <div className="flex gap-2 min-w-0">
                         <input
                           value={wsName}
                           onChange={e => setWsName(e.target.value)}
                           placeholder="Nome da empresa"
-                          className="flex-1 rounded-lg px-3 py-2 text-sm text-white bg-[#1a1a1a] border border-[#2a2a2a] focus:border-[#ff6b2c] focus:outline-none transition-colors"
+                          className="flex-1 min-w-0 rounded-lg px-3 py-2 text-sm text-white bg-dim border border-dim-hover focus:border-[#ff6b2c] focus:outline-none transition-colors"
                           style={{ fontFamily: mono }}
                         />
                         <button
@@ -180,8 +181,8 @@ export function WorkspaceModal({ isOpen, onClose }: { isOpen: boolean; onClose: 
 
                   {/* Invite */}
                   {canManage && (
-                    <div className="rounded-lg border border-[#2a2a2a] p-4" style={{ background: '#1a1a1a' }}>
-                      <h3 className="text-[12px] font-semibold text-[#8a8a8a] uppercase tracking-wide mb-3 flex items-center gap-2" style={{ fontFamily: mono }}>
+                    <div className="rounded-lg border border-dim-hover p-4" style={{ background: '#1a1a1a' }}>
+                      <h3 className="text-[12px] font-semibold text-subtle uppercase tracking-wide mb-3 flex items-center gap-2" style={{ fontFamily: mono }}>
                         <UserPlus size={13} className="text-[#ff6b2c]" />
                         Convidar
                       </h3>
@@ -193,7 +194,7 @@ export function WorkspaceModal({ isOpen, onClose }: { isOpen: boolean; onClose: 
                           onChange={e => setInviteEmail(e.target.value)}
                           placeholder="email@exemplo.com"
                           onKeyDown={e => e.key === 'Enter' && handleInvite()}
-                          className="w-full rounded-lg pl-9 pr-3 py-2 text-[13px] text-white bg-[#252525] border border-[#2a2a2a] focus:border-[#ff6b2c] focus:outline-none transition-colors placeholder-[#5a5a5a]"
+                          className="w-full rounded-lg pl-9 pr-3 py-2 text-[13px] text-white bg-dim-hover border border-dim-hover focus:border-[#ff6b2c] focus:outline-none transition-colors placeholder-[#5a5a5a]"
                           style={{ fontFamily: mono }}
                         />
                       </div>
@@ -250,7 +251,7 @@ export function WorkspaceModal({ isOpen, onClose }: { isOpen: boolean; onClose: 
 
                   {/* Members list */}
                   <div>
-                    <h3 className="text-[12px] font-semibold text-[#8a8a8a] uppercase tracking-wide mb-2 flex items-center gap-2" style={{ fontFamily: mono }}>
+                    <h3 className="text-[12px] font-semibold text-subtle uppercase tracking-wide mb-2 flex items-center gap-2" style={{ fontFamily: mono }}>
                       <Users size={13} className="text-[#34d399]" />
                       Membros ({members.length})
                     </h3>
@@ -261,7 +262,7 @@ export function WorkspaceModal({ isOpen, onClose }: { isOpen: boolean; onClose: 
                         return (
                           <div
                             key={member.user_id}
-                            className="flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-[#1a1a1a] transition-colors group"
+                            className="flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-dim transition-colors group"
                           >
                             <div
                               className="w-8 h-8 rounded-[10px] flex items-center justify-center text-[10px] font-semibold shrink-0"
@@ -289,7 +290,7 @@ export function WorkspaceModal({ isOpen, onClose }: { isOpen: boolean; onClose: 
                                 <select
                                   value={member.role}
                                   onChange={e => updateMemberRole(activeWorkspace!.workspace_id, member.user_id, e.target.value)}
-                                  className="text-[10px] rounded px-1.5 py-0.5 bg-[#252525] border border-[#2a2a2a] text-[#8a8a8a] focus:outline-none cursor-pointer"
+                                  className="text-[10px] rounded px-1.5 py-0.5 bg-dim-hover border border-dim-hover text-subtle focus:outline-none cursor-pointer"
                                   style={{ fontFamily: mono }}
                                 >
                                   <option value="member">Membro</option>
@@ -351,7 +352,7 @@ export function WorkspaceModal({ isOpen, onClose }: { isOpen: boolean; onClose: 
                           <p className="text-[13px] font-bold" style={{ fontFamily: mono, color: role.color }}>
                             {role.label}
                           </p>
-                          <p className="text-[12px] text-[#8a8a8a] mt-0.5" style={{ fontFamily: mono }}>
+                          <p className="text-[12px] text-subtle mt-0.5" style={{ fontFamily: mono }}>
                             {role.description}
                           </p>
                         </div>
@@ -368,20 +369,25 @@ export function WorkspaceModal({ isOpen, onClose }: { isOpen: boolean; onClose: 
       {/* Delete confirmation */}
       {confirmDelete && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4">
-          <div className="rounded-xl border border-[#2a2a2a] p-6 max-w-sm w-full" style={{ background: '#1a1a1a' }}>
+          <div className="rounded-xl border border-dim-hover p-6 max-w-sm w-full" style={{ background: '#1a1a1a' }}>
             <h3 className="text-white text-base font-bold mb-2" style={{ fontFamily: mono }}>Deletar workspace?</h3>
-            <p className="text-[#8a8a8a] text-[13px] mb-5" style={{ fontFamily: mono }}>
+            <p className="text-subtle text-[13px] mb-5" style={{ fontFamily: mono }}>
               Esta ação é irreversível. Todos os dados serão removidos.
             </p>
             <div className="flex justify-end gap-2">
               <button
                 onClick={() => setConfirmDelete(false)}
-                className="px-4 py-2 rounded-lg text-[13px] text-[#8a8a8a] hover:text-white hover:bg-[#252525] transition-colors"
+                className="px-4 py-2 rounded-lg text-[13px] text-subtle hover:text-white hover:bg-dim-hover transition-colors"
                 style={{ fontFamily: mono }}
               >
                 Cancelar
               </button>
               <button
+                onClick={() => {
+                  if (activeWorkspace) {
+                    deleteWorkspace(activeWorkspace.workspace_id)
+                  }
+                }}
                 className="px-4 py-2 rounded-lg text-[13px] font-semibold bg-red-500 text-white hover:bg-red-600 transition-colors"
                 style={{ fontFamily: mono }}
               >
@@ -398,15 +404,15 @@ export function WorkspaceModal({ isOpen, onClose }: { isOpen: boolean; onClose: 
         const memberLabel = member?.user_name || member?.user_email || 'este membro'
         return (
           <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4">
-            <div className="rounded-xl border border-[#2a2a2a] p-6 max-w-sm w-full" style={{ background: '#1a1a1a' }}>
+            <div className="rounded-xl border border-dim-hover p-6 max-w-sm w-full" style={{ background: '#1a1a1a' }}>
               <h3 className="text-white text-base font-bold mb-2" style={{ fontFamily: mono }}>Remover membro?</h3>
-              <p className="text-[#8a8a8a] text-[13px] mb-5" style={{ fontFamily: mono }}>
+              <p className="text-subtle text-[13px] mb-5" style={{ fontFamily: mono }}>
                 <strong className="text-white">{memberLabel}</strong> será removido do workspace e perderá acesso imediatamente.
               </p>
               <div className="flex justify-end gap-2">
                 <button
                   onClick={() => setRemovingMemberId(null)}
-                  className="px-4 py-2 rounded-lg text-[13px] text-[#8a8a8a] hover:text-white hover:bg-[#252525] transition-colors"
+                  className="px-4 py-2 rounded-lg text-[13px] text-subtle hover:text-white hover:bg-dim-hover transition-colors"
                   style={{ fontFamily: mono }}
                 >
                   Cancelar

@@ -466,18 +466,17 @@ function ProviderCard({
                 </p>
               </Modal.Body>
               <Modal.Footer className="flex justify-end gap-2 pt-4 pb-5 px-6">
-                <Button variant="ghost" size="sm" onPress={() => setConfirmOpen(false)} isDisabled={removing}>
+                <button type="button" className="btn-neu-ghost text-sm" onClick={() => setConfirmOpen(false)} disabled={removing}>
                   Cancelar
-                </Button>
-                <Button
-                  variant="primary"
-                  size="sm"
-                  className="bg-red-500 hover:bg-red-600 border-red-500 hover:border-red-600"
-                  onPress={handleRemove}
-                  isDisabled={removing}
+                </button>
+                <button
+                  type="button"
+                  className="btn-neu text-sm !text-red-400 hover:!text-red-300"
+                  onClick={handleRemove}
+                  disabled={removing}
                 >
                   {removing ? 'Removendo...' : 'Sim, remover'}
-                </Button>
+                </button>
               </Modal.Footer>
             </Modal.Dialog>
           </Modal.Container>

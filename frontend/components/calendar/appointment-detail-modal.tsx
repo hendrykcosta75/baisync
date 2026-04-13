@@ -201,9 +201,9 @@ export function AppointmentDetailModal({ appointment, isOpen, onClose, assistant
                   </div>
                 )}
               </div>
-              <Button variant="secondary" onPress={onClose}>
+              <button type="button" className="btn-neu text-sm" onClick={onClose}>
                 Fechar
-              </Button>
+              </button>
             </div>
           </Modal.Dialog>
         </Modal.Container>

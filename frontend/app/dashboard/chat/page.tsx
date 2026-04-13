@@ -237,7 +237,7 @@ function ChannelSettingsModal({ channel, onClose }: { channel: Channel; onClose:
                   {nonMembers.map(m => (
                     <button
                       key={m.user_id}
-                      className="w-full flex items-center gap-2 px-3 py-2 text-left text-[#8a8a8a] hover:text-[#e2e0da] transition-colors"
+                      className="w-full flex items-center gap-2 px-3 py-2 text-left text-subtle hover:text-[#e2e0da] transition-colors"
                       style={{ background: 'transparent' }}
                       onMouseEnter={e => e.currentTarget.style.background = '#252525'}
                       onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
@@ -291,7 +291,7 @@ function ChannelSettingsModal({ channel, onClose }: { channel: Channel; onClose:
 
             {/* Danger Zone */}
             <div className="border border-red-500/20 rounded-lg p-4">
-              <p className="text-[12px] text-[#8a8a8a] mb-3" style={{ fontFamily: mono }}>
+              <p className="text-[12px] text-subtle mb-3" style={{ fontFamily: mono }}>
                 Deletar este canal permanentemente. Esta ação não pode ser desfeita.
               </p>
               {!confirmDelete ? (
@@ -313,7 +313,7 @@ function ChannelSettingsModal({ channel, onClose }: { channel: Channel; onClose:
                   </button>
                   <button
                     onClick={() => setConfirmDelete(false)}
-                    className="px-4 py-2 rounded-lg text-[12px] font-bold text-[#8a8a8a] transition-colors"
+                    className="px-4 py-2 rounded-lg text-[12px] font-bold text-subtle transition-colors"
                     style={{ fontFamily: mono, border: '1px solid rgba(255,255,255,0.06)', background: 'transparent' }}
                     onMouseEnter={e => e.currentTarget.style.background = '#252525'}
                     onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
@@ -434,7 +434,7 @@ function ChannelListPanel() {
               <button
                 key={ch.id}
                 className={`w-full flex items-center gap-2 px-3 py-1.5 rounded-md text-left transition-colors ${
-                  isActive ? 'text-[#ff6b2c]' : unread > 0 ? 'text-[#e2e0da]' : 'text-[#8a8a8a] hover:text-[#e2e0da]'
+                  isActive ? 'text-[#ff6b2c]' : unread > 0 ? 'text-[#e2e0da]' : 'text-subtle hover:text-[#e2e0da]'
                 }`}
                 style={{
                   background: isActive ? 'rgba(255,255,255,0.06)' : undefined,
@@ -473,7 +473,7 @@ function ChannelListPanel() {
                 .map(m => (
                   <button
                     key={m.user_id}
-                    className="w-full flex items-center gap-2 px-3 py-2 text-left text-[#8a8a8a] hover:text-[#e2e0da] transition-colors"
+                    className="w-full flex items-center gap-2 px-3 py-2 text-left text-subtle hover:text-[#e2e0da] transition-colors"
                     style={{ background: 'transparent' }}
                     onMouseEnter={e => e.currentTarget.style.background = '#252525'}
                     onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
@@ -496,7 +496,7 @@ function ChannelListPanel() {
               <button
                 key={dm.id}
                 className={`w-full flex items-center gap-2 px-3 py-1.5 rounded-md text-left transition-colors ${
-                  isActive ? 'text-[#ff6b2c]' : unread > 0 ? 'text-[#e2e0da]' : 'text-[#8a8a8a] hover:text-[#e2e0da]'
+                  isActive ? 'text-[#ff6b2c]' : unread > 0 ? 'text-[#e2e0da]' : 'text-subtle hover:text-[#e2e0da]'
                 }`}
                 style={{
                   background: isActive ? 'rgba(255,255,255,0.06)' : undefined,
@@ -837,9 +837,9 @@ function NotesEditor({
             prose-p:text-[#c0c0c0] prose-p:leading-relaxed
             prose-a:text-[#ff6b2c] prose-a:no-underline hover:prose-a:underline
             prose-strong:text-[#e2e0da]
-            prose-code:text-[#ff6b2c] prose-code:bg-[#252525] prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:text-[12px]
+            prose-code:text-[#ff6b2c] prose-code:bg-dim-hover prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:text-[12px]
             prose-pre:bg-[rgba(17,17,17,0.8)] prose-pre:border prose-pre:border-[rgba(255,255,255,0.06)] prose-pre:rounded-lg
-            prose-blockquote:border-[rgba(249,115,22,0.4)] prose-blockquote:text-[#8a8a8a]
+            prose-blockquote:border-[rgba(249,115,22,0.4)] prose-blockquote:text-subtle
             prose-li:text-[#c0c0c0]
             prose-hr:border-[rgba(255,255,255,0.06)]
             prose-table:text-[#c0c0c0]
@@ -1007,7 +1007,7 @@ function ChannelTabs({
               <div className="fixed inset-0 z-10" onClick={() => setShowAddMenu(false)} />
               <div className="absolute right-0 top-full mt-1 z-20 w-44 rounded-lg shadow-xl overflow-hidden" style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)', backdropFilter: 'blur(20px)' }}>
                 <button
-                  className="w-full flex items-center gap-2 px-3 py-2.5 text-[12px] text-[#8a8a8a] hover:text-[#e2e0da] transition-colors text-left"
+                  className="w-full flex items-center gap-2 px-3 py-2.5 text-[12px] text-subtle hover:text-[#e2e0da] transition-colors text-left"
                   style={{ fontFamily: mono }}
                   onMouseEnter={e => e.currentTarget.style.background = '#252525'}
                   onMouseLeave={e => e.currentTarget.style.background = ''}
@@ -1222,9 +1222,9 @@ function MessageArea() {
                         prose-p:text-[#c0c0c0] prose-p:leading-relaxed prose-p:my-0.5
                         prose-a:text-[#ff6b2c] prose-a:no-underline hover:prose-a:underline
                         prose-strong:text-[#e2e0da]
-                        prose-code:text-[#ff6b2c] prose-code:bg-[#252525] prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:text-[12px]
+                        prose-code:text-[#ff6b2c] prose-code:bg-dim-hover prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:text-[12px]
                         prose-pre:bg-[rgba(17,17,17,0.8)] prose-pre:border prose-pre:border-[rgba(255,255,255,0.06)] prose-pre:rounded-lg prose-pre:my-1
-                        prose-blockquote:border-[rgba(249,115,22,0.4)] prose-blockquote:text-[#8a8a8a]
+                        prose-blockquote:border-[rgba(249,115,22,0.4)] prose-blockquote:text-subtle
                         prose-li:text-[#c0c0c0]
                         prose-hr:border-[rgba(255,255,255,0.06)]"
                       style={{ fontFamily: mono }}

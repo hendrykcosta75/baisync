@@ -96,15 +96,14 @@ export default function CalendarPage() {
           >
             <Filter size={15} />
           </Button>
-          <Button
-            variant="primary"
-            size="sm"
-            onPress={() => { setCreateDate(null); setCreateOpen(true) }}
-            className="flex items-center gap-1.5"
+          <button
+            type="button"
+            className="btn-neu text-sm flex items-center gap-1.5"
+            onClick={() => { setCreateDate(null); setCreateOpen(true) }}
           >
             <Plus size={14} />
             Novo
-          </Button>
+          </button>
         </div>
       </div>
 

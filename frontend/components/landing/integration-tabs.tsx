@@ -56,10 +56,10 @@ const tabs: Record<TabKey, TabData> = {
   },
   webchat: {
     label: 'Web Chat',
-    headerColor: '#FF6B00',
+    headerColor: '#ff6b2c',
     headerName: 'Suporte Baisync',
     headerStatus: 'Respondemos em segundos',
-    userBubble: '#FF6B00',
+    userBubble: '#ff6b2c',
     botBubble: '#1a1a1a',
     userText: '#ffffff',
     botText: '#e0e0e0',
@@ -137,7 +137,7 @@ export function IntegrationTabs() {
     >
       {/* Header */}
       <div className="text-center mb-16">
-        <span className="inline-block text-[#FF6B00] text-xs tracking-[0.25em] uppercase font-[family-name:var(--font-jetbrains-mono)] font-semibold mb-4">
+        <span className="inline-block text-[#ff6b2c] text-xs tracking-[0.25em] uppercase font-[family-name:var(--font-jetbrains-mono)] font-semibold mb-4">
           INTEGRAÇÕES
         </span>
         <h2 className="text-3xl md:text-4xl font-bold text-white font-[family-name:var(--font-jetbrains-mono)] mb-4">
@@ -160,8 +160,8 @@ export function IntegrationTabs() {
               className="px-5 py-2.5 rounded-full text-sm font-[family-name:var(--font-jetbrains-mono)] font-medium transition-all duration-300 cursor-pointer"
               style={{
                 background: isActive ? 'rgba(255, 107, 0, 0.12)' : 'transparent',
-                border: isActive ? '1px solid #FF6B00' : '1px solid #222',
-                color: isActive ? '#FF6B00' : '#666',
+                border: isActive ? '1px solid #ff6b2c' : '1px solid #222',
+                color: isActive ? '#ff6b2c' : '#666',
               }}
             >
               {tabs[key].label}
@@ -240,8 +240,8 @@ export function IntegrationTabs() {
             </div>
 
             {/* Input bar */}
-            <div className="flex items-center gap-2 px-3 py-3 border-t border-[#1a1a1a]" style={{ background: '#0c0c0c' }}>
-              <div className="flex-1 h-9 rounded-full bg-[#1a1a1a] px-4 flex items-center">
+            <div className="flex items-center gap-2 px-3 py-3 border-t border-dim" style={{ background: '#0c0c0c' }}>
+              <div className="flex-1 h-9 rounded-full bg-dim px-4 flex items-center">
                 <span className="text-[#444] text-xs font-[family-name:var(--font-jetbrains-mono)]">
                   Digite uma mensagem...
                 </span>

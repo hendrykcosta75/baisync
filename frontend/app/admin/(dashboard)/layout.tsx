@@ -18,9 +18,9 @@ export default function AdminLayout({
       <AdminSidebar isOpen={isSidebarOpen} onClose={() => setIsSidebarOpen(false)} />
 
       <div className="flex-1 flex flex-col min-w-0">
-        <header className="h-16 flex items-center justify-between px-4 lg:px-6 border-b border-[#1a1a1a]" style={{ background: 'rgba(10,10,10,0.85)', backdropFilter: 'blur(12px)' }}>
+        <header className="h-16 flex items-center justify-between px-4 lg:px-6 border-b border-dim" style={{ background: 'rgba(10,10,10,0.85)', backdropFilter: 'blur(12px)' }}>
           <button
-            className="lg:hidden p-2 rounded-lg text-[#888] hover:text-white hover:bg-[#111] transition-colors"
+            className="lg:hidden p-2 rounded-lg text-[#888] hover:text-white hover:bg-surface transition-colors"
             onClick={() => setIsSidebarOpen(true)}
           >
             <Menu size={20} />

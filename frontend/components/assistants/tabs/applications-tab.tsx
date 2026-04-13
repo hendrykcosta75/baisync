@@ -248,21 +248,12 @@ function BaileysForm({ assistant, shareToken, isReadOnly }: { assistant: Assista
             <p className="text-xs opacity-80 mb-3">{phoneConflict.message}</p>
             {phoneConflict.type === 'same_user' && (
               <div className="flex gap-2">
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onPress={() => setPhoneConflict(null)}
-                >
+                <button type="button" className="btn-neu-ghost text-sm" onClick={() => setPhoneConflict(null)}>
                   Cancelar
-                </Button>
-                <Button
-                  variant="primary"
-                  size="sm"
-                  onPress={resolveConflict}
-                  isDisabled={resolving}
-                >
+                </button>
+                <button type="button" className="btn-neu text-sm" onClick={resolveConflict} disabled={resolving}>
                   {resolving ? 'Desconectando...' : `Desconectar de "${phoneConflict.assistantName}" e conectar aqui`}
-                </Button>
+                </button>
               </div>
             )}
           </div>
@@ -337,12 +328,12 @@ function BaileysForm({ assistant, shareToken, isReadOnly }: { assistant: Assista
                 </p>
               </Modal.Body>
               <Modal.Footer>
-                <Button variant="secondary" slot="close">
+                <button type="button" className="btn-neu-ghost text-sm" onClick={() => setDisconnectModalOpen(false)}>
                   Cancelar
-                </Button>
-                <Button variant="danger" onPress={onDisconnect} isDisabled={disconnecting}>
+                </button>
+                <button type="button" className="btn-neu text-sm !text-red-400 hover:!text-red-300" onClick={onDisconnect} disabled={disconnecting}>
                   {disconnecting ? 'Desconectando...' : 'Sim, desconectar'}
-                </Button>
+                </button>
               </Modal.Footer>
             </Modal.Dialog>
           </Modal.Container>
@@ -519,9 +510,9 @@ function MetaOfficialForm({ assistant, shareToken, isReadOnly }: { assistant: As
               {disconnecting ? 'Desconectando...' : 'Desconectar'}
             </Button>
           ) : (
-            <Button variant="primary" type="submit" isDisabled={saving || connecting}>
+            <button type="submit" className="btn-neu text-sm" disabled={saving || connecting}>
               {saving || connecting ? 'Conectando...' : 'Salvar e Conectar'}
-            </Button>
+            </button>
           )}
         </div>
       )}
@@ -613,9 +604,9 @@ function TelegramSection({ assistant, shareToken, isReadOnly }: { assistant: Ass
             {isConnected && (
               <Button variant="danger" onPress={onDisconnect}>Desconectar</Button>
             )}
-            <Button variant="primary" type="submit" isDisabled={saving}>
+            <button type="submit" className="btn-neu text-sm" disabled={saving}>
               {saving ? 'Salvando...' : isConnected ? 'Atualizar' : 'Salvar e Conectar'}
-            </Button>
+            </button>
           </div>
         )}
       </Form>

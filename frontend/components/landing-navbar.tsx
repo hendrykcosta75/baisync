@@ -36,20 +36,20 @@ function LogoExpand() {
         style={{ fontFamily: mono, fontSize: 16, fontWeight: 700, letterSpacing: 1, color: '#fff' }}
       >
         {/* B + usiness */}
-        <span style={{ color: '#FF6B00' }}>B</span>
+        <span style={{ color: '#ff6b2c' }}>B</span>
         <Reveal delay={0}>usiness</Reveal>
 
         {/* , (space) */}
         <Reveal delay={80}>,&nbsp;</Reveal>
 
         {/* AI */}
-        <span style={{ color: '#FF6B00' }}>AI</span>
+        <span style={{ color: '#ff6b2c' }}>AI</span>
 
         {/* , (space) */}
         <Reveal delay={160}>,&nbsp;</Reveal>
 
         {/* sync — always visible, but lowercase only on hover via CSS */}
-        <span className="transition-colors duration-300 group-hover/logo:text-[#FF6B00]" style={{ color: '#fff' }}>
+        <span className="transition-colors duration-300 group-hover/logo:text-[#ff6b2c]" style={{ color: '#fff' }}>
           <span className="inline group-hover/logo:hidden">SYNC</span>
           <span className="hidden group-hover/logo:inline">sync</span>
         </span>
@@ -121,7 +121,7 @@ export function LandingNavbar() {
           </Link>
           <Link
             href="/dashboard"
-            className="transition-all duration-200 hover:border-[#FF6B00] hover:text-[#FF6B00]"
+            className="transition-all duration-200 hover:border-[#ff6b2c] hover:text-[#ff6b2c]"
             style={{
               fontFamily: mono,
               fontSize: 11,
@@ -179,7 +179,7 @@ export function LandingNavbar() {
             </Link>
             <Link
               href="/dashboard"
-              className="block py-2.5 text-center rounded-md transition-all hover:border-[#FF6B00] hover:text-[#FF6B00]"
+              className="block py-2.5 text-center rounded-md transition-all hover:border-[#ff6b2c] hover:text-[#ff6b2c]"
               style={{ fontFamily: mono, fontSize: 12, color: '#fff', letterSpacing: 1, border: '1px solid #333', textDecoration: 'none' }}
               onClick={() => setMobileOpen(false)}
             >

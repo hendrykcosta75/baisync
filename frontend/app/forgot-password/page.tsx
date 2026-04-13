@@ -69,7 +69,7 @@ export default function ForgotPasswordPage() {
   return (
     <AuthLayout
       footerContent={
-        <Link href="/login" style={{ fontFamily: mono, fontSize: 12, color: '#FF6B00', fontWeight: 600 }} className="hover:underline">
+        <Link href="/login" style={{ fontFamily: mono, fontSize: 12, color: '#ff6b2c', fontWeight: 600 }} className="hover:underline">
           Voltar ao login
         </Link>
       }
@@ -99,7 +99,7 @@ export default function ForgotPasswordPage() {
               autoFocus
               placeholder="Digite seu e-mail"
               type="email"
-              className="border-[#222] hover:border-[#FF6B00] focus-within:!border-[#FF6B00] transition-colors shadow-sm"
+              className="border-[#222] hover:border-[#ff6b2c] focus-within:!border-[#ff6b2c] transition-colors shadow-sm"
               {...forgotForm.register('email')}
             />
             {forgotForm.formState.errors.email && (
@@ -111,7 +111,7 @@ export default function ForgotPasswordPage() {
             type="submit"
             isDisabled={isLoading}
             className="mt-2 font-semibold text-base border-none shadow-xl w-full"
-            style={{ background: '#FF6B00', color: '#000', fontFamily: mono, fontWeight: 700, letterSpacing: 0.5 }}
+            style={{ background: '#ff6b2c', color: '#000', fontFamily: mono, fontWeight: 700, letterSpacing: 0.5 }}
           >
             {isLoading ? 'Enviando...' : 'Enviar código de redefinição'}
           </Button>
@@ -124,7 +124,7 @@ export default function ForgotPasswordPage() {
           <Link
             href="/login"
             className="mt-2 text-center w-full rounded-xl py-2.5 block"
-            style={{ background: '#FF6B00', color: '#000', fontFamily: mono, fontSize: 14, fontWeight: 700 }}
+            style={{ background: '#ff6b2c', color: '#000', fontFamily: mono, fontSize: 14, fontWeight: 700 }}
           >
             Ir para o login
           </Link>
@@ -148,7 +148,7 @@ export default function ForgotPasswordPage() {
             <Input
               autoFocus
               placeholder="Cole o token recebido no seu e-mail"
-              className="border-[#222] hover:border-[#FF6B00] focus-within:!border-[#FF6B00] transition-colors shadow-sm"
+              className="border-[#222] hover:border-[#ff6b2c] focus-within:!border-[#ff6b2c] transition-colors shadow-sm"
               {...resetForm.register('token')}
             />
             {resetForm.formState.errors.token && (
@@ -162,10 +162,10 @@ export default function ForgotPasswordPage() {
               <Input
                 placeholder="Digite a nova senha"
                 type={isVisible ? "text" : "password"}
-                className="border-[#222] hover:border-[#FF6B00] focus-within:!border-[#FF6B00] transition-colors shadow-sm w-full pr-10"
+                className="border-[#222] hover:border-[#ff6b2c] focus-within:!border-[#ff6b2c] transition-colors shadow-sm w-full pr-10"
                 {...resetForm.register('password')}
               />
-              <button className="absolute right-3 top-1/2 -translate-y-1/2 focus:outline-none text-[#555] hover:text-[#FF6B00]" type="button" onClick={toggleVisibility}>
+              <button className="absolute right-3 top-1/2 -translate-y-1/2 focus:outline-none text-[#555] hover:text-[#ff6b2c]" type="button" onClick={toggleVisibility}>
                 {isVisible ? (
                   <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
                     <path strokeLinecap="round" strokeLinejoin="round" d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65m0 0a3 3 0 10-4.243-4.243m4.242 4.242L9.88 9.88" />
@@ -188,7 +188,7 @@ export default function ForgotPasswordPage() {
             <Input
               placeholder="Confirme a nova senha"
               type={isVisible ? "text" : "password"}
-              className="border-[#222] hover:border-[#FF6B00] focus-within:!border-[#FF6B00] transition-colors shadow-sm"
+              className="border-[#222] hover:border-[#ff6b2c] focus-within:!border-[#ff6b2c] transition-colors shadow-sm"
               {...resetForm.register('confirmPassword')}
             />
             {resetForm.formState.errors.confirmPassword && (
@@ -200,7 +200,7 @@ export default function ForgotPasswordPage() {
             type="submit"
             isDisabled={isLoading}
             className="mt-2 font-semibold text-base border-none shadow-xl w-full"
-            style={{ background: '#FF6B00', color: '#000', fontFamily: mono, fontWeight: 700, letterSpacing: 0.5 }}
+            style={{ background: '#ff6b2c', color: '#000', fontFamily: mono, fontWeight: 700, letterSpacing: 0.5 }}
           >
             {isLoading ? 'Redefinindo...' : 'Redefinir senha'}
           </Button>
@@ -208,7 +208,7 @@ export default function ForgotPasswordPage() {
           <button
             type="button"
             className="text-center hover:underline"
-            style={{ fontFamily: mono, fontSize: 12, color: '#FF6B00', fontWeight: 600 }}
+            style={{ fontFamily: mono, fontSize: 12, color: '#ff6b2c', fontWeight: 600 }}
             onClick={() => { setEmailSent(false); clearError(); setSuccessMessage(null) }}
           >
             Reenviar código

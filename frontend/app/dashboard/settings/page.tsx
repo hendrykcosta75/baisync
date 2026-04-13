@@ -208,12 +208,9 @@ export default function SettingsPage() {
         <p className="text-sm text-muted mb-4">
           Ao remover sua conta, todos os seus dados, assistentes, integrações e histórico de mensagens serão permanentemente excluídos. Esta ação não pode ser desfeita.
         </p>
-        <Button
-          variant="danger"
-          onPress={() => setShowDeleteModal(true)}
-        >
+        <button type="button" className="btn-neu text-sm !text-red-400 hover:!text-red-300" onClick={() => setShowDeleteModal(true)}>
           Remover Minha Conta
-        </Button>
+        </button>
       </Card>
 
       {/* Delete Confirmation Modal */}
@@ -251,19 +248,20 @@ export default function SettingsPage() {
                     <p className="text-sm text-red-500">{deleteError}</p>
                   )}
                   <div className="flex items-center gap-3 justify-end">
-                    <Button
-                      variant="ghost"
-                      onPress={() => {
+                    <button
+                      type="button"
+                      className="btn-neu-ghost text-sm"
+                      onClick={() => {
                         setShowDeleteModal(false)
                         setDeleteError(null)
                         deleteForm.reset()
                       }}
                     >
                       Cancelar
-                    </Button>
-                    <Button variant="danger" type="submit" isDisabled={isLoading}>
+                    </button>
+                    <button type="submit" className="btn-neu text-sm !text-red-400 hover:!text-red-300" disabled={isLoading}>
                       Remover Conta Permanentemente
-                    </Button>
+                    </button>
                   </div>
                 </Form>
               </Modal.Body>

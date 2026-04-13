@@ -148,17 +148,17 @@ function UsageChart({ data, loading, error }: { data: DailyUsage[]; loading: boo
   return (
     <div>
       {loading ? (
-        <div className="w-full h-[180px] flex items-center justify-center text-[#8a8a8a] text-xs animate-pulse">Carregando...</div>
+        <div className="w-full h-[180px] flex items-center justify-center text-subtle text-xs animate-pulse">Carregando...</div>
       ) : error ? (
         <div className="w-full h-[180px] flex flex-col items-center justify-center gap-1 text-center">
           <AlertTriangle size={24} className="text-red-400" />
           <p className="text-xs text-red-500">Erro ao carregar dados</p>
-          <p className="text-[10px] text-[#8a8a8a] max-w-xs truncate" style={{ fontFamily: "'JetBrains Mono', 'Fira Code', monospace" }} title={error}>{error}</p>
+          <p className="text-[10px] text-subtle max-w-xs truncate" style={{ fontFamily: "'JetBrains Mono', 'Fira Code', monospace" }} title={error}>{error}</p>
         </div>
       ) : !hasData ? (
         <div className="w-full h-[180px] flex flex-col items-center justify-center gap-1 text-center">
-          <InboxIcon size={24} className="text-[#8a8a8a]" />
-          <p className="text-xs text-[#8a8a8a]">Nenhuma requisição nos últimos 14 dias</p>
+          <InboxIcon size={24} className="text-subtle" />
+          <p className="text-xs text-subtle">Nenhuma requisição nos últimos 14 dias</p>
         </div>
       ) : (
         <div className="relative" style={{ height: 180 }}>
@@ -269,7 +269,7 @@ function UsageChart({ data, loading, error }: { data: DailyUsage[]; loading: boo
         <div className="flex rounded-lg overflow-hidden" style={{ border: '1px solid #1e1e1e' }}>
           <button
             onClick={() => setMode('requests')}
-            className={`px-3 py-1.5 text-xs font-medium transition-colors ${mode === 'requests' ? 'text-white' : 'text-[#8a8a8a] hover:text-[#f0f0f0]'}`}
+            className={`px-3 py-1.5 text-xs font-medium transition-colors ${mode === 'requests' ? 'text-white' : 'text-subtle hover:text-heading'}`}
             style={{
               fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
               background: mode === 'requests' ? 'linear-gradient(135deg, #ff6b2c, #ff8533)' : 'transparent',
@@ -279,7 +279,7 @@ function UsageChart({ data, loading, error }: { data: DailyUsage[]; loading: boo
           </button>
           <button
             onClick={() => setMode('tokens')}
-            className={`px-3 py-1.5 text-xs font-medium transition-colors ${mode === 'tokens' ? 'text-white' : 'text-[#8a8a8a] hover:text-[#f0f0f0]'}`}
+            className={`px-3 py-1.5 text-xs font-medium transition-colors ${mode === 'tokens' ? 'text-white' : 'text-subtle hover:text-heading'}`}
             style={{
               fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
               borderLeft: '1px solid #1e1e1e',
@@ -301,8 +301,8 @@ function PieChart({ data }: { data: { label: string; value: number; color: strin
   if (total === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-10 text-center">
-        <InboxIcon size={28} className="text-[#8a8a8a] mb-2" />
-        <p className="text-xs text-[#8a8a8a]">Sem dados para exibir</p>
+        <InboxIcon size={28} className="text-subtle mb-2" />
+        <p className="text-xs text-subtle">Sem dados para exibir</p>
       </div>
     )
   }
@@ -359,8 +359,8 @@ function AreaChart({ data }: { data: { date: string; value: number }[] }) {
   if (data.length === 0 || data.every(d => d.value === 0)) {
     return (
       <div className="flex flex-col items-center justify-center py-10 text-center">
-        <InboxIcon size={28} className="text-[#8a8a8a] mb-2" />
-        <p className="text-xs text-[#8a8a8a]">Sem dados para exibir</p>
+        <InboxIcon size={28} className="text-subtle mb-2" />
+        <p className="text-xs text-subtle">Sem dados para exibir</p>
       </div>
     )
   }
@@ -425,7 +425,7 @@ function getStatus(a: Assistant) {
   if (conn && !disc) return { dot: 'bg-emerald-500', label: 'Saudável', cls: 'bg-emerald-900/30 text-emerald-400' }
   if (conn && disc) return { dot: 'bg-yellow-400', label: 'Com alertas', cls: 'bg-yellow-900/30 text-yellow-400' }
   if (!conn && a.integrations?.length) return { dot: 'bg-red-500', label: 'Com erros', cls: 'bg-red-900/30 text-red-400' }
-  return { dot: 'bg-gray-400', label: 'Inativo', cls: 'bg-[#1e1e1e] text-[#8a8a8a]' }
+  return { dot: 'bg-gray-400', label: 'Inativo', cls: 'bg-[#1e1e1e] text-subtle' }
 }
 
 // ─── Chat test modal ──────────────────────────────────────────────────────────
@@ -478,18 +478,18 @@ function ChatTestModal({ assistant, onClose, onMessageSent }: { assistant: Assis
               {assistant.name.charAt(0).toUpperCase()}
             </div>
             <div>
-              <p className="font-semibold text-sm text-[#f0f0f0]">{assistant.name}</p>
-              <p className="text-xs text-[#8a8a8a]" style={{ fontFamily: "'JetBrains Mono', 'Fira Code', monospace" }}>{assistant.model}</p>
+              <p className="font-semibold text-sm text-heading">{assistant.name}</p>
+              <p className="text-xs text-subtle" style={{ fontFamily: "'JetBrains Mono', 'Fira Code', monospace" }}>{assistant.model}</p>
             </div>
           </div>
-          <button onClick={onClose} className="text-[#8a8a8a] hover:text-[#f0f0f0] w-8 h-8 flex items-center justify-center rounded-lg hover:bg-[#252525] transition-colors"><X size={16} /></button>
+          <button onClick={onClose} className="text-subtle hover:text-heading w-8 h-8 flex items-center justify-center rounded-lg hover:bg-dim-hover transition-colors"><X size={16} /></button>
         </div>
 
         <div className="flex-1 overflow-y-auto p-4 space-y-3">
           {messages.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-full text-center gap-2">
               <MessageSquare size={36} strokeWidth={1.5} className="text-[#5a5a5a]" />
-              <p className="text-[#8a8a8a] text-sm">Envie uma mensagem para testar <strong className="text-[#f0f0f0]">{assistant.name}</strong></p>
+              <p className="text-subtle text-sm">Envie uma mensagem para testar <strong className="text-heading">{assistant.name}</strong></p>
             </div>
           ) : messages.map((m, i) => (
             <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
@@ -516,7 +516,7 @@ function ChatTestModal({ assistant, onClose, onMessageSent }: { assistant: Assis
           {sending && (
             <div className="flex justify-start">
               <div
-                className="px-4 py-2.5 rounded-2xl rounded-bl-sm text-[#8a8a8a] text-sm animate-pulse"
+                className="px-4 py-2.5 rounded-2xl rounded-bl-sm text-subtle text-sm animate-pulse"
                 style={{ background: '#1a1a1a', border: '1px solid #1e1e1e' }}
               >
                 •••
@@ -532,7 +532,7 @@ function ChatTestModal({ assistant, onClose, onMessageSent }: { assistant: Assis
             onChange={e => setInput(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && !e.shiftKey && send()}
             placeholder="Digite uma mensagem..."
-            className="flex-1 rounded-xl px-4 py-2.5 text-sm text-[#f0f0f0] placeholder:text-[#5a5a5a] focus:outline-none transition-all"
+            className="flex-1 rounded-xl px-4 py-2.5 text-sm text-heading placeholder:text-[#5a5a5a] focus:outline-none transition-all"
             style={{
               background: '#222222',
               border: '1px solid #1e1e1e',
@@ -572,13 +572,13 @@ function AssistantPicker({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
       <div className="glass-card w-full max-w-xs p-4">
-        <p className="text-sm font-semibold text-[#f0f0f0] mb-3">Qual assistente testar?</p>
+        <p className="text-sm font-semibold text-heading mb-3">Qual assistente testar?</p>
         <div className="space-y-1 max-h-60 overflow-y-auto">
           {assistants.map(a => (
             <button
               key={a.id}
               onClick={() => { onSelect(a); onClose() }}
-              className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-[#252525] text-left transition-colors"
+              className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-dim-hover text-left transition-colors"
             >
               <div
                 className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0"
@@ -587,13 +587,13 @@ function AssistantPicker({
                 {a.name.charAt(0).toUpperCase()}
               </div>
               <div className="min-w-0">
-                <p className="text-sm font-medium text-[#f0f0f0] truncate">{a.name}</p>
-                <p className="text-xs text-[#8a8a8a]" style={{ fontFamily: "'JetBrains Mono', 'Fira Code', monospace" }}>{a.llmProvider} · {a.model}</p>
+                <p className="text-sm font-medium text-heading truncate">{a.name}</p>
+                <p className="text-xs text-subtle" style={{ fontFamily: "'JetBrains Mono', 'Fira Code', monospace" }}>{a.llmProvider} · {a.model}</p>
               </div>
             </button>
           ))}
         </div>
-        <Button variant="ghost" size="sm" onPress={onClose} className="mt-3 w-full border-none text-[#8a8a8a]">
+        <Button variant="ghost" size="sm" onPress={onClose} className="mt-3 w-full border-none text-subtle">
           Cancelar
         </Button>
       </div>
@@ -723,7 +723,7 @@ export default function DashboardPage() {
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block" />
             {activeAssistants} ativos
           </span>
-          {inactiveAssistants > 0 && <span className="text-[11px] text-[#8a8a8a]">· {inactiveAssistants} inativos</span>}
+          {inactiveAssistants > 0 && <span className="text-[11px] text-subtle">· {inactiveAssistants} inativos</span>}
           {hasAlert && <span title="Assistente precisa de atenção"><AlertTriangle size={12} className="text-yellow-500" /></span>}
         </div>
       ),
@@ -737,7 +737,7 @@ export default function DashboardPage() {
           </span>
           {errorIntegrations > 0
             ? <span className="text-[11px] text-red-400 font-medium">{errorIntegrations} com erro</span>
-            : activeIntegrations > 0 && <span className="text-[11px] text-[#8a8a8a]">Todas ok</span>}
+            : activeIntegrations > 0 && <span className="text-[11px] text-subtle">Todas ok</span>}
         </div>
       ),
     },
@@ -745,8 +745,8 @@ export default function DashboardPage() {
       title: 'Arquivos de Conhecimento', icon: FileText, value: totalFiles, subtitle: 'Documentos enviados',
       extra: (
         <div className="mt-2 space-y-0.5">
-          {totalSize > 0 && <p className="text-[11px] text-[#8a8a8a]" style={{ fontFamily: "'JetBrains Mono', 'Fira Code', monospace" }}>{formatBytes(totalSize)} total</p>}
-          {lastUpload && <p className="text-[11px] text-[#8a8a8a] truncate" title={lastUpload.name}>Último: {lastUpload.name}</p>}
+          {totalSize > 0 && <p className="text-[11px] text-subtle" style={{ fontFamily: "'JetBrains Mono', 'Fira Code', monospace" }}>{formatBytes(totalSize)} total</p>}
+          {lastUpload && <p className="text-[11px] text-subtle truncate" title={lastUpload.name}>Último: {lastUpload.name}</p>}
         </div>
       ),
     },
@@ -764,7 +764,7 @@ export default function DashboardPage() {
               {n}
             </span>
           ))}
-          {totalTools > 3 && <span className="text-[10px] text-[#8a8a8a]">+{totalTools - 3}</span>}
+          {totalTools > 3 && <span className="text-[10px] text-subtle">+{totalTools - 3}</span>}
         </div>
       ),
     },
@@ -805,7 +805,7 @@ export default function DashboardPage() {
             >
               Visão Geral
             </h2>
-            <p className="text-[#8a8a8a]">Veja o que está acontecendo com seus projetos hoje.</p>
+            <p className="text-subtle">Veja o que está acontecendo com seus projetos hoje.</p>
           </div>
         </StaggerItem>
 
@@ -813,17 +813,17 @@ export default function DashboardPage() {
         <StaggerItem>
           <div className="flex flex-wrap gap-2">
             <Link href="/dashboard/assistants">
-              <button className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-medium transition-all text-[#8a8a8a] hover:text-[#f0f0f0]" style={{ background: 'transparent', border: '1px solid #1e1e1e' }}>
+              <button className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-medium transition-all text-subtle hover:text-heading" style={{ background: 'transparent', border: '1px solid #1e1e1e' }}>
                 <Bot size={14} /> Criar Assistente
               </button>
             </Link>
             <Link href="/dashboard/assistants">
-              <button className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-medium transition-all text-[#8a8a8a] hover:text-[#f0f0f0]" style={{ background: 'transparent', border: '1px solid #1e1e1e' }}>
+              <button className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-medium transition-all text-subtle hover:text-heading" style={{ background: 'transparent', border: '1px solid #1e1e1e' }}>
                 <FileText size={14} /> Adicionar Arquivo
               </button>
             </Link>
             <button
-              className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-medium transition-all text-[#8a8a8a] hover:text-[#f0f0f0] disabled:opacity-40"
+              className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-medium transition-all text-subtle hover:text-heading disabled:opacity-40"
               style={{ background: 'transparent', border: '1px solid #1e1e1e' }}
               onClick={handleQuickTest}
               disabled={assistants.length === 0}
@@ -831,7 +831,7 @@ export default function DashboardPage() {
               <MessageSquare size={14} /> Testar Assistente
             </button>
             <Link href="/dashboard/assistants">
-              <button className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-medium transition-all text-[#8a8a8a] hover:text-[#f0f0f0]" style={{ background: 'transparent', border: '1px solid #1e1e1e' }}>
+              <button className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-medium transition-all text-subtle hover:text-heading" style={{ background: 'transparent', border: '1px solid #1e1e1e' }}>
                 <BarChart3 size={14} /> Ver Logs
               </button>
             </Link>
@@ -850,7 +850,7 @@ export default function DashboardPage() {
                   className={`glass-card p-4 relative overflow-hidden ${isFirst ? 'glow-orange' : ''}`}
                 >
                   <div className="flex flex-row items-center justify-between pb-1">
-                    <p className="text-sm font-medium text-[#8a8a8a]">{stat.title}</p>
+                    <p className="text-sm font-medium text-subtle">{stat.title}</p>
                     <div
                       className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0"
                       style={{ background: iconStyle.bg }}
@@ -861,7 +861,7 @@ export default function DashboardPage() {
                   <div className="text-xl font-bold text-heading">
                     {isLoading ? '...' : stat.value}
                   </div>
-                  <p className="text-xs text-[#8a8a8a]">{stat.subtitle}</p>
+                  <p className="text-xs text-subtle">{stat.subtitle}</p>
                   {!isLoading && stat.extra}
                 </div>
               )
@@ -873,8 +873,8 @@ export default function DashboardPage() {
         <StaggerItem>
           <div className="glass-card p-6">
             <div className="mb-4">
-              <h3 className="font-semibold text-base text-[#f0f0f0]">Uso ao Longo do Tempo</h3>
-              <p className="text-sm text-[#8a8a8a]" style={{ fontFamily: "'JetBrains Mono', 'Fira Code', monospace" }}>Requisições e tokens por dia — últimos 14 dias</p>
+              <h3 className="font-semibold text-base text-heading">Uso ao Longo do Tempo</h3>
+              <p className="text-sm text-subtle" style={{ fontFamily: "'JetBrains Mono', 'Fira Code', monospace" }}>Requisições e tokens por dia — últimos 14 dias</p>
             </div>
             <UsageChart data={usageData} loading={statsLoading} error={statsError} />
           </div>
@@ -885,8 +885,8 @@ export default function DashboardPage() {
           <div className="grid gap-6 grid-cols-1 lg:grid-cols-2">
             <div className="glass-card p-6">
               <div className="mb-4">
-                <h3 className="font-semibold text-base text-[#f0f0f0]">Distribuição por Assistente</h3>
-                <p className="text-sm text-[#8a8a8a]" style={{ fontFamily: "'JetBrains Mono', 'Fira Code', monospace" }}>Tokens usados nos últimos 7 dias</p>
+                <h3 className="font-semibold text-base text-heading">Distribuição por Assistente</h3>
+                <p className="text-sm text-subtle" style={{ fontFamily: "'JetBrains Mono', 'Fira Code', monospace" }}>Tokens usados nos últimos 7 dias</p>
               </div>
               <div className="flex items-center justify-center">
                 <PieChart
@@ -904,8 +904,8 @@ export default function DashboardPage() {
 
             <div className="glass-card p-6">
               <div className="mb-4">
-                <h3 className="font-semibold text-base text-[#f0f0f0]">Tendência de Tokens</h3>
-                <p className="text-sm text-[#8a8a8a]" style={{ fontFamily: "'JetBrains Mono', 'Fira Code', monospace" }}>Uso diário de tokens — últimos 14 dias</p>
+                <h3 className="font-semibold text-base text-heading">Tendência de Tokens</h3>
+                <p className="text-sm text-subtle" style={{ fontFamily: "'JetBrains Mono', 'Fira Code', monospace" }}>Uso diário de tokens — últimos 14 dias</p>
               </div>
               <AreaChart data={usageData.map(d => ({ date: d.date, value: d.tokens }))} />
             </div>
@@ -920,32 +920,24 @@ export default function DashboardPage() {
               <div className="px-6 pt-5 pb-3 shrink-0">
                 <div className="flex items-center justify-between w-full">
                   <div>
-                    <h3 className="font-semibold text-base text-[#f0f0f0]">Seus Assistentes</h3>
-                    <p className="text-sm text-[#8a8a8a]">Status e métricas de cada assistente</p>
+                    <h3 className="font-semibold text-base text-heading">Seus Assistentes</h3>
+                    <p className="text-sm text-subtle">Status e métricas de cada assistente</p>
                   </div>
                   <Link href="/dashboard/assistants">
-                    <button className="text-[#8a8a8a] text-xs hover:text-[#ff6b2c] transition-colors">Ver todos →</button>
+                    <button className="text-subtle text-xs hover:text-[#ff6b2c] transition-colors">Ver todos →</button>
                   </Link>
                 </div>
               </div>
               <div className="p-4 overflow-y-auto" style={{ maxHeight: '520px' }}>
                 {isLoading ? (
-                  <p className="text-sm text-[#8a8a8a] p-2">Carregando...</p>
+                  <p className="text-sm text-subtle p-2">Carregando...</p>
                 ) : assistants.length === 0 ? (
                   <div className="flex flex-col items-center justify-center py-10 text-center">
-                    {/* Cat mascot silhouette for empty state */}
-                    <div className="mb-4 opacity-30">
-                      <svg viewBox="0 0 120 120" width={72} height={72} fill="none">
-                        <path d="M18 72C18 44 34 24 60 24C86 24 102 44 102 72C102 92 88 108 60 108C32 108 18 92 18 72Z" fill="#ff6b2c" opacity="0.3" />
-                        <path d="M26 52L16 18L46 38Z" fill="#ff6b2c" opacity="0.2" />
-                        <path d="M94 52L104 18L74 38Z" fill="#ff6b2c" opacity="0.2" />
-                        <ellipse cx="44" cy="68" rx="9" ry="7" fill="#ff6b2c" opacity="0.15" />
-                        <ellipse cx="76" cy="68" rx="9" ry="7" fill="#ff6b2c" opacity="0.15" />
-                        <path d="M56 84L60 80L64 84L60 88Z" fill="#ff6b2c" opacity="0.15" />
-                      </svg>
+                    <div className="w-14 h-14 rounded-xl bg-raised flex items-center justify-center mb-4">
+                      <Bot size={24} className="text-subtle" />
                     </div>
-                    <h3 className="text-sm font-semibold text-[#f0f0f0] mb-1">Crie seu primeiro assistente</h3>
-                    <p className="text-xs text-[#8a8a8a] mb-4 max-w-xs">Configure um assistente de IA para atendimento ao cliente via WhatsApp ou Telegram.</p>
+                    <h3 className="text-sm font-semibold text-heading mb-1">Crie seu primeiro assistente</h3>
+                    <p className="text-xs text-subtle mb-4 max-w-xs">Configure um assistente de IA para atendimento ao cliente via WhatsApp ou Telegram.</p>
                     <Link href="/dashboard/assistants">
                       <button className="btn-neu text-sm">Criar Assistente</button>
                     </Link>
@@ -984,24 +976,24 @@ export default function DashboardPage() {
 
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center gap-2 flex-wrap">
-                                <p className="text-sm font-semibold text-[#f0f0f0]">{assistant.name}</p>
+                                <p className="text-sm font-semibold text-heading">{assistant.name}</p>
                                 <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold uppercase flex items-center gap-1 ${status.cls}`}>
                                   <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${status.dot}`} />
                                   {status.label}
                                 </span>
                               </div>
-                              <p className="text-xs text-[#8a8a8a] mt-0.5 truncate" style={{ fontFamily: "'JetBrains Mono', 'Fira Code', monospace" }}>
+                              <p className="text-xs text-subtle mt-0.5 truncate" style={{ fontFamily: "'JetBrains Mono', 'Fira Code', monospace" }}>
                                 {assistant.llmProvider} · {assistant.model}
                               </p>
                               <div className="flex items-center gap-3 mt-1 flex-wrap">
-                                <span className="text-[11px] text-[#8a8a8a] flex items-center gap-1" style={{ fontFamily: "'JetBrains Mono', 'Fira Code', monospace" }}>
-                                  <MessageSquare size={10} /> <span className="text-[#f0f0f0] font-medium">{msgs}</span> conv (7d)
+                                <span className="text-[11px] text-subtle flex items-center gap-1" style={{ fontFamily: "'JetBrains Mono', 'Fira Code', monospace" }}>
+                                  <MessageSquare size={10} /> <span className="text-heading font-medium">{msgs}</span> conv (7d)
                                 </span>
-                                <span className="text-[11px] text-[#8a8a8a] flex items-center gap-1" style={{ fontFamily: "'JetBrains Mono', 'Fira Code', monospace" }}>
+                                <span className="text-[11px] text-subtle flex items-center gap-1" style={{ fontFamily: "'JetBrains Mono', 'Fira Code', monospace" }}>
                                   <Hash size={10} /> {tokensStr} · {cost}
                                 </span>
                                 {lastAt && (
-                                  <span className="text-[11px] text-[#8a8a8a] flex items-center gap-1" style={{ fontFamily: "'JetBrains Mono', 'Fira Code', monospace" }}>
+                                  <span className="text-[11px] text-subtle flex items-center gap-1" style={{ fontFamily: "'JetBrains Mono', 'Fira Code', monospace" }}>
                                     <Clock size={10} /> {relativeTime(lastAt)}
                                   </span>
                                 )}
@@ -1017,14 +1009,14 @@ export default function DashboardPage() {
 
                           <div className="flex items-center gap-1.5 pl-12">
                             <button
-                              className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium transition-all text-[#8a8a8a] hover:text-[#ff6b2c]"
+                              className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium transition-all text-subtle hover:text-[#ff6b2c]"
                               style={{ background: '#1a1a1a', border: '1px solid #1e1e1e' }}
                               onClick={() => setTestingAssistant(assistant)}
                             >
                               <MessageSquare size={12} />Testar
                             </button>
                             <Link href={`/dashboard/assistants/${assistant.id}`}>
-                              <button className="px-3 py-1.5 rounded-lg text-xs text-[#8a8a8a] hover:text-[#f0f0f0] transition-colors">
+                              <button className="px-3 py-1.5 rounded-lg text-xs text-subtle hover:text-heading transition-colors">
                                 Ver Logs
                               </button>
                             </Link>
@@ -1042,10 +1034,10 @@ export default function DashboardPage() {
               <div className="px-6 pt-5 pb-3 shrink-0">
                 <div className="flex items-center justify-between w-full">
                   <div>
-                    <h3 className="font-semibold text-base text-[#f0f0f0]">Atividade Recente</h3>
-                    <p className="text-sm text-[#8a8a8a]">Últimas interações e eventos</p>
+                    <h3 className="font-semibold text-base text-heading">Atividade Recente</h3>
+                    <p className="text-sm text-subtle">Últimas interações e eventos</p>
                   </div>
-                  {statsLoading && <span className="text-xs text-[#8a8a8a] animate-pulse">Carregando...</span>}
+                  {statsLoading && <span className="text-xs text-subtle animate-pulse">Carregando...</span>}
                 </div>
               </div>
               <div className="p-4 overflow-y-auto" style={{ maxHeight: '520px' }}>
@@ -1054,7 +1046,7 @@ export default function DashboardPage() {
                     <div className="mb-3 opacity-30">
                       <InboxIcon size={36} strokeWidth={1.5} className="text-[#ff6b2c]" />
                     </div>
-                    <p className="text-sm text-[#8a8a8a]">Nenhuma atividade registrada ainda.</p>
+                    <p className="text-sm text-subtle">Nenhuma atividade registrada ainda.</p>
                     <p className="text-xs text-[#5a5a5a] mt-1">As conversas aparecerão aqui automaticamente.</p>
                   </div>
                 ) : (
@@ -1071,12 +1063,12 @@ export default function DashboardPage() {
                             {icon}
                           </div>
                           <div className="flex-1 min-w-0">
-                            <p className="text-sm text-[#f0f0f0] leading-snug">{event.description}</p>
+                            <p className="text-sm text-heading leading-snug">{event.description}</p>
                             {event.assistant_name && (
-                              <p className="text-[11px] text-[#8a8a8a] mt-0.5" style={{ fontFamily: "'JetBrains Mono', 'Fira Code', monospace" }}>{event.assistant_name}</p>
+                              <p className="text-[11px] text-subtle mt-0.5" style={{ fontFamily: "'JetBrains Mono', 'Fira Code', monospace" }}>{event.assistant_name}</p>
                             )}
                           </div>
-                          <span className="text-[11px] text-[#8a8a8a] shrink-0 mt-0.5" style={{ fontFamily: "'JetBrains Mono', 'Fira Code', monospace" }}>{relativeTime(event.timestamp)}</span>
+                          <span className="text-[11px] text-subtle shrink-0 mt-0.5" style={{ fontFamily: "'JetBrains Mono', 'Fira Code', monospace" }}>{relativeTime(event.timestamp)}</span>
                         </div>
                       )
                     })}

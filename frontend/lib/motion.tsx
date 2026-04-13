@@ -1,41 +1,19 @@
 'use client'
 
-import { motion, AnimatePresence } from 'framer-motion'
+import React, { Children, cloneElement, isValidElement } from 'react'
 
-// Stagger container
-export const stagger = {
-  hidden: { opacity: 0 },
-  show: {
-    opacity: 1,
-    transition: { staggerChildren: 0.06 },
-  },
-}
-
-// Fade up child variant
-export const fadeUp = {
-  hidden: { opacity: 0, y: 12 },
-  show: {
-    opacity: 1,
-    y: 0,
-    transition: { duration: 0.4, ease: [0.4, 0, 0.2, 1] as [number, number, number, number] },
-  },
-}
-
-// Page transition wrapper
+// Page transition wrapper — pure CSS animation (no framer-motion)
 export function PageTransition({ children, className }: { children: React.ReactNode; className?: string }) {
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 8 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.3, ease: [0.4, 0, 0.2, 1] }}
-      className={className}
+    <div
+      className={`animate-page-in ${className ?? ''}`}
     >
       {children}
-    </motion.div>
+    </div>
   )
 }
 
-// Staggered list container
+// Staggered list container — applies incremental animation-delay to each child
 export function StaggerContainer({
   children,
   className,
@@ -47,35 +25,31 @@ export function StaggerContainer({
   delay?: number
   style?: React.CSSProperties
 }) {
+  const items = Children.toArray(children)
   return (
-    <motion.div
-      variants={{
-        hidden: { opacity: 0 },
-        show: {
-          opacity: 1,
-          transition: { staggerChildren: 0.06, delayChildren: delay },
-        },
-      }}
-      initial="hidden"
-      animate="show"
-      className={className}
-      style={style}
-    >
-      {children}
-    </motion.div>
+    <div className={className} style={style}>
+      {items.map((child, i) => {
+        if (!isValidElement(child)) return child
+        const existing = (child.props as { style?: React.CSSProperties }).style ?? {}
+        return cloneElement(child as React.ReactElement<{ style?: React.CSSProperties }>, {
+          style: {
+            ...existing,
+            '--stagger-delay': `${delay + i * 0.06}s`,
+          } as React.CSSProperties,
+        })
+      })}
+    </div>
   )
 }
 
-// Individual stagger item
+// Individual stagger item — uses parent-injected --stagger-delay
 export function StaggerItem({ children, className }: { children: React.ReactNode; className?: string }) {
   return (
-    <motion.div
-      variants={fadeUp}
-      className={className}
+    <div
+      className={`animate-stagger-item opacity-0 ${className ?? ''}`}
+      style={{ animationDelay: 'var(--stagger-delay, 0s)' } as React.CSSProperties}
     >
       {children}
-    </motion.div>
+    </div>
   )
 }
-
-export { motion, AnimatePresence }

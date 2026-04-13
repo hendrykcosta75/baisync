@@ -314,9 +314,9 @@ export const AvailabilityConfigPanel = forwardRef<AvailabilityConfigRef, Props>(
             onChange={(e) => setNewBlockedDate(e.target.value)}
             className="bg-raised rounded px-2 py-1 text-xs text-foreground flex-1"
           />
-          <Button size="sm" variant="secondary" onPress={addBlockedDate} isDisabled={!newBlockedDate}>
+          <button type="button" className="btn-neu px-2 py-1" onClick={addBlockedDate} disabled={!newBlockedDate}>
             <Plus size={12} />
-          </Button>
+          </button>
         </div>
         {blockedDates.length > 0 && (
           <div className="flex flex-wrap gap-1.5 mt-1">

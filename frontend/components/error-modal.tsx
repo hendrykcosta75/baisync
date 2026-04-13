@@ -20,9 +20,9 @@ export function ErrorModal() {
             </div>
             <p className="text-sm text-body">{message}</p>
             <div className="flex justify-end pt-2">
-              <Button size="sm" variant="danger-soft" onPress={close}>
+              <button type="button" className="btn-neu text-sm !text-red-400 hover:!text-red-300" onClick={close}>
                 Fechar
-              </Button>
+              </button>
             </div>
           </Modal.Dialog>
         </Modal.Container>

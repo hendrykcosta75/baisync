@@ -111,7 +111,7 @@ export function LandingFooter() {
 
   return (
     <footer className="mx-6 lg:mx-12 mb-8">
-      <div className="bg-[#0a0a0a] rounded-3xl border border-[#1a1a1a] overflow-hidden min-h-[400px] flex flex-col">
+      <div className="bg-app rounded-3xl border border-dim overflow-hidden min-h-[400px] flex flex-col">
         {/* Top section */}
         <div className="flex-1 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-10 lg:gap-8 px-8 lg:px-12 pt-12 pb-10">
           {/* Brand column — spans 2 on desktop */}
@@ -133,7 +133,7 @@ export function LandingFooter() {
                   key={social.label}
                   href={social.href}
                   aria-label={social.label}
-                  className="text-[#666] hover:text-[#FF6B00] transition-colors duration-200"
+                  className="text-[#666] hover:text-[#ff6b2c] transition-colors duration-200"
                 >
                   {social.icon}
                 </a>
@@ -148,15 +148,15 @@ export function LandingFooter() {
         </div>
 
         {/* Bottom bar */}
-        <div className="border-t border-[#1a1a1a] py-6 px-8 flex flex-col sm:flex-row justify-between items-center gap-4">
+        <div className="border-t border-dim py-6 px-8 flex flex-col sm:flex-row justify-between items-center gap-4">
           <span className="text-[#555] text-xs">
             &copy; 2026 Baisync. Todos os direitos reservados.
           </span>
           <span className="flex items-center gap-2 text-xs text-[#555]">
             Feito com IA
             <span className="relative flex h-2 w-2">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#FF6B00] opacity-75" />
-              <span className="relative inline-flex rounded-full h-2 w-2 bg-[#FF6B00]" />
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#ff6b2c] opacity-75" />
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-[#ff6b2c]" />
             </span>
           </span>
         </div>

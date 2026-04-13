@@ -387,7 +387,7 @@ export default async function BlogPostPage({ params }: { params: Promise<{ slug:
         {/* Back link */}
         <Link
           href="/blog"
-          className="inline-flex items-center gap-2 text-xs text-[#666] hover:text-[#FF6B00] transition-colors duration-200 mb-10"
+          className="inline-flex items-center gap-2 text-xs text-[#666] hover:text-[#ff6b2c] transition-colors duration-200 mb-10"
           style={{ fontFamily: mono }}
         >
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -405,7 +405,7 @@ export default async function BlogPostPage({ params }: { params: Promise<{ slug:
               style={{
                 fontFamily: mono,
                 background: 'rgba(255,107,0,0.08)',
-                color: '#FF6B00',
+                color: '#ff6b2c',
                 border: '1px solid rgba(255,107,0,0.15)',
               }}
             >
@@ -435,10 +435,10 @@ export default async function BlogPostPage({ params }: { params: Promise<{ slug:
           </p>
 
           {/* Author */}
-          <div className="flex items-center gap-3 pb-8 border-b border-[#1a1a1a]">
+          <div className="flex items-center gap-3 pb-8 border-b border-dim">
             <div
               className="w-9 h-9 rounded-full flex items-center justify-center text-xs font-bold text-white"
-              style={{ background: 'linear-gradient(135deg, #FF6B00, #ff8533)' }}
+              style={{ background: 'linear-gradient(135deg, #ff6b2c, #ff8533)' }}
             >
               {article.author.initials}
             </div>
@@ -481,7 +481,7 @@ export default async function BlogPostPage({ params }: { params: Promise<{ slug:
                   {section.list.map((item, k) => (
                     <li key={k} className="flex items-start gap-3 text-sm text-[#999]" style={{ fontFamily: mono }}>
                       <svg width="14" height="14" viewBox="0 0 16 16" fill="none" className="shrink-0 mt-1">
-                        <path d="M3.5 8.5L6.5 11.5L12.5 4.5" stroke="#FF6B00" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                        <path d="M3.5 8.5L6.5 11.5L12.5 4.5" stroke="#ff6b2c" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
                       </svg>
                       {item}
                     </li>
@@ -491,7 +491,7 @@ export default async function BlogPostPage({ params }: { params: Promise<{ slug:
 
               {section.highlight && (
                 <div
-                  className="my-6 p-5 rounded-xl border border-[#FF6B00]/20 bg-[#FF6B00]/5"
+                  className="my-6 p-5 rounded-xl border border-[#ff6b2c]/20 bg-[#ff6b2c]/5"
                 >
                   <p className="text-sm leading-[1.85] text-[#ccc] font-medium" style={{ fontFamily: mono }}>
                     {section.highlight}
@@ -504,7 +504,7 @@ export default async function BlogPostPage({ params }: { params: Promise<{ slug:
 
         {/* CTA */}
         <div
-          className="mt-12 p-8 rounded-2xl border border-[#1a1a1a] bg-[#0a0a0a] text-center"
+          className="mt-12 p-8 rounded-2xl border border-dim bg-app text-center"
           style={{ animation: 'fadeSlideUp 0.6s ease 0.2s both' }}
         >
           <h3 className="text-lg font-bold text-white mb-3" style={{ fontFamily: mono }}>
@@ -521,7 +521,7 @@ export default async function BlogPostPage({ params }: { params: Promise<{ slug:
               fontSize: 12,
               fontWeight: 700,
               color: '#000',
-              background: '#FF6B00',
+              background: '#ff6b2c',
               padding: '12px 28px',
               borderRadius: 8,
               textDecoration: 'none',
@@ -535,21 +535,21 @@ export default async function BlogPostPage({ params }: { params: Promise<{ slug:
 
         {/* Related */}
         {related.length > 0 && (
-          <div className="mt-16 pt-12 border-t border-[#1a1a1a]">
+          <div className="mt-16 pt-12 border-t border-dim">
             <h3 className="text-base font-bold text-white mb-6" style={{ fontFamily: mono }}>
               Artigos relacionados
             </h3>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
               {related.map((r) => (
                 <Link key={r.slug} href={`/blog/${r.slug}`}>
-                  <div className="group rounded-xl border border-[#1a1a1a] bg-[#0a0a0a] p-5 transition-all duration-300 hover:-translate-y-1 hover:border-[#FF6B00]/30">
+                  <div className="group rounded-xl border border-dim bg-app p-5 transition-all duration-300 hover:-translate-y-1 hover:border-[#ff6b2c]/30">
                     <span
-                      className="text-[10px] font-semibold uppercase tracking-wider text-[#FF6B00] mb-2 block"
+                      className="text-[10px] font-semibold uppercase tracking-wider text-[#ff6b2c] mb-2 block"
                       style={{ fontFamily: mono }}
                     >
                       {r.category}
                     </span>
-                    <h4 className="text-sm font-bold text-white group-hover:text-[#FF6B00] transition-colors mb-2" style={{ fontFamily: mono }}>
+                    <h4 className="text-sm font-bold text-white group-hover:text-[#ff6b2c] transition-colors mb-2" style={{ fontFamily: mono }}>
                       {r.title}
                     </h4>
                     <p className="text-xs text-[#555]" style={{ fontFamily: mono }}>

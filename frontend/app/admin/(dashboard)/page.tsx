@@ -11,7 +11,7 @@ import {
 
 const mono = "'JetBrains Mono', 'Fira Code', monospace"
 
-const COLORS = ['#FF6B00', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899']
+const COLORS = ['#ff6b2c', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899']
 
 function StatCard({ icon: Icon, label, value, sub, color }: {
   icon: React.ElementType
@@ -22,15 +22,15 @@ function StatCard({ icon: Icon, label, value, sub, color }: {
 }) {
   return (
     <div
-      className="rounded-2xl border border-[#1a1a1a] p-5 flex flex-col gap-3"
+      className="rounded-2xl border border-dim p-5 flex flex-col gap-3"
       style={{ background: '#0a0a0a' }}
     >
       <div className="flex items-center gap-3">
         <div
           className="w-9 h-9 rounded-xl flex items-center justify-center"
-          style={{ background: `${color || '#FF6B00'}15` }}
+          style={{ background: `${color || '#ff6b2c'}15` }}
         >
-          <Icon size={18} style={{ color: color || '#FF6B00' }} />
+          <Icon size={18} style={{ color: color || '#ff6b2c' }} />
         </div>
         <span style={{ fontFamily: mono, fontSize: 11, color: '#888', letterSpacing: 1, textTransform: 'uppercase' }}>
           {label}
@@ -52,7 +52,7 @@ function StatCard({ icon: Icon, label, value, sub, color }: {
 
 function ChartCard({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div className="rounded-2xl border border-[#1a1a1a] p-5" style={{ background: '#0a0a0a' }}>
+    <div className="rounded-2xl border border-dim p-5" style={{ background: '#0a0a0a' }}>
       <h3 style={{ fontFamily: mono, fontSize: 12, fontWeight: 600, color: '#888', letterSpacing: 1, textTransform: 'uppercase', marginBottom: 16 }}>
         {title}
       </h3>
@@ -83,7 +83,7 @@ function formatDate(date: string) {
 function CustomTooltip({ active, payload, label }: any) {
   if (!active || !payload?.length) return null
   return (
-    <div className="rounded-xl border border-[#1a1a1a] p-3" style={{ background: '#111', fontFamily: mono }}>
+    <div className="rounded-xl border border-dim p-3" style={{ background: '#111', fontFamily: mono }}>
       <p style={{ fontSize: 11, color: '#888', marginBottom: 4 }}>{label}</p>
       {payload.map((p: { name: string; value: number; color: string }, i: number) => (
         <p key={i} style={{ fontSize: 12, color: p.color, fontWeight: 600 }}>
@@ -199,7 +199,7 @@ export default function AdminDashboardPage() {
                 <XAxis dataKey="label" tick={{ fill: '#555', fontSize: 11, fontFamily: mono }} axisLine={false} tickLine={false} />
                 <YAxis tick={{ fill: '#555', fontSize: 11, fontFamily: mono }} axisLine={false} tickLine={false} allowDecimals={false} />
                 <Tooltip content={<CustomTooltip />} />
-                <Bar dataKey="count" name="Usuarios" fill="#FF6B00" radius={[6, 6, 0, 0]} />
+                <Bar dataKey="count" name="Usuarios" fill="#ff6b2c" radius={[6, 6, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           ) : (
@@ -329,7 +329,7 @@ export default function AdminDashboardPage() {
               {stats?.recent_users.map((u) => (
                 <Link key={u.id} href={`/admin/users/${u.id}`} className="flex items-center justify-between group">
                   <div className="min-w-0">
-                    <p style={{ fontFamily: mono, fontSize: 13, color: '#fff', fontWeight: 500 }} className="truncate group-hover:text-[#FF6B00] transition-colors">
+                    <p style={{ fontFamily: mono, fontSize: 13, color: '#fff', fontWeight: 500 }} className="truncate group-hover:text-[#ff6b2c] transition-colors">
                       {u.name}
                     </p>
                     <p style={{ fontFamily: mono, fontSize: 11, color: '#555' }} className="truncate">
@@ -341,7 +341,7 @@ export default function AdminDashboardPage() {
                   </span>
                 </Link>
               ))}
-              <Link href="/admin/users" className="flex items-center gap-1 mt-1 text-[#FF6B00] hover:underline" style={{ fontFamily: mono, fontSize: 12 }}>
+              <Link href="/admin/users" className="flex items-center gap-1 mt-1 text-[#ff6b2c] hover:underline" style={{ fontFamily: mono, fontSize: 12 }}>
                 Ver todos <ArrowRight size={12} />
               </Link>
             </div>
@@ -354,9 +354,9 @@ export default function AdminDashboardPage() {
       </div>
 
       {/* Platform Summary */}
-      <div className="rounded-2xl border border-[#1a1a1a] p-5" style={{ background: '#0a0a0a' }}>
+      <div className="rounded-2xl border border-dim p-5" style={{ background: '#0a0a0a' }}>
         <div className="flex items-center gap-2 mb-4">
-          <TrendingUp size={16} className="text-[#FF6B00]" />
+          <TrendingUp size={16} className="text-[#ff6b2c]" />
           <h3 style={{ fontFamily: mono, fontSize: 12, fontWeight: 600, color: '#888', letterSpacing: 1, textTransform: 'uppercase' }}>
             Resumo da Plataforma
           </h3>

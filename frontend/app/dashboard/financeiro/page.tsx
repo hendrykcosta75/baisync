@@ -247,7 +247,7 @@ export default function FinanceiroPage() {
                     >
                       <button
                         onClick={() => { setSelectedAssistant('all'); setDropdownOpen(false) }}
-                        className={`w-full text-left px-4 py-2.5 text-sm transition hover:bg-[#111] ${selectedAssistant === 'all' ? 'text-[#ff6b2c] font-semibold' : ''}`}
+                        className={`w-full text-left px-4 py-2.5 text-sm transition hover:bg-surface ${selectedAssistant === 'all' ? 'text-[#ff6b2c] font-semibold' : ''}`}
                         style={{ fontFamily: monoFont, color: selectedAssistant === 'all' ? undefined : '#f0f0f0' }}
                       >
                         Todos os Assistentes
@@ -256,7 +256,7 @@ export default function FinanceiroPage() {
                         <button
                           key={a.id}
                           onClick={() => { setSelectedAssistant(a.id); setDropdownOpen(false) }}
-                          className={`w-full text-left px-4 py-2.5 text-sm transition hover:bg-[#111] truncate ${selectedAssistant === a.id ? 'text-[#ff6b2c] font-semibold' : ''}`}
+                          className={`w-full text-left px-4 py-2.5 text-sm transition hover:bg-surface truncate ${selectedAssistant === a.id ? 'text-[#ff6b2c] font-semibold' : ''}`}
                           style={{ fontFamily: monoFont, color: selectedAssistant === a.id ? undefined : '#f0f0f0' }}
                         >
                           {a.name}
@@ -391,7 +391,7 @@ export default function FinanceiroPage() {
                           className={`px-2.5 py-1 rounded text-xs font-medium transition cursor-pointer ${
                             statusFilter === opt.value
                               ? 'bg-[#ff6b2c]/20 text-[#ff6b2c]'
-                              : 'text-[#8a8a8a] hover:text-[#f0f0f0]'
+                              : 'text-subtle hover:text-heading'
                           }`}
                           style={{
                             fontFamily: monoFont,
@@ -485,7 +485,7 @@ export default function FinanceiroPage() {
                                     ? 'text-blue-400 bg-blue-500/10'
                                     : charge.pixMode === 'stripe'
                                     ? 'text-indigo-400 bg-indigo-500/10'
-                                    : 'text-[#8a8a8a]'
+                                    : 'text-subtle'
                                 }`} style={{ fontFamily: monoFont, background: charge.paymentType !== 'card' && charge.pixMode !== 'mercadopago' && charge.pixMode !== 'stripe' ? 'rgba(255,107,44,0.03)' : undefined }}>
                                   {charge.paymentType === 'card'
                                     ? (charge.pixMode === 'stripe' ? 'Cartao Stripe' : 'Cartao MP')
@@ -595,18 +595,17 @@ export default function FinanceiroPage() {
                   )}
                 </Modal.Body>
                 <Modal.Footer className="flex justify-end gap-2 pt-4 pb-5 px-6">
-                  <Button variant="ghost" size="sm" onPress={() => setConfirmCharge(null)} isDisabled={confirming}>
+                  <button type="button" className="btn-neu-ghost text-sm" onClick={() => setConfirmCharge(null)} disabled={confirming}>
                     Cancelar
-                  </Button>
-                  <Button
-                    variant="primary"
-                    size="sm"
-                    className="bg-emerald-600 hover:bg-emerald-700 border-emerald-600 hover:border-emerald-700"
-                    onPress={approveCharge}
-                    isDisabled={confirming}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-neu text-sm !text-emerald-400 hover:!text-emerald-300"
+                    onClick={approveCharge}
+                    disabled={confirming}
                   >
                     {confirming ? 'Confirmando...' : 'Sim, pagamento recebido'}
-                  </Button>
+                  </button>
                 </Modal.Footer>
               </Modal.Dialog>
             </Modal.Container>
@@ -653,18 +652,17 @@ export default function FinanceiroPage() {
                   )}
                 </Modal.Body>
                 <Modal.Footer className="flex justify-end gap-2 pt-4 pb-5 px-6">
-                  <Button variant="ghost" size="sm" onPress={() => setCancelTarget(null)} isDisabled={cancelling}>
+                  <button type="button" className="btn-neu-ghost text-sm" onClick={() => setCancelTarget(null)} disabled={cancelling}>
                     Voltar
-                  </Button>
-                  <Button
-                    variant="primary"
-                    size="sm"
-                    className="bg-red-600 hover:bg-red-700 border-red-600 hover:border-red-700"
-                    onPress={confirmCancelCharge}
-                    isDisabled={cancelling}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-neu text-sm !text-red-400 hover:!text-red-300"
+                    onClick={confirmCancelCharge}
+                    disabled={cancelling}
                   >
                     {cancelling ? 'Cancelando...' : 'Sim, cancelar cobranca'}
-                  </Button>
+                  </button>
                 </Modal.Footer>
               </Modal.Dialog>
             </Modal.Container>

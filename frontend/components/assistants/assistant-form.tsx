@@ -264,11 +264,11 @@ export function AssistantForm({ initialData, onSubmit, onCancel, assistantId, sh
                       />
                     </Modal.Body>
                     <div className="flex justify-end gap-2 px-6 pb-6">
-                      <Button variant="secondary" onPress={() => setIsPromptModalOpen(false)}>Cancelar</Button>
-                      <Button variant="primary" onPress={() => {
+                      <button type="button" className="btn-neu-ghost text-sm" onClick={() => setIsPromptModalOpen(false)}>Cancelar</button>
+                      <button type="button" className="btn-neu text-sm" onClick={() => {
                         field.onChange(modalPrompt)
                         setIsPromptModalOpen(false)
-                      }}>Aplicar</Button>
+                      }}>Aplicar</button>
                     </div>
                   </Modal.Dialog>
                 </Modal.Container>
@@ -279,8 +279,8 @@ export function AssistantForm({ initialData, onSubmit, onCancel, assistantId, sh
       />
 
       <div className="flex justify-end gap-2 mt-4 pt-4 border-t border-dim w-full">
-        <Button variant="secondary" onPress={onCancel}>Cancelar</Button>
-        <Button variant="primary" type="submit">Salvar Assistente</Button>
+        <button type="button" className="btn-neu-ghost text-sm" onClick={onCancel}>Cancelar</button>
+        <button type="submit" className="btn-neu text-sm">Salvar Assistente</button>
       </div>
     </Form>
   )

@@ -57,7 +57,7 @@ function WorkspaceInviteContent() {
 
   return (
     <div
-      className="max-w-md w-full rounded-2xl border border-[#1a1a1a] p-8 text-center"
+      className="max-w-md w-full rounded-2xl border border-dim p-8 text-center"
       style={{ background: '#0a0a0a' }}
     >
       {status === 'loading' && (
@@ -105,7 +105,7 @@ function WorkspaceInviteContent() {
           <Button
             onPress={() => router.push('/dashboard')}
             variant="ghost"
-            className="border-[#1a1a1a] text-white"
+            className="border-dim text-white"
           >
             Ir para o Dashboard
           </Button>

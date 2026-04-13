@@ -48,7 +48,7 @@ export function AuthLayout({
             }}
           >
             Automatize seu{' '}
-            <span style={{ color: '#FF6B00' }}>atendimento</span>{' '}
+            <span style={{ color: '#ff6b2c' }}>atendimento</span>{' '}
             com IA.
           </h1>
           <p

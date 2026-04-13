@@ -495,7 +495,7 @@ export function ToolsTab({ assistant, shareToken, isReadOnly }: ToolsTabProps) {
           </div>
           <p className="font-medium text-foreground text-base">Nenhuma ferramenta configurada</p>
           <p className="max-w-sm mb-4">Você ainda não criou nenhum endpoint de API ou webhook para este assistente.</p>
-          {!isReadOnly && <Button variant="secondary" size="sm" onPress={openCreateModal}>Criar Primeira Ferramenta</Button>}
+          {!isReadOnly && <button className="btn-neu text-sm" onClick={openCreateModal}>Criar Primeira Ferramenta</button>}
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 w-full">
@@ -775,7 +775,7 @@ export function ToolsTab({ assistant, shareToken, isReadOnly }: ToolsTabProps) {
                 })()}
               </div>
               <div className="flex justify-end">
-                <Button variant="secondary" onPress={() => setTypeSelectionOpen(false)}>Cancelar</Button>
+                <button type="button" className="btn-neu-ghost text-sm" onClick={() => setTypeSelectionOpen(false)}>Cancelar</button>
               </div>
             </Modal.Dialog>
           </Modal.Container>
@@ -878,14 +878,14 @@ export function ToolsTab({ assistant, shareToken, isReadOnly }: ToolsTabProps) {
                       />
                     </TextField>
                     <div className="flex items-center gap-2">
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        onPress={handleTestUrl}
-                        isDisabled={!builtinEndpoint.trim() || testUrlLoading}
+                      <button
+                        type="button"
+                        className="btn-neu text-sm"
+                        onClick={handleTestUrl}
+                        disabled={!builtinEndpoint.trim() || testUrlLoading}
                       >
                         {testUrlLoading ? 'Testando...' : 'Testar URL'}
-                      </Button>
+                      </button>
                       {testUrlResult && (
                         <div className={`flex-1 text-sm px-3 py-2 rounded-lg border ${testUrlResult.ok ? 'bg-green-50 dark:bg-green-900/10 border-green-200 dark:border-green-800' : 'bg-red-50 dark:bg-red-900/10 border-red-200 dark:border-red-800'}`}>
                           {testUrlResult.ok ? (
@@ -1089,12 +1089,12 @@ export function ToolsTab({ assistant, shareToken, isReadOnly }: ToolsTabProps) {
               </div>
 
               <div className="flex justify-end gap-3 pt-2">
-                <Button variant="secondary" onPress={() => { setBuiltinModalOpen(false); setEditingBuiltinTool(null) }}>
+                <button type="button" className="btn-neu-ghost text-sm" onClick={() => { setBuiltinModalOpen(false); setEditingBuiltinTool(null) }}>
                   Cancelar
-                </Button>
-                <Button variant="primary" onPress={handleBuiltinSubmit}>
+                </button>
+                <button type="button" className="btn-neu text-sm" onClick={handleBuiltinSubmit}>
                   {editingBuiltinTool ? 'Salvar' : 'Criar'}
-                </Button>
+                </button>
               </div>
             </Modal.Dialog>
           </Modal.Container>
@@ -1123,16 +1123,12 @@ export function ToolsTab({ assistant, shareToken, isReadOnly }: ToolsTabProps) {
                 </p>
               )}
               <div className="flex justify-end gap-3 pt-2">
-                <Button variant="secondary" onPress={() => { setDeleteConfirmOpen(false); setToolToDelete(null) }}>
+                <button type="button" className="btn-neu-ghost text-sm" onClick={() => { setDeleteConfirmOpen(false); setToolToDelete(null) }}>
                   Cancelar
-                </Button>
-                <Button
-                  variant="primary"
-                  className="bg-red-600 hover:bg-red-700 text-white"
-                  onPress={handleConfirmDelete}
-                >
+                </button>
+                <button type="button" className="btn-neu text-sm !text-red-400 hover:!text-red-300" onClick={handleConfirmDelete}>
                   Excluir
-                </Button>
+                </button>
               </div>
             </Modal.Dialog>
           </Modal.Container>
@@ -1520,15 +1516,14 @@ export function ToolsTab({ assistant, shareToken, isReadOnly }: ToolsTabProps) {
                         {/* ── Test / Preview ── */}
                         <CollapsibleSection title="Testar Requisição" defaultOpen={false}>
                           <div className="flex flex-col gap-3">
-                            <Button
-                              variant="secondary"
-                              size="sm"
-                              onPress={handleTestRequest}
-                              isDisabled={isTesting}
-                              className="self-start"
+                            <button
+                              type="button"
+                              className="btn-neu text-sm self-start"
+                              onClick={handleTestRequest}
+                              disabled={isTesting}
                             >
                               {isTesting ? 'Enviando...' : 'Enviar Requisição de Teste'}
-                            </Button>
+                            </button>
                             {testResult && (
                               <div className={`rounded-lg border p-3 text-sm font-mono overflow-auto max-h-[240px] ${
                                 testResult.error
@@ -1633,12 +1628,12 @@ export function ToolsTab({ assistant, shareToken, isReadOnly }: ToolsTabProps) {
 
                   {/* ── Footer Actions ── */}
                   <div className="flex justify-end gap-3 w-full mt-4 pt-4 border-t border-dim">
-                    <Button variant="secondary" onPress={() => { setIsModalOpen(false); setEditingTool(null); reset(); resetExtendedState(); }}>
+                    <button type="button" className="btn-neu-ghost text-sm" onClick={() => { setIsModalOpen(false); setEditingTool(null); reset(); resetExtendedState(); }}>
                       Cancelar
-                    </Button>
-                    <Button variant="primary" type="submit">
+                    </button>
+                    <button type="submit" className="btn-neu text-sm">
                       {editingTool ? 'Atualizar Ferramenta' : 'Salvar Ferramenta'}
-                    </Button>
+                    </button>
                   </div>
                 </Form>
               </Modal.Body>

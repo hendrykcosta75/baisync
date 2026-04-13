@@ -285,14 +285,14 @@ export function TestPanel({ assistant, onSendToPlayground, onClearPlayground }: 
             <p className="text-xs text-red-500">{error}</p>
           )}
 
-          <Button
-            variant="primary"
-            onPress={runTest}
-            isDisabled={!isConfigured}
-            className="w-full"
+          <button
+            type="button"
+            onClick={runTest}
+            disabled={!isConfigured}
+            className="btn-neu btn-neu-lg w-full text-center"
           >
             Iniciar Teste
-          </Button>
+          </button>
         </div>
       )}
 
@@ -397,11 +397,11 @@ export function TestPanel({ assistant, onSendToPlayground, onClearPlayground }: 
 
           {/* Evaluate button */}
           {testStatus !== 'running' && messages.length > 0 && !evaluation && (
-            <Button
-              variant="secondary"
-              onPress={evaluateConversation}
-              isDisabled={isEvaluating}
-              className="w-full"
+            <button
+              type="button"
+              onClick={evaluateConversation}
+              disabled={isEvaluating}
+              className="btn-neu w-full text-center"
             >
               {isEvaluating ? (
                 <span className="flex items-center gap-2">
@@ -410,7 +410,7 @@ export function TestPanel({ assistant, onSendToPlayground, onClearPlayground }: 
               ) : (
                 'Avaliar Conversa'
               )}
-            </Button>
+            </button>
           )}
 
           {/* Evaluation result */}

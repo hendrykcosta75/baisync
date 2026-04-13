@@ -84,7 +84,7 @@ function CheckIcon() {
     >
       <path
         d="M3.5 8.5L6.5 11.5L12.5 4.5"
-        stroke="#FF6B00"
+        stroke="#ff6b2c"
         strokeWidth="1.5"
         strokeLinecap="round"
         strokeLinejoin="round"
@@ -145,7 +145,7 @@ export function PricingSection() {
           background: conic-gradient(
             from var(--border-angle),
             transparent 40%,
-            #FF6B00 50%,
+            #ff6b2c 50%,
             transparent 60%
           );
           animation: rotate-border 3s linear infinite;
@@ -163,7 +163,7 @@ export function PricingSection() {
           background: conic-gradient(
             from var(--border-angle),
             transparent 40%,
-            #FF6B00 50%,
+            #ff6b2c 50%,
             transparent 60%
           );
           animation: rotate-border 3s linear infinite;
@@ -186,7 +186,7 @@ export function PricingSection() {
           transition: 'opacity 0.7s ease-out, transform 0.7s ease-out',
         }}
       >
-        <span className="inline-block text-[#FF6B00] text-xs tracking-[0.25em] uppercase font-[family-name:var(--font-jetbrains-mono)] font-semibold mb-4">
+        <span className="inline-block text-[#ff6b2c] text-xs tracking-[0.25em] uppercase font-[family-name:var(--font-jetbrains-mono)] font-semibold mb-4">
           PLANOS
         </span>
         <h2 className="text-3xl md:text-4xl font-bold text-white font-[family-name:var(--font-jetbrains-mono)] mb-4">
@@ -209,14 +209,14 @@ export function PricingSection() {
       >
         <span
           className="text-sm font-[family-name:var(--font-jetbrains-mono)] transition-colors duration-300"
-          style={{ color: !annual ? '#FF6B00' : '#555' }}
+          style={{ color: !annual ? '#ff6b2c' : '#555' }}
         >
           Mensal
         </span>
         <button
           onClick={() => setAnnual(!annual)}
           className="relative w-12 h-6 rounded-full transition-colors duration-300 cursor-pointer"
-          style={{ background: annual ? '#FF6B00' : '#333' }}
+          style={{ background: annual ? '#ff6b2c' : '#333' }}
           aria-label="Alternar entre mensal e anual"
         >
           <div
@@ -227,11 +227,11 @@ export function PricingSection() {
         <span className="flex items-center gap-2">
           <span
             className="text-sm font-[family-name:var(--font-jetbrains-mono)] transition-colors duration-300"
-            style={{ color: annual ? '#FF6B00' : '#555' }}
+            style={{ color: annual ? '#ff6b2c' : '#555' }}
           >
             Anual
           </span>
-          <span className="text-[10px] font-bold font-[family-name:var(--font-jetbrains-mono)] px-2 py-0.5 rounded-full bg-[#FF6B00]/15 text-[#FF6B00] border border-[#FF6B00]/30">
+          <span className="text-[10px] font-bold font-[family-name:var(--font-jetbrains-mono)] px-2 py-0.5 rounded-full bg-[#ff6b2c]/15 text-[#ff6b2c] border border-[#ff6b2c]/30">
             -20%
           </span>
         </span>
@@ -248,7 +248,7 @@ export function PricingSection() {
             <div className="flex flex-col h-full p-6 md:p-8">
               {/* Badge */}
               {plan.badge && (
-                <span className="inline-block self-start text-[10px] font-bold font-[family-name:var(--font-jetbrains-mono)] tracking-wider px-3 py-1 rounded-full bg-[#FF6B00]/15 text-[#FF6B00] border border-[#FF6B00]/30 mb-4">
+                <span className="inline-block self-start text-[10px] font-bold font-[family-name:var(--font-jetbrains-mono)] tracking-wider px-3 py-1 rounded-full bg-[#ff6b2c]/15 text-[#ff6b2c] border border-[#ff6b2c]/30 mb-4">
                   {plan.badge}
                 </span>
               )}
@@ -295,7 +295,7 @@ export function PricingSection() {
                 <button
                   className="w-full py-3 rounded-xl text-sm font-semibold font-[family-name:var(--font-jetbrains-mono)] cursor-pointer transition-all duration-300 hover:brightness-110"
                   style={{
-                    background: '#FF6B00',
+                    background: '#ff6b2c',
                     color: '#000',
                   }}
                 >
@@ -335,7 +335,7 @@ export function PricingSection() {
           return (
             <div
               key={plan.name}
-              className="rounded-2xl bg-[#0a0a0a] border border-[#1a1a1a]"
+              className="rounded-2xl bg-app border border-dim"
               style={{
                 opacity: visible ? 1 : 0,
                 transform: visible ? 'translateY(0)' : 'translateY(32px)',

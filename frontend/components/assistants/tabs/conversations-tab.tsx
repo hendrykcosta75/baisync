@@ -442,7 +442,7 @@ export function ConversationsTab({ assistant, shareToken, isReadOnly }: Conversa
                   {/* Header */}
                   <div className="flex items-center gap-4 px-6 py-4 border-b border-dim shrink-0">
                     <button
-                      className="shrink-0 font-medium px-3 py-1.5 text-[12px] transition-colors text-[#8a8a8a] hover:text-[#f0f0f0] bg-transparent border-none"
+                      className="shrink-0 font-medium px-3 py-1.5 text-[12px] transition-colors text-subtle hover:text-heading bg-transparent border-none"
                       onClick={() => setOpenConvId(null)}
                     >
                       ← Voltar
@@ -602,9 +602,9 @@ export function ConversationsTab({ assistant, shareToken, isReadOnly }: Conversa
                 </p>
               </Modal.Body>
               <Modal.Footer>
-                <Button variant="secondary" slot="close">
+                <button type="button" className="btn-neu-ghost text-sm" onClick={() => setDeleteModalConvId(null)}>
                   Cancelar
-                </Button>
+                </button>
                 <Button
                   variant="danger"
                   isDisabled={isDeleting}

@@ -203,10 +203,10 @@ export function CreateEventModal({ isOpen, onClose, assistants, initialDate }: P
               />
 
               <div className="flex justify-end gap-2 pt-1">
-                <Button variant="ghost" onPress={onClose} type="button" size="sm" className="border-none">Cancelar</Button>
-                <Button variant="primary" type="submit" isDisabled={isSubmitting} size="sm">
+                <button type="button" className="btn-neu-ghost text-sm" onClick={onClose}>Cancelar</button>
+                <button type="submit" className="btn-neu text-sm" disabled={isSubmitting}>
                   {isSubmitting ? 'Criando...' : 'Criar'}
-                </Button>
+                </button>
               </div>
             </form>
           </Modal.Dialog>

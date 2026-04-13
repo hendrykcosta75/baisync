@@ -117,7 +117,7 @@ export function MetricsCounter() {
       {metrics.map((metric, i) => (
         <div
           key={metric.label}
-          className="bg-[#0a0a0a] border border-[#1a1a1a] rounded-xl p-6 text-center"
+          className="bg-app border border-dim rounded-xl p-6 text-center"
           style={{
             opacity: active ? 1 : 0,
             transform: active ? 'translateY(0)' : 'translateY(12px)',

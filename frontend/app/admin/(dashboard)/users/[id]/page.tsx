@@ -25,7 +25,7 @@ function CloseTrigger() {
 function SectionTitle({ icon: Icon, title, count, color }: { icon: React.ElementType; title: string; count?: number; color?: string }) {
   return (
     <h2 className="flex items-center gap-2 mb-4" style={{ fontFamily: mono, fontSize: 14, fontWeight: 700 }}>
-      <Icon size={18} style={{ color: color || '#FF6B00' }} />
+      <Icon size={18} style={{ color: color || '#ff6b2c' }} />
       <span className="text-heading">{title}</span>
       {count !== undefined && (
         <span className="text-subtle text-xs font-normal">({count})</span>
@@ -172,7 +172,7 @@ export default function AdminUserDetailPage() {
   return (
     <div className="space-y-6">
       {/* Back button */}
-      <Link href="/admin/users" className="inline-flex items-center gap-2 text-subtle hover:text-[#FF6B00] transition-colors duration-200">
+      <Link href="/admin/users" className="inline-flex items-center gap-2 text-subtle hover:text-[#ff6b2c] transition-colors duration-200">
         <ArrowLeft size={16} />
         <span style={{ fontFamily: mono, fontSize: 13 }}>Voltar</span>
       </Link>
@@ -236,7 +236,7 @@ export default function AdminUserDetailPage() {
           {/* Summary Cards */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 animate-fade-in-up opacity-0" style={{ animationDelay: '80ms', animationFillMode: 'forwards' }}>
             <InfoCard label="Receita Total" value={formatBRL(enriched.total_revenue)} color="#10b981" />
-            <InfoCard label="Tokens Consumidos" value={formatNumber(enriched.total_tokens)} color="#FF6B00" />
+            <InfoCard label="Tokens Consumidos" value={formatNumber(enriched.total_tokens)} color="#ff6b2c" />
             <InfoCard label="Mensagens" value={formatNumber(enriched.total_messages)} color="#3b82f6" />
             <InfoCard label="Assistentes" value={String(enriched.assistants.length)} />
           </div>

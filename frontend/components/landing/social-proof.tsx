@@ -71,7 +71,7 @@ export function SocialProof() {
           </div>
         ))}
         <div
-          className="flex items-center justify-center w-10 h-10 rounded-full border-2 border-black bg-[#0a0a0a] text-[#FF6B00] text-xs font-bold font-[family-name:var(--font-jetbrains-mono)]"
+          className="flex items-center justify-center w-10 h-10 rounded-full border-2 border-black bg-[#0a0a0a] text-[#ff6b2c] text-xs font-bold font-[family-name:var(--font-jetbrains-mono)]"
           style={{ marginLeft: '-0.75rem', zIndex: 0 }}
         >
           +200

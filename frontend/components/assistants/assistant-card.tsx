@@ -141,18 +141,19 @@ export function AssistantCard({ assistant, onEdit, onDelete }: AssistantCardProp
                 </p>
               </Modal.Body>
               <Modal.Footer>
-                <Button variant="secondary" slot="close">
+                <button type="button" className="btn-neu-ghost text-sm" onClick={() => setDeleteOpen(false)}>
                   Cancelar
-                </Button>
-                <Button
-                  variant="danger"
-                  onPress={() => {
+                </button>
+                <button
+                  type="button"
+                  className="btn-neu text-sm !text-red-400 hover:!text-red-300"
+                  onClick={() => {
                     onDelete(assistant)
                     setDeleteOpen(false)
                   }}
                 >
                   Sim, excluir
-                </Button>
+                </button>
               </Modal.Footer>
             </Modal.Dialog>
           </Modal.Container>

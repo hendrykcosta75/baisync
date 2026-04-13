@@ -283,6 +283,30 @@
   opacity: 0.4;
   cursor: not-allowed;
 }
+.btn-neu-ghost {
+  background: transparent;
+  border: none;
+  color: var(--c-subtle);
+  border-radius: 8px;
+  padding: 7px 16px;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  box-shadow: none;
+  transition: all 0.2s ease;
+}
+.btn-neu-ghost:hover {
+  color: var(--c-heading);
+  background: var(--c-dim);
+}
+.btn-neu-ghost:active {
+  transform: scale(0.97);
+}
+.btn-neu-ghost:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
 .btn-neu-lg {
   padding: 11px 24px;
   font-size: 14px;
@@ -470,6 +494,33 @@
 }
 .animate-pulse-dot {
   animation: pulse-dot 2s infinite;
+}
+
+/* Page transition (replaces framer-motion) */
+@keyframes page-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-page-in {
+  animation: page-in 0.3s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
+/* Stagger item (replaces framer-motion StaggerItem) */
+@keyframes stagger-fade-up {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-stagger-item {
+  animation: stagger-fade-up 0.4s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
+/* Reduced motion — disable non-essential animations */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 /* Nav link underline hover */

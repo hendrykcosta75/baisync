@@ -38,14 +38,14 @@ export function AdminSidebar({ isOpen, onClose }: { isOpen: boolean; onClose: ()
 
       <aside
         className={`
-          fixed inset-y-0 left-0 z-50 w-64 border-r border-[#1a1a1a]
+          fixed inset-y-0 left-0 z-50 w-64 border-r border-dim
           transform transition-transform duration-300 ease-in-out lg:translate-x-0 lg:static flex flex-col
           ${isOpen ? 'translate-x-0' : '-translate-x-full'}
         `}
         style={{ background: 'rgba(10,10,10,0.85)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)' }}
       >
         {/* Logo */}
-        <div className="h-16 flex items-center px-6 border-b border-[#1a1a1a]">
+        <div className="h-16 flex items-center px-6 border-b border-dim">
           <Link href="/admin" className="flex items-center gap-2.5">
             <BaisyncLogo size={46} />
             <span
@@ -72,8 +72,8 @@ export function AdminSidebar({ isOpen, onClose }: { isOpen: boolean; onClose: ()
                   className={`
                     flex items-center gap-3 px-3 py-3 rounded-xl transition-colors text-sm
                     ${isActive
-                      ? 'text-[#FF6B00]'
-                      : 'text-[#888] hover:text-white hover:bg-[#111]'}
+                      ? 'text-[#ff6b2c]'
+                      : 'text-[#888] hover:text-white hover:bg-surface'}
                   `}
                   style={{
                     fontFamily: mono,
@@ -90,7 +90,7 @@ export function AdminSidebar({ isOpen, onClose }: { isOpen: boolean; onClose: ()
         </nav>
 
         {/* Bottom Actions */}
-        <div className="p-4 border-t border-[#1a1a1a]">
+        <div className="p-4 border-t border-dim">
           <Button variant="ghost" className="w-full justify-start font-medium px-3 text-red-500 border-none" onPress={handleLogout}>
             Sair
           </Button>

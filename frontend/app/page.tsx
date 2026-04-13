@@ -41,7 +41,7 @@ export default function Home() {
                   width: 8,
                   height: 8,
                   borderRadius: '50%',
-                  background: '#FF6B00',
+                  background: '#ff6b2c',
                   boxShadow: '0 0 8px rgba(255,107,0,0.4)',
                 }}
               />
@@ -113,7 +113,7 @@ export default function Home() {
                   fontSize: 12,
                   fontWeight: 700,
                   color: '#000',
-                  background: '#FF6B00',
+                  background: '#ff6b2c',
                   padding: '12px 28px',
                   borderRadius: 8,
                   textDecoration: 'none',
@@ -125,7 +125,7 @@ export default function Home() {
               </Link>
               <Link
                 href="/login"
-                className="inline-block text-center transition-all duration-200 hover:border-[#FF6B00] hover:text-[#FF6B00]"
+                className="inline-block text-center transition-all duration-200 hover:border-[#ff6b2c] hover:text-[#ff6b2c]"
                 style={{
                   fontFamily: mono,
                   fontSize: 12,
@@ -180,7 +180,7 @@ export default function Home() {
           {[
             {
               icon: (
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#FF6B00" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#ff6b2c" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
                   <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
                 </svg>
               ),
@@ -189,7 +189,7 @@ export default function Home() {
             },
             {
               icon: (
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#FF6B00" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#ff6b2c" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
                   <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
                 </svg>
@@ -199,7 +199,7 @@ export default function Home() {
             },
             {
               icon: (
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#FF6B00" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#ff6b2c" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
                   <line x1="18" y1="20" x2="18" y2="10" />
                   <line x1="12" y1="20" x2="12" y2="4" />
                   <line x1="6" y1="20" x2="6" y2="14" />
@@ -211,7 +211,7 @@ export default function Home() {
           ].map((f, i) => (
             <div
               key={i}
-              className="glow-card group cursor-default transition-all duration-300 hover:-translate-y-1 bg-[#0a0a0a] border border-[#1a1a1a] hover:border-[#FF6B00] rounded-2xl p-7 sm:p-8"
+              className="glow-card group cursor-default transition-all duration-300 hover:-translate-y-1 bg-app border border-[#1a1a1a] hover:border-[#ff6b2c] rounded-2xl p-7 sm:p-8"
             >
               <div style={{ marginBottom: 16, width: 40, height: 40, borderRadius: 10, background: 'rgba(255,107,0,0.08)', border: '1px solid rgba(255,107,0,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{f.icon}</div>
               <div
@@ -301,7 +301,7 @@ export default function Home() {
             <div style={{ padding: '18px 22px' }}>
               <span style={{ fontFamily: mono, fontSize: 13, color: '#666' }}>{'>'} </span>
               <span style={{ fontFamily: mono, fontSize: 13, color: '#ccc' }}>Comece agora em </span>
-              <span style={{ fontFamily: mono, fontSize: 13, color: '#FF6B00', fontWeight: 700 }}>
+              <span style={{ fontFamily: mono, fontSize: 13, color: '#ff6b2c', fontWeight: 700 }}>
                 baisync.com/painel
               </span>
               <span
@@ -310,7 +310,7 @@ export default function Home() {
                   display: 'inline-block',
                   width: 8,
                   height: 16,
-                  background: '#FF6B00',
+                  background: '#ff6b2c',
                   marginLeft: 4,
                   verticalAlign: 'middle',
                 }}

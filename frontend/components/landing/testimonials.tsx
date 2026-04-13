@@ -36,7 +36,7 @@ function StarRating() {
           width="14"
           height="14"
           viewBox="0 0 24 24"
-          fill="#FF6B00"
+          fill="#ff6b2c"
           stroke="none"
         >
           <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26" />
@@ -93,7 +93,7 @@ export function Testimonials() {
             <div
               key={i}
               data-testimonial-index={i}
-              className="group relative rounded-xl border border-[#1a1a1a] bg-[#0a0a0a] p-6 transition-all duration-300 hover:-translate-y-1 hover:border-[#FF6B00]/30"
+              className="group relative rounded-xl border border-dim bg-app p-6 transition-all duration-300 hover:-translate-y-1 hover:border-[#ff6b2c]/30"
               style={{
                 opacity: visibleCards.has(i) ? 1 : 0,
                 transform: visibleCards.has(i)

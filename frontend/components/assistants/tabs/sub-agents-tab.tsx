@@ -134,9 +134,9 @@ export function SubAgentsTab({ assistant }: SubAgentsTabProps) {
             <h4 className="font-semibold text-foreground">
               Sub-Agentes ({subAgents.length})
             </h4>
-            <Button variant="primary" onPress={openAddModal}>
+            <button className="btn-neu text-sm" onClick={openAddModal}>
               + Adicionar Sub-Agente
-            </Button>
+            </button>
           </div>
 
           {subAgents.length === 0 ? (
@@ -365,12 +365,12 @@ export function SubAgentsTab({ assistant }: SubAgentsTabProps) {
                   </div>
 
                   <div className="flex justify-end gap-2 pt-2">
-                    <Button variant="ghost" className="border-none" onPress={() => setIsModalOpen(false)}>
+                    <button type="button" className="btn-neu-ghost text-sm" onClick={() => setIsModalOpen(false)}>
                       Cancelar
-                    </Button>
-                    <Button variant="primary" type="submit">
+                    </button>
+                    <button type="submit" className="btn-neu text-sm">
                       {editingSubAgent ? 'Atualizar' : 'Adicionar'} Sub-Agente
-                    </Button>
+                    </button>
                   </div>
                 </Form>
               </Modal.Body>

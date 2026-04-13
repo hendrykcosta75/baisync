@@ -21,7 +21,7 @@ type CreateUserForm = z.infer<typeof createUserSchema>
 
 function CloseTrigger() {
   return (
-    <Modal.CloseTrigger className="absolute right-4 top-4 z-10 flex items-center justify-center w-8 h-8 rounded-full hover:bg-[#1a1a1a] transition-colors cursor-pointer text-[#555] hover:text-white">
+    <Modal.CloseTrigger className="absolute right-4 top-4 z-10 flex items-center justify-center w-8 h-8 rounded-full hover:bg-dim transition-colors cursor-pointer text-[#555] hover:text-white">
       <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
         <path d="M4 4L12 12M12 4L4 12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
       </svg>
@@ -110,7 +110,7 @@ export default function AdminUsersPage() {
         <Button
           onPress={() => { clearError(); setShowCreateModal(true) }}
           className="border-none font-semibold"
-          style={{ background: '#FF6B00', color: '#000', fontFamily: mono }}
+          style={{ background: '#ff6b2c', color: '#000', fontFamily: mono }}
         >
           <Plus size={16} />
           Novo Usuario
@@ -124,16 +124,16 @@ export default function AdminUsersPage() {
           placeholder="Buscar por nome ou e-mail"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          className="pl-10 border-[#222] focus-within:!border-[#FF6B00]"
+          className="pl-10 border-[#222] focus-within:!border-[#ff6b2c]"
         />
       </div>
 
       {/* Table */}
-      <div className="rounded-2xl border border-[#1a1a1a] overflow-hidden" style={{ background: '#0a0a0a' }}>
+      <div className="rounded-2xl border border-dim overflow-hidden" style={{ background: '#0a0a0a' }}>
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead>
-              <tr className="border-b border-[#1a1a1a]">
+              <tr className="border-b border-dim">
                 {['Nome', 'E-mail', 'Status', 'Assistentes', 'Criado em', 'Acoes'].map((h) => (
                   <th
                     key={h}
@@ -160,7 +160,7 @@ export default function AdminUsersPage() {
                 </tr>
               ) : (
                 filteredUsers.map((user) => (
-                  <tr key={user.id} className="border-b border-[#111] hover:bg-[#111]/50 transition-colors">
+                  <tr key={user.id} className="border-b border-[#111] hover:bg-surface/50 transition-colors">
                     <td className="px-4 py-3" style={{ fontFamily: mono, fontSize: 13, color: '#fff' }}>
                       {user.name}
                     </td>
@@ -187,19 +187,19 @@ export default function AdminUsersPage() {
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-1">
                         <Link href={`/admin/users/${user.id}`}>
-                          <button className="p-2 rounded-lg text-[#888] hover:text-[#FF6B00] hover:bg-[#111] transition-colors" title="Ver detalhes">
+                          <button className="p-2 rounded-lg text-[#888] hover:text-[#ff6b2c] hover:bg-surface transition-colors" title="Ver detalhes">
                             <Eye size={15} />
                           </button>
                         </Link>
                         <button
-                          className="p-2 rounded-lg text-[#888] hover:text-amber-400 hover:bg-[#111] transition-colors"
+                          className="p-2 rounded-lg text-[#888] hover:text-amber-400 hover:bg-surface transition-colors"
                           title={user.blocked ? 'Desbloquear' : 'Bloquear'}
                           onClick={() => setConfirmBlock({ id: user.id, blocked: !user.blocked, name: user.name })}
                         >
                           {user.blocked ? <ShieldCheck size={15} /> : <ShieldBan size={15} />}
                         </button>
                         <button
-                          className="p-2 rounded-lg text-[#888] hover:text-red-400 hover:bg-[#111] transition-colors"
+                          className="p-2 rounded-lg text-[#888] hover:text-red-400 hover:bg-surface transition-colors"
                           title="Remover"
                           onClick={() => setConfirmDelete(user.id)}
                         >
@@ -219,7 +219,7 @@ export default function AdminUsersPage() {
       <Modal>
         <Modal.Backdrop isOpen={showCreateModal} onOpenChange={setShowCreateModal}>
           <Modal.Container>
-            <Modal.Dialog className="max-w-md w-full bg-[#0a0a0a] border border-[#1a1a1a] rounded-2xl">
+            <Modal.Dialog className="max-w-md w-full bg-app border border-dim rounded-2xl">
               <CloseTrigger />
               <Modal.Header>
                 <Modal.Heading style={{ fontFamily: mono, fontSize: 18, fontWeight: 700, color: '#fff' }}>
@@ -235,24 +235,24 @@ export default function AdminUsersPage() {
                   )}
                   <div className="flex flex-col gap-2">
                     <Label style={{ fontFamily: mono, fontSize: 11, color: '#888', letterSpacing: 1, textTransform: 'uppercase' as const }}>Nome</Label>
-                    <Input placeholder="Nome completo" className="border-[#222] focus-within:!border-[#FF6B00]" {...register('name')} />
+                    <Input placeholder="Nome completo" className="border-[#222] focus-within:!border-[#ff6b2c]" {...register('name')} />
                     {formErrors.name && <p className="text-xs text-red-500">{formErrors.name.message}</p>}
                   </div>
                   <div className="flex flex-col gap-2">
                     <Label style={{ fontFamily: mono, fontSize: 11, color: '#888', letterSpacing: 1, textTransform: 'uppercase' as const }}>E-mail</Label>
-                    <Input placeholder="email@exemplo.com" type="email" className="border-[#222] focus-within:!border-[#FF6B00]" {...register('email')} />
+                    <Input placeholder="email@exemplo.com" type="email" className="border-[#222] focus-within:!border-[#ff6b2c]" {...register('email')} />
                     {formErrors.email && <p className="text-xs text-red-500">{formErrors.email.message}</p>}
                   </div>
                   <div className="flex flex-col gap-2">
                     <Label style={{ fontFamily: mono, fontSize: 11, color: '#888', letterSpacing: 1, textTransform: 'uppercase' as const }}>Senha</Label>
-                    <Input placeholder="Minimo 6 caracteres" type="password" className="border-[#222] focus-within:!border-[#FF6B00]" {...register('password')} />
+                    <Input placeholder="Minimo 6 caracteres" type="password" className="border-[#222] focus-within:!border-[#ff6b2c]" {...register('password')} />
                     {formErrors.password && <p className="text-xs text-red-500">{formErrors.password.message}</p>}
                   </div>
                   <Modal.Footer className="flex justify-end gap-3 pt-4 pb-2 px-0">
                     <Button variant="ghost" onPress={() => setShowCreateModal(false)} className="border-[#222] text-[#888]">
                       Cancelar
                     </Button>
-                    <Button type="submit" isDisabled={isLoading} className="border-none font-semibold" style={{ background: '#FF6B00', color: '#000', fontFamily: mono }}>
+                    <Button type="submit" isDisabled={isLoading} className="border-none font-semibold" style={{ background: '#ff6b2c', color: '#000', fontFamily: mono }}>
                       {isLoading ? 'Criando...' : 'Criar'}
                     </Button>
                   </Modal.Footer>
@@ -267,7 +267,7 @@ export default function AdminUsersPage() {
       <Modal>
         <Modal.Backdrop isOpen={!!confirmBlock} onOpenChange={(open) => { if (!open) setConfirmBlock(null) }}>
           <Modal.Container>
-            <Modal.Dialog className="max-w-sm w-full bg-[#0a0a0a] border border-[#1a1a1a] rounded-2xl">
+            <Modal.Dialog className="max-w-sm w-full bg-app border border-dim rounded-2xl">
               <CloseTrigger />
               <Modal.Header>
                 <Modal.Heading style={{ fontFamily: mono, fontSize: 16, fontWeight: 700, color: '#fff' }}>
@@ -302,7 +302,7 @@ export default function AdminUsersPage() {
       <Modal>
         <Modal.Backdrop isOpen={!!confirmDelete} onOpenChange={(open) => { if (!open) setConfirmDelete(null) }}>
           <Modal.Container>
-            <Modal.Dialog className="max-w-sm w-full bg-[#0a0a0a] border border-[#1a1a1a] rounded-2xl">
+            <Modal.Dialog className="max-w-sm w-full bg-app border border-dim rounded-2xl">
               <CloseTrigger />
               <Modal.Header>
                 <Modal.Heading style={{ fontFamily: mono, fontSize: 16, fontWeight: 700, color: '#ef4444' }}>

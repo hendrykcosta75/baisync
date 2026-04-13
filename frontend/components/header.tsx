@@ -30,7 +30,7 @@ export function Header({ onMenuClick }: { onMenuClick: () => void }) {
           <Button
             isIconOnly
             variant="ghost"
-            className="lg:hidden text-[#8a8a8a] min-w-[40px] min-h-[40px] border-none"
+            className="lg:hidden text-subtle min-w-[40px] min-h-[40px] border-none"
             onPress={onMenuClick}
           >
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
@@ -59,8 +59,8 @@ export function Header({ onMenuClick }: { onMenuClick: () => void }) {
           {/* Workspace members button */}
           <button
             onClick={() => setWsModalOpen(true)}
-            className="w-[34px] h-[34px] rounded-full flex items-center justify-center text-[#8a8a8a] hover:text-[#f0f0f0] hover:bg-[rgba(255,107,44,0.06)] transition-colors relative"
-            title="Membros do workspace"
+            className="w-9 h-9 rounded-full flex items-center justify-center text-subtle hover:text-heading hover:bg-[rgba(255,107,44,0.06)] transition-colors relative focus-visible:ring-2 focus-visible:ring-[#ff6b2c]/40 focus-visible:outline-none"
+            aria-label="Membros do workspace"
           >
             <Users size={17} />
           </button>
@@ -72,7 +72,7 @@ export function Header({ onMenuClick }: { onMenuClick: () => void }) {
               <div
                 role="button"
                 tabIndex={0}
-                className="w-[34px] h-[34px] rounded-[10px] flex items-center justify-center text-[13px] font-semibold cursor-pointer transition-all"
+                className="w-9 h-9 rounded-[10px] flex items-center justify-center text-[13px] font-semibold cursor-pointer transition-all focus-visible:ring-2 focus-visible:ring-[#ff6b2c]/40 focus-visible:outline-none"
                 style={{
                   background: '#121212',
                   boxShadow: '3px 3px 7px rgba(0,0,0,0.45), -1px -1px 5px rgba(255,255,255,0.03)',

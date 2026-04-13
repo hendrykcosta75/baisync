@@ -292,14 +292,14 @@ export function ChatTab({ assistant, shareToken }: ChatTabProps) {
                 onKeyDown={handleKeyDown}
                 disabled={isLoading}
               />
-              <Button
-                variant="primary"
-                onPress={handleSend}
-                isDisabled={!input.trim() || isLoading}
-                className="shrink-0"
+              <button
+                type="button"
+                onClick={handleSend}
+                disabled={!input.trim() || isLoading}
+                className="btn-neu text-sm shrink-0"
               >
                 Enviar
-              </Button>
+              </button>
             </div>
           </Card>
         </div>
