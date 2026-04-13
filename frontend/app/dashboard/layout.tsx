@@ -26,7 +26,7 @@ class BaisyncErrorBoundary extends Component<{ children: ReactNode }, { hasError
   render() {
     if (this.state.hasError) {
       return (
-        <div className="fixed bottom-6 right-6 z-50 p-4 rounded-xl border border-red-500/30 max-w-[350px]" style={{ background: '#1a1a1a' }}>
+        <div className="fixed bottom-6 right-6 z-50 p-4 rounded-xl max-w-[350px] glass-card" style={{ border: '1px solid rgba(239,68,68,0.3)' }}>
           <p className="text-xs text-red-400 font-medium mb-1">Baisync Agent encontrou um erro</p>
           <p className="text-[10px] text-[#5a5a5a] break-all">{this.state.error}</p>
           <button
@@ -62,7 +62,6 @@ export default function DashboardLayout({
     const handler = (e: Event) => {
       const detail = (e as CustomEvent).detail
       const wsName = detail?.workspace_name || 'workspace'
-      // Clear cached data and switch to personal workspace
       localStorage.removeItem('active-workspace-id')
       localStorage.removeItem('assistant-storage')
       localStorage.removeItem('api-keys-storage')
@@ -99,8 +98,6 @@ export default function DashboardLayout({
     fetchMe()
   }, [mounted, isAuthenticated, router, fetchMe])
 
-  // Render nothing on server AND first client render to avoid hydration mismatch.
-  // After mount, check auth and show content or redirect.
   if (!mounted || !isAuthenticated) {
     return null
   }
@@ -114,10 +111,15 @@ export default function DashboardLayout({
         onWidthChange={handleWidthChange}
       />
 
-      <div className="flex-1 flex flex-col min-w-0">
+      <div className="flex-1 flex flex-col min-w-0 relative">
+        {/* Decorative orbs — subtle */}
+        <div className="decorative-orb" style={{ width: 400, height: 400, top: -150, right: -150, opacity: 0.3 }} />
+        <div className="decorative-orb" style={{ width: 300, height: 300, top: -120, left: -120, opacity: 0.15 }} />
+        <div className="decorative-orb" style={{ width: 250, height: 250, bottom: 150, left: -100, opacity: 0.15 }} />
+
         <Header onMenuClick={() => setIsSidebarOpen(true)} />
 
-        <main className="flex-1 overflow-y-auto p-5 lg:p-6">
+        <main className="flex-1 overflow-y-auto p-5 lg:p-6 relative z-[1]">
           <div className="mx-auto max-w-7xl">
             {children}
           </div>

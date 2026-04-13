@@ -137,9 +137,9 @@ export default function SettingsPage() {
             <p className="text-sm text-red-500">{profileError}</p>
           )}
           <div className="flex items-center gap-3">
-            <Button variant="primary" type="submit" isDisabled={isLoading}>
+            <button className="btn-neu text-sm" type="submit" disabled={isLoading}>
               Salvar Nome
-            </Button>
+            </button>
             {profileSaved && (
               <span className="text-sm text-emerald-600 dark:text-emerald-400 font-medium">
                 Perfil atualizado!
@@ -190,9 +190,9 @@ export default function SettingsPage() {
             <p className="text-sm text-red-500">{passwordError}</p>
           )}
           <div className="flex items-center gap-3">
-            <Button variant="primary" type="submit" isDisabled={isLoading}>
+            <button className="btn-neu text-sm" type="submit" disabled={isLoading}>
               Alterar Senha
-            </Button>
+            </button>
             {passwordChanged && (
               <span className="text-sm text-emerald-600 dark:text-emerald-400 font-medium">
                 Senha alterada com sucesso!

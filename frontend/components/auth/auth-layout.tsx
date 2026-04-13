@@ -2,6 +2,7 @@
 
 import React from 'react'
 import Link from 'next/link'
+import { BaisyncLogo } from '@/components/baisync-logo'
 
 const mono = "'JetBrains Mono', 'Fira Code', monospace"
 
@@ -28,23 +29,7 @@ export function AuthLayout({
 
         {/* Logo */}
         <Link href="/" className="flex items-center gap-2.5 relative z-10">
-          <div
-            style={{
-              width: 36,
-              height: 36,
-              borderRadius: 10,
-              background: 'linear-gradient(135deg, #FF6B00, #ff8533)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              fontFamily: mono,
-              fontSize: 15,
-              fontWeight: 800,
-              color: '#000',
-            }}
-          >
-            B
-          </div>
+          <BaisyncLogo size={52} />
           <span style={{ fontFamily: mono, fontSize: 20, fontWeight: 700, color: '#fff', letterSpacing: 1 }}>
             BAISYNC
           </span>
@@ -96,23 +81,7 @@ export function AuthLayout({
         {/* Mobile logo */}
         <div className="lg:hidden flex justify-center mb-10">
           <Link href="/" className="flex items-center gap-2.5">
-            <div
-              style={{
-                width: 36,
-                height: 36,
-                borderRadius: 10,
-                background: 'linear-gradient(135deg, #FF6B00, #ff8533)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                fontFamily: mono,
-                fontSize: 15,
-                fontWeight: 800,
-                color: '#000',
-              }}
-            >
-              B
-            </div>
+            <BaisyncLogo size={52} />
             <span style={{ fontFamily: mono, fontSize: 20, fontWeight: 700, color: '#fff', letterSpacing: 1 }}>
               BAISYNC
             </span>

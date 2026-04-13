@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react'
 import { Modal, Button } from '@heroui/react'
 import { useApiKeysStore } from '@/store/useApiKeysStore'
 import { Settings, MoreVertical, Eye, EyeOff, Trash2, TestTube, Save, ChevronDown } from 'lucide-react'
+import { PageTransition, StaggerContainer, StaggerItem } from '@/lib/motion'
 
 // ─── Provider logos (larger, in icon boxes) ──────────────────────────────────
 
@@ -135,18 +136,27 @@ const PROVIDERS: ProviderInfo[] = [
   },
 ]
 
+// ─── Border accent colors per provider ──────────────────────────────────────
+
+const PROVIDER_ACCENT: Record<AnyProvider, string> = {
+  openai: '#10a37f',
+  claude: '#d97706',
+  gemini: '#4285f4',
+  elevenlabs: '#6B21A8',
+  mercadopago: '#00b1ea',
+  stripe: '#635BFF',
+}
+
 // ─── Provider Card ───────────────────────────────────────────────────────────
 
 function ProviderCard({
   provider,
-  index,
   isConfigured,
   onSave,
   onTest,
   onRemove,
 }: {
   provider: ProviderInfo
-  index: number
   isConfigured: boolean
   onSave: (value: string, publicKey?: string) => Promise<void>
   onTest: () => Promise<void>
@@ -191,26 +201,34 @@ function ProviderCard({
     setTimeout(() => setFeedback(null), 2500)
   }
 
+  const accent = PROVIDER_ACCENT[provider.key]
+
   return (
     <>
       <div
-        className="rounded-2xl flex flex-col gap-4 transition-all duration-300"
+        className="flex flex-col gap-4 transition-all duration-300"
         style={{
           background: 'rgba(255, 255, 255, 0.04)',
-          backdropFilter: 'blur(30px)',
-          WebkitBackdropFilter: 'blur(30px)',
+          backdropFilter: 'blur(12px)',
+          WebkitBackdropFilter: 'blur(12px)',
           padding: '28px',
           border: '1px solid rgba(255, 255, 255, 0.08)',
-          boxShadow: '0 4px 24px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.05)',
-          animation: `fadeSlideIn 0.4s ease ${index * 0.05}s both`,
+          borderRadius: '16px',
+          borderTop: `3px solid ${accent}`,
         }}
         onMouseEnter={(e) => {
-          e.currentTarget.style.background = 'rgba(255, 255, 255, 0.07)'
           e.currentTarget.style.transform = 'translateY(-2px)'
+          e.currentTarget.style.background = 'rgba(255, 255, 255, 0.07)'
+          e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.12)'
+          e.currentTarget.style.borderTopColor = accent
+          e.currentTarget.style.boxShadow = '0 8px 32px rgba(0, 0, 0, 0.35)'
         }}
         onMouseLeave={(e) => {
-          e.currentTarget.style.background = 'rgba(255, 255, 255, 0.04)'
           e.currentTarget.style.transform = 'translateY(0)'
+          e.currentTarget.style.background = 'rgba(255, 255, 255, 0.04)'
+          e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.08)'
+          e.currentTarget.style.borderTopColor = accent
+          e.currentTarget.style.boxShadow = 'none'
         }}
       >
         {/* Top row: icon + menu */}
@@ -225,10 +243,10 @@ function ProviderCard({
           <div className="relative">
             <button
               className="p-1 rounded-md transition-colors cursor-pointer"
-              style={{ color: '#555' }}
+              style={{ color: '#5a5a5a' }}
               onClick={() => setMenuOpen(!menuOpen)}
               onMouseEnter={(e) => (e.currentTarget.style.color = '#999')}
-              onMouseLeave={(e) => (e.currentTarget.style.color = '#555')}
+              onMouseLeave={(e) => (e.currentTarget.style.color = '#5a5a5a')}
             >
               <MoreVertical size={16} />
             </button>
@@ -275,10 +293,10 @@ function ProviderCard({
         </div>
 
         {/* Name */}
-        <h3 className="text-lg font-semibold text-white m-0">{provider.name}</h3>
+        <h3 className="text-lg font-semibold m-0" style={{ color: '#f0f0f0' }}>{provider.name}</h3>
 
         {/* Description */}
-        <p className="text-[13px] leading-relaxed m-0 flex-1" style={{ color: '#777' }}>
+        <p className="text-[13px] leading-relaxed m-0 flex-1" style={{ color: '#8a8a8a' }}>
           {provider.description}
         </p>
 
@@ -301,11 +319,11 @@ function ProviderCard({
         {expanded && (
           <div
             className="flex flex-col gap-3 pt-3 border-t"
-            style={{ borderColor: 'rgba(255,255,255,0.06)', animation: 'fadeSlideIn 0.3s ease both' }}
+            style={{ borderColor: 'rgba(255, 255, 255, 0.06)', animation: 'fadeSlideIn 0.3s ease both' }}
           >
             <div className="flex flex-col gap-1.5">
               {provider.publicKeyField && (
-                <label className="text-xs text-[#888]">{provider.key === 'stripe' ? 'Secret Key' : 'Access Token'}</label>
+                <label className="text-xs" style={{ color: '#8a8a8a' }}>{provider.key === 'stripe' ? 'Secret Key' : 'Access Token'}</label>
               )}
               <div className="flex items-center gap-2">
                 <div className="flex-1 relative">
@@ -318,7 +336,7 @@ function ProviderCard({
                     style={{
                       background: '#141414',
                       border: '1px solid rgba(255,255,255,0.08)',
-                      color: '#e5e5e5',
+                      color: '#f0f0f0',
                     }}
                     onFocus={(e) => (e.currentTarget.style.borderColor = 'rgba(249,115,22,0.4)')}
                     onBlur={(e) => (e.currentTarget.style.borderColor = 'rgba(255,255,255,0.08)')}
@@ -326,9 +344,9 @@ function ProviderCard({
                 </div>
                 <button
                   className="p-2.5 rounded-lg cursor-pointer transition-colors"
-                  style={{ background: '#252525', color: '#777' }}
-                  onMouseEnter={(e) => (e.currentTarget.style.color = '#ccc')}
-                  onMouseLeave={(e) => (e.currentTarget.style.color = '#777')}
+                  style={{ background: 'rgba(255,255,255,0.05)', color: '#8a8a8a' }}
+                  onMouseEnter={(e) => (e.currentTarget.style.color = '#f0f0f0')}
+                  onMouseLeave={(e) => (e.currentTarget.style.color = '#8a8a8a')}
                   onClick={() => setVisible(!visible)}
                 >
                   {visible ? <EyeOff size={14} /> : <Eye size={14} />}
@@ -337,7 +355,7 @@ function ProviderCard({
             </div>
             {provider.publicKeyField && (
               <div className="flex flex-col gap-1.5 mt-2">
-                <label className="text-xs text-[#888]">{provider.publicKeyLabel}</label>
+                <label className="text-xs" style={{ color: '#8a8a8a' }}>{provider.publicKeyLabel}</label>
                 <input
                   type="text"
                   value={publicKeyValue}
@@ -347,7 +365,7 @@ function ProviderCard({
                   style={{
                     background: '#141414',
                     border: '1px solid rgba(255,255,255,0.08)',
-                    color: '#e5e5e5',
+                    color: '#f0f0f0',
                   }}
                   onFocus={(e) => (e.currentTarget.style.borderColor = 'rgba(249,115,22,0.4)')}
                   onBlur={(e) => (e.currentTarget.style.borderColor = 'rgba(255,255,255,0.08)')}
@@ -356,8 +374,7 @@ function ProviderCard({
             )}
             <div className="flex items-center gap-2">
               <button
-                className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer disabled:opacity-40"
-                style={{ background: '#ff6b2c', color: '#fff' }}
+                className="btn-neu flex items-center gap-1.5"
                 onClick={handleSave}
                 disabled={saving || (!value.trim() && !publicKeyValue.trim())}
               >
@@ -366,9 +383,9 @@ function ProviderCard({
               </button>
               <button
                 className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-medium transition-all cursor-pointer"
-                style={{ background: 'rgba(255,255,255,0.05)', color: '#999' }}
-                onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.08)'; e.currentTarget.style.color = '#ccc' }}
-                onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.05)'; e.currentTarget.style.color = '#999' }}
+                style={{ background: 'rgba(255,255,255,0.05)', color: '#8a8a8a' }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.08)'; e.currentTarget.style.color = '#f0f0f0' }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.05)'; e.currentTarget.style.color = '#8a8a8a' }}
                 onClick={() => { setExpanded(false); setValue('') }}
               >
                 Cancelar
@@ -384,9 +401,9 @@ function ProviderCard({
         >
           <button
             className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-medium cursor-pointer transition-all"
-            style={{ background: 'rgba(255,255,255,0.05)', color: '#999' }}
-            onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.08)'; e.currentTarget.style.color = '#ccc' }}
-            onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.05)'; e.currentTarget.style.color = '#999' }}
+            style={{ background: 'rgba(255,255,255,0.05)', color: '#8a8a8a' }}
+            onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.08)'; e.currentTarget.style.color = '#f0f0f0' }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.05)'; e.currentTarget.style.color = '#8a8a8a' }}
             onClick={() => setExpanded(!expanded)}
           >
             <Settings size={12} />
@@ -399,23 +416,33 @@ function ProviderCard({
           </button>
 
           {/* Status badge */}
-          <span
-            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-semibold"
-            style={
-              isConfigured
-                ? { background: 'rgba(249,115,22,0.12)', color: '#f97316' }
-                : { background: 'rgba(255,255,255,0.04)', color: '#555' }
-            }
-          >
+          {isConfigured ? (
             <span
-              className="w-1.5 h-1.5 rounded-full inline-block"
-              style={{
-                background: isConfigured ? '#f97316' : '#444',
-                boxShadow: isConfigured ? '0 0 8px rgba(249,115,22,0.5)' : 'none',
-              }}
-            />
-            {isConfigured ? 'Conectado' : 'Nao configurado'}
-          </span>
+              className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-semibold"
+              style={{ background: 'rgba(34, 197, 94, 0.1)', color: '#22c55e' }}
+            >
+              <span
+                className="w-1.5 h-1.5 rounded-full inline-block"
+                style={{
+                  background: '#22c55e',
+                  boxShadow: '0 0 8px rgba(34, 197, 94, 0.5)',
+                  animation: 'baisync-status-pulse 2s infinite',
+                }}
+              />
+              Conectado
+            </span>
+          ) : (
+            <span
+              className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-semibold"
+              style={{ background: 'rgba(255, 255, 255, 0.03)', color: '#5a5a5a' }}
+            >
+              <span
+                className="w-1.5 h-1.5 rounded-full inline-block"
+                style={{ background: '#444' }}
+              />
+              Nao configurado
+            </span>
+          )}
         </div>
       </div>
 
@@ -488,72 +515,81 @@ export default function CredentialsPage() {
   ]
 
   return (
-    <div className="pb-10">
-      {/* Header */}
-      <div className="flex items-center justify-between flex-wrap gap-4 mb-6">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight text-heading">Credenciais</h1>
-          <p className="text-sm mt-1" style={{ color: '#666' }}>
-            Gerencie e configure suas chaves de API e servicos conectados
-          </p>
+    <PageTransition>
+      <div className="pb-10">
+        {/* Header */}
+        <div className="flex items-center justify-between flex-wrap gap-4 mb-6">
+          <div>
+            <h1
+              className="text-2xl font-bold tracking-tight text-heading"
+            >
+              Credenciais
+            </h1>
+            <p className="text-sm mt-1" style={{ color: '#8a8a8a' }}>
+              Gerencie e configure suas chaves de API e servicos conectados
+            </p>
+          </div>
         </div>
-      </div>
 
-      {/* Filters */}
-      <div className="flex gap-2 mb-6">
-        {filters.map((f) => (
-          <button
-            key={f.key}
-            onClick={() => setFilter(f.key)}
-            className="px-4 py-2 rounded-xl text-[13px] font-medium cursor-pointer transition-all"
-            style={{
-              background: filter === f.key ? 'rgba(249,115,22,0.15)' : 'transparent',
-              color: filter === f.key ? '#f97316' : '#666',
-              border: filter === f.key ? '1px solid rgba(249,115,22,0.3)' : '1px solid transparent',
-            }}
-          >
-            {f.label}
-            <span className="ml-1.5 text-[11px] opacity-60">{f.count}</span>
-          </button>
-        ))}
-      </div>
+        {/* Filters */}
+        <div className="flex gap-2 mb-6">
+          {filters.map((f) => (
+            <button
+              key={f.key}
+              onClick={() => setFilter(f.key)}
+              className="px-4 py-2 rounded-xl text-[13px] font-medium cursor-pointer transition-all"
+              style={{
+                background: filter === f.key ? 'rgba(249,115,22,0.15)' : 'transparent',
+                color: filter === f.key ? '#f97316' : '#8a8a8a',
+                border: filter === f.key ? '1px solid rgba(249,115,22,0.3)' : '1px solid transparent',
+              }}
+            >
+              {f.label}
+              <span className="ml-1.5 text-[11px] opacity-60">{f.count}</span>
+            </button>
+          ))}
+        </div>
 
-      {/* Cards Grid */}
-      <div className="grid gap-4" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 380px))' }}>
-        {filtered.map((provider, idx) => (
-          <ProviderCard
-            key={provider.key}
-            provider={provider}
-            index={idx}
-            isConfigured={configured[provider.key]}
-            onSave={async (value, publicKey) => {
-              const updates: Record<string, string> = { ...keys }
-              if (value.trim()) {
-                updates[provider.key] = value
-              }
-              if (provider.publicKeyField && publicKey?.trim()) {
-                updates[provider.publicKeyField] = publicKey
-              }
-              await saveKeys(updates as unknown as typeof keys)
-            }}
-            onTest={fetchKeys}
-            onRemove={async () => {
-              const updates: Record<string, string> = { ...keys, [provider.key]: '' }
-              if (provider.publicKeyField) {
-                updates[provider.publicKeyField] = ''
-              }
-              await saveKeys(updates as unknown as typeof keys)
-            }}
-          />
-        ))}
-      </div>
+        {/* Cards Grid */}
+        <StaggerContainer
+          className="grid gap-4"
+          style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 380px))' }}
+        >
+          {filtered.map((provider) => (
+            <StaggerItem key={provider.key}>
+              <ProviderCard
+                provider={provider}
+                isConfigured={configured[provider.key]}
+                onSave={async (value, publicKey) => {
+                  const updates: Record<string, string> = { ...keys }
+                  if (value.trim()) {
+                    updates[provider.key] = value
+                  }
+                  if (provider.publicKeyField && publicKey?.trim()) {
+                    updates[provider.publicKeyField] = publicKey
+                  }
+                  await saveKeys(updates as unknown as typeof keys)
+                }}
+                onTest={fetchKeys}
+                onRemove={async () => {
+                  const updates: Record<string, string> = { ...keys, [provider.key]: '' }
+                  if (provider.publicKeyField) {
+                    updates[provider.publicKeyField] = ''
+                  }
+                  await saveKeys(updates as unknown as typeof keys)
+                }}
+              />
+            </StaggerItem>
+          ))}
+        </StaggerContainer>
 
-      <style>{`
-        @keyframes fadeSlideIn {
-          from { opacity: 0; transform: translateY(12px); }
-          to { opacity: 1; transform: translateY(0); }
-        }
-      `}</style>
-    </div>
+        <style>{`
+          @keyframes fadeSlideIn {
+            from { opacity: 0; transform: translateY(12px); }
+            to { opacity: 1; transform: translateY(0); }
+          }
+        `}</style>
+      </div>
+    </PageTransition>
   )
 }

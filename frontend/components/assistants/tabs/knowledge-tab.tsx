@@ -121,9 +121,9 @@ export function KnowledgeTab({ assistant, shareToken, isReadOnly }: KnowledgeTab
           </div>
 
           <div className="relative">
-            <Button variant="primary" isDisabled={isUploading}>
+            <button className="btn-neu text-sm" disabled={isUploading}>
               {isUploading ? 'Enviando...' : 'Procurar Arquivos'}
-            </Button>
+            </button>
             <input
               type="file"
               className="absolute inset-0 w-full h-full opacity-0 cursor-pointer disabled:pointer-events-none"

@@ -6,6 +6,7 @@ import { AlertTriangle, InboxIcon, Bot, Link2, FileText, Wrench, MessageSquare, 
 import Link from 'next/link'
 import { useAssistantStore } from '@/store/useAssistantStore'
 import { apiFetch } from '@/lib/api'
+import { PageTransition, StaggerContainer, StaggerItem } from '@/lib/motion'
 import type { Assistant } from '@/types/assistant'
 
 // ─── Types from backend ───────────────────────────────────────────────────────
@@ -57,7 +58,6 @@ function relativeTime(isoStr: string | null | undefined): string {
   return date.toLocaleDateString('pt-BR')
 }
 
-
 // ─── Sparkline SVG ────────────────────────────────────────────────────────────
 
 function Sparkline({ data }: { data: number[] }) {
@@ -69,7 +69,13 @@ function Sparkline({ data }: { data: number[] }) {
     .join(' ')
   return (
     <svg width={w} height={h} className="overflow-visible shrink-0">
-      <polyline points={pts} fill="none" stroke="#ff6b2c" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+      <defs>
+        <linearGradient id="sparkGrad" x1="0" y1="0" x2="72" y2="0" gradientUnits="userSpaceOnUse">
+          <stop offset="0%" stopColor="#ff6b2c" />
+          <stop offset="100%" stopColor="#ff8533" />
+        </linearGradient>
+      </defs>
+      <polyline points={pts} fill="none" stroke="url(#sparkGrad)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   )
 }
@@ -91,7 +97,6 @@ function generateLocalDates(days: number): string {
 }
 
 function fmtChartDate(iso: string): string {
-  // accepts "2026-03-30" → "30/03"
   const parts = iso.split('-')
   if (parts.length === 3) return `${parts[2]}/${parts[1]}`
   return iso
@@ -108,32 +113,50 @@ function UsageChart({ data, loading, error }: { data: DailyUsage[]; loading: boo
     <div>
       <div className="flex gap-1 h-28 px-1">
         {loading ? (
-          <div className="w-full flex items-center justify-center text-subtle text-xs animate-pulse">Carregando...</div>
+          <div className="w-full flex items-center justify-center text-[#8a8a8a] text-xs animate-pulse">Carregando...</div>
         ) : error ? (
           <div className="w-full flex flex-col items-center justify-center gap-1 text-center">
             <AlertTriangle size={24} className="text-red-400" />
             <p className="text-xs text-red-500">Erro ao carregar dados</p>
-            <p className="text-[10px] text-subtle font-mono max-w-xs truncate" title={error}>{error}</p>
+            <p className="text-[10px] text-[#8a8a8a] max-w-xs truncate" style={{ fontFamily: "'JetBrains Mono', 'Fira Code', monospace" }} title={error}>{error}</p>
           </div>
         ) : !hasData ? (
           <div className="w-full flex flex-col items-center justify-center gap-1 text-center">
-            <InboxIcon size={24} className="text-subtle" />
-            <p className="text-xs text-subtle">Nenhuma requisição nos últimos 14 dias</p>
+            <InboxIcon size={24} className="text-[#8a8a8a]" />
+            <p className="text-xs text-[#8a8a8a]">Nenhuma requisição nos últimos 14 dias</p>
           </div>
         ) : data.map((d, i) => {
           const val = mode === 'requests' ? d.requests : d.tokens
-          const pct = Math.max((val / max) * 100, 3) // always visible (min 3%)
+          const pct = Math.max((val / max) * 100, 3)
           return (
             <div key={i} className="flex-1 h-full flex flex-col justify-end items-center group relative">
               <div
-                className={`w-full rounded-t-sm transition-opacity cursor-default ${
+                className={`w-full rounded-t transition-opacity cursor-default ${
                   val > 0
-                    ? 'bg-gradient-to-t from-[#ff6b2c] to-[#ff8533] opacity-80 group-hover:opacity-100'
-                    : 'bg-raised opacity-40'
+                    ? 'opacity-80 group-hover:opacity-100'
+                    : 'opacity-40'
                 }`}
-                style={{ height: `${pct}%` }}
+                style={{
+                  height: `${pct}%`,
+                  background: val > 0
+                    ? 'linear-gradient(to top, #ff8533, #ff6b2c)'
+                    : 'var(--c-raised)',
+                  borderRadius: '4px 4px 0 0',
+                  transformOrigin: 'bottom',
+                  animation: val > 0 ? `grow-up 0.5s ${i * 0.03}s ease-out both` : undefined,
+                }}
               >
-                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 px-2 py-1 bg-surface rounded-md text-[11px] text-heading whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10 shadow-lg">
+                {/* Tooltip */}
+                <div
+                  className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 px-2 py-1 rounded-lg text-[11px] whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10"
+                  style={{
+                    background: '#1a1a1a',
+                    backdropFilter: 'blur(12px)',
+                    border: '1px solid #1e1e1e',
+                    color: '#f0f0f0',
+                    boxShadow: '0 4px 16px rgba(0,0,0,0.3)',
+                  }}
+                >
                   {fmt(val)} {mode === 'requests' ? 'req' : 'tokens'}
                 </div>
               </div>
@@ -149,7 +172,10 @@ function UsageChart({ data, loading, error }: { data: DailyUsage[]; loading: boo
             return (
               <div key={i} className="flex-1 text-center">
                 {show && (
-                  <span className={`text-[9px] ${isLast ? 'text-[#ff6b2c] font-semibold' : 'text-subtle'}`}>
+                  <span
+                    className={`text-[9px] ${isLast ? 'text-[#ff6b2c] font-semibold' : 'text-subtle'}`}
+                    style={{ fontFamily: "'JetBrains Mono', 'Fira Code', monospace" }}
+                  >
                     {fmtChartDate(d.date)}
                   </span>
                 )}
@@ -159,16 +185,25 @@ function UsageChart({ data, loading, error }: { data: DailyUsage[]; loading: boo
         </div>
       )}
       <div className="flex justify-end mt-3">
-        <div className="flex rounded-lg overflow-hidden">
+        <div className="flex rounded-lg overflow-hidden" style={{ border: '1px solid #1e1e1e' }}>
           <button
             onClick={() => setMode('requests')}
-            className={`px-3 py-1.5 text-xs font-medium transition-colors ${mode === 'requests' ? 'bg-[#ff6b2c] text-black' : 'text-subtle hover:text-heading hover:bg-raised'}`}
+            className={`px-3 py-1.5 text-xs font-medium transition-colors ${mode === 'requests' ? 'text-white' : 'text-[#8a8a8a] hover:text-[#f0f0f0]'}`}
+            style={{
+              fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+              background: mode === 'requests' ? 'linear-gradient(135deg, #ff6b2c, #ff8533)' : 'transparent',
+            }}
           >
             Req.
           </button>
           <button
             onClick={() => setMode('tokens')}
-            className={`px-3 py-1.5 text-xs font-medium transition-colors border-l border-dim ${mode === 'tokens' ? 'bg-[#ff6b2c] text-black' : 'text-subtle hover:text-heading hover:bg-raised'}`}
+            className={`px-3 py-1.5 text-xs font-medium transition-colors ${mode === 'tokens' ? 'text-white' : 'text-[#8a8a8a] hover:text-[#f0f0f0]'}`}
+            style={{
+              fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+              borderLeft: '1px solid #1e1e1e',
+              background: mode === 'tokens' ? 'linear-gradient(135deg, #ff6b2c, #ff8533)' : 'transparent',
+            }}
           >
             Tokens
           </button>
@@ -178,15 +213,15 @@ function UsageChart({ data, loading, error }: { data: DailyUsage[]; loading: boo
   )
 }
 
-// ─── Pie Chart (token distribution by assistant) ─────────────────────────────
+// ─── Pie Chart (token distribution) ─────────────────────────────────────
 
 function PieChart({ data }: { data: { label: string; value: number; color: string }[] }) {
   const total = data.reduce((acc, d) => acc + d.value, 0)
   if (total === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-10 text-center">
-        <InboxIcon size={28} className="text-subtle mb-2" />
-        <p className="text-xs text-subtle">Sem dados para exibir</p>
+        <InboxIcon size={28} className="text-[#8a8a8a] mb-2" />
+        <p className="text-xs text-[#8a8a8a]">Sem dados para exibir</p>
       </div>
     )
   }
@@ -219,15 +254,15 @@ function PieChart({ data }: { data: { label: string; value: number; color: strin
             />
           )
         })}
-        <text x={cx} y={cy - 6} textAnchor="middle" className="fill-heading text-lg font-bold">{total > 1000 ? `${(total / 1000).toFixed(1)}k` : total}</text>
-        <text x={cx} y={cy + 12} textAnchor="middle" className="fill-subtle text-[10px]">tokens</text>
+        <text x={cx} y={cy - 6} textAnchor="middle" className="text-lg font-bold" fill="#f0f0f0">{total > 1000 ? `${(total / 1000).toFixed(1)}k` : total}</text>
+        <text x={cx} y={cy + 12} textAnchor="middle" className="text-[10px]" fill="#8a8a8a">tokens</text>
       </svg>
       <div className="flex flex-wrap justify-center gap-x-4 gap-y-1.5">
         {data.filter(d => d.value > 0).map((d, i) => (
           <div key={i} className="flex items-center gap-1.5">
             <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: d.color }} />
-            <span className="text-xs text-subtle truncate max-w-[100px]" title={d.label}>{d.label}</span>
-            <span className="text-xs text-heading font-medium">{Math.round((d.value / total) * 100)}%</span>
+            <span className="text-xs text-[#8a8a8a] truncate max-w-[100px]" title={d.label}>{d.label}</span>
+            <span className="text-xs text-[#f0f0f0] font-medium">{Math.round((d.value / total) * 100)}%</span>
           </div>
         ))}
       </div>
@@ -241,8 +276,8 @@ function AreaChart({ data }: { data: { date: string; value: number }[] }) {
   if (data.length === 0 || data.every(d => d.value === 0)) {
     return (
       <div className="flex flex-col items-center justify-center py-10 text-center">
-        <InboxIcon size={28} className="text-subtle mb-2" />
-        <p className="text-xs text-subtle">Sem dados para exibir</p>
+        <InboxIcon size={28} className="text-[#8a8a8a] mb-2" />
+        <p className="text-xs text-[#8a8a8a]">Sem dados para exibir</p>
       </div>
     )
   }
@@ -267,37 +302,36 @@ function AreaChart({ data }: { data: { date: string; value: number }[] }) {
     <div className="w-full overflow-hidden">
       <svg viewBox={`0 0 ${w} ${h + 24}`} className="w-full" preserveAspectRatio="xMidYMid meet">
         <defs>
-          <linearGradient id="areaGrad" x1="0" y1="0" x2="0" y2="1">
+          <linearGradient id="areaGradNew" x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%" stopColor="#ff6b2c" stopOpacity="0.3" />
             <stop offset="100%" stopColor="#ff6b2c" stopOpacity="0" />
           </linearGradient>
+          <linearGradient id="lineGradNew" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0%" stopColor="#ff6b2c" />
+            <stop offset="100%" stopColor="#ff8533" />
+          </linearGradient>
         </defs>
-        {/* Grid lines */}
         {[0, 0.25, 0.5, 0.75, 1].map((pct, i) => {
           const y = padY + chartH - pct * chartH
           return <line key={i} x1={padX} y1={y} x2={w - padX} y2={y} stroke="rgba(255,255,255,0.05)" strokeWidth="1" />
         })}
-        {/* Y-axis labels */}
         {[0, 0.5, 1].map((pct, i) => {
           const y = padY + chartH - pct * chartH
           const val = Math.round(max * pct)
           const label = val > 1000 ? `${(val / 1000).toFixed(1)}k` : `${val}`
-          return <text key={i} x={padX - 6} y={y + 3} textAnchor="end" className="fill-subtle text-[9px]">{label}</text>
+          return <text key={i} x={padX - 6} y={y + 3} textAnchor="end" fill="#8a8a8a" fontSize="9">{label}</text>
         })}
-        {/* Area + Line */}
-        <path d={areaPath} fill="url(#areaGrad)" />
-        <path d={linePath} fill="none" stroke="#ff6b2c" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-        {/* Dots */}
+        <path d={areaPath} fill="url(#areaGradNew)" />
+        <path d={linePath} fill="none" stroke="url(#lineGradNew)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
         {points.map((p, i) => (
           <circle key={i} cx={p.x} cy={p.y} r={2.5} fill="#ff6b2c" />
         ))}
-        {/* X-axis labels */}
         {data.map((d, i) => {
           if (i % 3 !== 0 && i !== data.length - 1) return null
           const x = padX + (i / (data.length - 1)) * chartW
           const parts = d.date.split('-')
           const label = parts.length === 3 ? `${parts[2]}/${parts[1]}` : d.date
-          return <text key={i} x={x} y={h + 16} textAnchor="middle" className="fill-subtle text-[9px]">{label}</text>
+          return <text key={i} x={x} y={h + 16} textAnchor="middle" fill="#8a8a8a" fontSize="9">{label}</text>
         })}
       </svg>
     </div>
@@ -309,10 +343,10 @@ function AreaChart({ data }: { data: { date: string; value: number }[] }) {
 function getStatus(a: Assistant) {
   const conn = a.integrations?.some(i => i.status === 'connected')
   const disc = a.integrations?.some(i => i.status === 'disconnected')
-  if (conn && !disc) return { dot: 'bg-emerald-500', label: 'Saudável', cls: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400' }
-  if (conn && disc) return { dot: 'bg-yellow-400', label: 'Com alertas', cls: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400' }
-  if (!conn && a.integrations?.length) return { dot: 'bg-red-500', label: 'Com erros', cls: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400' }
-  return { dot: 'bg-gray-400', label: 'Inativo', cls: 'bg-raised text-subtle' }
+  if (conn && !disc) return { dot: 'bg-emerald-500', label: 'Saudável', cls: 'bg-emerald-900/30 text-emerald-400' }
+  if (conn && disc) return { dot: 'bg-yellow-400', label: 'Com alertas', cls: 'bg-yellow-900/30 text-yellow-400' }
+  if (!conn && a.integrations?.length) return { dot: 'bg-red-500', label: 'Com erros', cls: 'bg-red-900/30 text-red-400' }
+  return { dot: 'bg-gray-400', label: 'Inativo', cls: 'bg-[#1e1e1e] text-[#8a8a8a]' }
 }
 
 // ─── Chat test modal ──────────────────────────────────────────────────────────
@@ -352,50 +386,80 @@ function ChatTestModal({ assistant, onClose, onMessageSent }: { assistant: Assis
 
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/50 backdrop-blur-sm p-0 sm:p-4">
-      <div className="bg-surface rounded-t-2xl sm:rounded-2xl w-full sm:max-w-lg shadow-2xl flex flex-col" style={{ height: '520px' }}>
-        <div className="flex items-center justify-between px-5 py-4 border-b border-dim shrink-0">
+      <div className="glass-card w-full sm:max-w-lg flex flex-col rounded-t-2xl sm:rounded-2xl" style={{ height: '520px' }}>
+        <div className="flex items-center justify-between px-5 py-4 shrink-0" style={{ borderBottom: '1px solid #1e1e1e' }}>
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-full bg-gradient-to-br from-[#ff6b2c] to-[#ff8533] flex items-center justify-center text-white text-sm font-bold">
+            <div
+              className="w-9 h-9 rounded-full flex items-center justify-center text-white text-sm font-bold"
+              style={{
+                background: 'linear-gradient(135deg, #ff6b2c, #ff8533)',
+                boxShadow: '0 0 8px rgba(255,107,44,0.15)',
+              }}
+            >
               {assistant.name.charAt(0).toUpperCase()}
             </div>
             <div>
-              <p className="font-semibold text-sm text-heading">{assistant.name}</p>
-              <p className="text-xs text-subtle">{assistant.model}</p>
+              <p className="font-semibold text-sm text-[#f0f0f0]">{assistant.name}</p>
+              <p className="text-xs text-[#8a8a8a]" style={{ fontFamily: "'JetBrains Mono', 'Fira Code', monospace" }}>{assistant.model}</p>
             </div>
           </div>
-          <button onClick={onClose} className="text-subtle hover:text-heading w-8 h-8 flex items-center justify-center rounded-lg hover:bg-raised transition-colors"><X size={16} /></button>
+          <button onClick={onClose} className="text-[#8a8a8a] hover:text-[#f0f0f0] w-8 h-8 flex items-center justify-center rounded-lg hover:bg-[#252525] transition-colors"><X size={16} /></button>
         </div>
 
         <div className="flex-1 overflow-y-auto p-4 space-y-3">
           {messages.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-full text-center gap-2">
-              <MessageSquare size={36} strokeWidth={1.5} className="text-muted" />
-              <p className="text-subtle text-sm">Envie uma mensagem para testar <strong className="text-heading">{assistant.name}</strong></p>
+              <MessageSquare size={36} strokeWidth={1.5} className="text-[#5a5a5a]" />
+              <p className="text-[#8a8a8a] text-sm">Envie uma mensagem para testar <strong className="text-[#f0f0f0]">{assistant.name}</strong></p>
             </div>
           ) : messages.map((m, i) => (
             <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-              <div className={`max-w-[80%] px-3.5 py-2 rounded-2xl text-sm leading-relaxed ${
-                m.role === 'user' ? 'bg-[#ff6b2c] text-black rounded-br-sm' : 'bg-raised text-heading rounded-bl-sm'
-              }`}>
+              <div
+                className={`max-w-[80%] px-3.5 py-2 rounded-2xl text-sm leading-relaxed ${
+                  m.role === 'user'
+                    ? 'text-black rounded-br-sm'
+                    : 'text-heading rounded-bl-sm'
+                }`}
+                style={{
+                  background: m.role === 'user'
+                    ? 'rgba(255, 107, 44, 0.15)'
+                    : 'var(--c-raised)',
+                  border: m.role === 'user'
+                    ? '1px solid rgba(255, 107, 44, 0.25)'
+                    : '1px solid #1e1e1e',
+                  color: m.role === 'user' ? '#f0f0f0' : undefined,
+                }}
+              >
                 {m.content}
               </div>
             </div>
           ))}
           {sending && (
             <div className="flex justify-start">
-              <div className="bg-raised px-4 py-2.5 rounded-2xl rounded-bl-sm text-subtle text-sm animate-pulse">•••</div>
+              <div
+                className="px-4 py-2.5 rounded-2xl rounded-bl-sm text-[#8a8a8a] text-sm animate-pulse"
+                style={{ background: '#1a1a1a', border: '1px solid #1e1e1e' }}
+              >
+                •••
+              </div>
             </div>
           )}
           <div ref={bottomRef} />
         </div>
 
-        <div className="p-4 border-t border-dim flex gap-2 shrink-0">
+        <div className="p-4 flex gap-2 shrink-0" style={{ borderTop: '1px solid #1e1e1e' }}>
           <input
             value={input}
             onChange={e => setInput(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && !e.shiftKey && send()}
             placeholder="Digite uma mensagem..."
-            className="flex-1 bg-raised rounded-xl px-4 py-2.5 text-sm text-heading placeholder:text-subtle focus:outline-none focus:ring-2 focus:ring-[#ff6b2c]/50 transition-shadow"
+            className="flex-1 rounded-xl px-4 py-2.5 text-sm text-[#f0f0f0] placeholder:text-[#5a5a5a] focus:outline-none transition-all"
+            style={{
+              background: '#222222',
+              border: '1px solid #1e1e1e',
+            }}
+            onFocus={(e) => (e.currentTarget.style.borderColor = '#444444')}
+            onBlur={(e) => (e.currentTarget.style.borderColor = '#1e1e1e')}
           />
           <button
             onClick={send}
@@ -410,7 +474,7 @@ function ChatTestModal({ assistant, onClose, onMessageSent }: { assistant: Assis
   )
 }
 
-// ─── Assistant picker (for quick action with multiple assistants) ─────────────
+// ─── Assistant picker ─────────────
 
 function AssistantPicker({
   assistants,
@@ -423,26 +487,29 @@ function AssistantPicker({
 }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-      <div className="bg-surface rounded-2xl w-full max-w-xs shadow-2xl p-4">
-        <p className="text-sm font-semibold text-heading mb-3">Qual assistente testar?</p>
+      <div className="glass-card w-full max-w-xs p-4">
+        <p className="text-sm font-semibold text-[#f0f0f0] mb-3">Qual assistente testar?</p>
         <div className="space-y-1 max-h-60 overflow-y-auto">
           {assistants.map(a => (
             <button
               key={a.id}
               onClick={() => { onSelect(a); onClose() }}
-              className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-raised text-left transition-colors"
+              className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-[#252525] text-left transition-colors"
             >
-              <div className="w-8 h-8 rounded-full bg-gradient-to-br from-[#ff6b2c] to-[#ff8533] flex items-center justify-center text-white text-xs font-bold shrink-0">
+              <div
+                className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0"
+                style={{ background: 'linear-gradient(135deg, #ff6b2c, #ff8533)' }}
+              >
                 {a.name.charAt(0).toUpperCase()}
               </div>
               <div className="min-w-0">
-                <p className="text-sm font-medium text-heading truncate">{a.name}</p>
-                <p className="text-xs text-subtle">{a.llmProvider} · {a.model}</p>
+                <p className="text-sm font-medium text-[#f0f0f0] truncate">{a.name}</p>
+                <p className="text-xs text-[#8a8a8a]" style={{ fontFamily: "'JetBrains Mono', 'Fira Code', monospace" }}>{a.llmProvider} · {a.model}</p>
               </div>
             </button>
           ))}
         </div>
-        <Button variant="ghost" size="sm" onPress={onClose} className="mt-3 w-full border-none text-subtle">
+        <Button variant="ghost" size="sm" onPress={onClose} className="mt-3 w-full border-none text-[#8a8a8a]">
           Cancelar
         </Button>
       </div>
@@ -450,16 +517,23 @@ function AssistantPicker({
   )
 }
 
+// ─── Stat Card Icon Colors ──────────────────────────────────────────────────
+
+const statIconStyles: Record<string, { bg: string }> = {
+  Assistentes: { bg: 'rgba(255,107,44,0.08)' },
+  Integrações: { bg: 'rgba(34,197,94,0.1)' },
+  'Arquivos de Conhecimento': { bg: 'rgba(59,130,246,0.1)' },
+  'Ferramentas Ativas': { bg: 'rgba(168,85,247,0.1)' },
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function DashboardPage() {
   const { assistants, isLoading, hasFetched, fetchAssistants } = useAssistantStore()
 
-  // Modals
   const [testingAssistant, setTestingAssistant] = useState<Assistant | null>(null)
   const [showPicker, setShowPicker] = useState(false)
 
-  // Stats from backend
   const [usageData, setUsageData] = useState<DailyUsage[]>([])
   const [assistantStats, setAssistantStats] = useState<Record<string, AssistantStats>>({})
   const [activity, setActivity] = useState<ActivityEvent[]>([])
@@ -470,7 +544,6 @@ export default function DashboardPage() {
     if (!hasFetched) fetchAssistants()
   }, [hasFetched, fetchAssistants])
 
-  // loadStats reads assistants via getState() to avoid stale closures
   const loadStats = useRef(async () => {
     const currentAssistants = useAssistantStore.getState().assistants
     const [usageRes, activityRes] = await Promise.allSettled([
@@ -487,7 +560,6 @@ export default function DashboardPage() {
     if (activityRes.status === 'fulfilled') setActivity(activityRes.value)
 
     if (currentAssistants.length > 0) {
-      // Fetch integrations, files, tools + stats in parallel for each assistant
       const store = useAssistantStore.getState()
       const [statsResults] = await Promise.allSettled([
         Promise.allSettled(
@@ -512,17 +584,14 @@ export default function DashboardPage() {
         setAssistantStats(map)
       }
     }
-
     setStatsLoading(false)
   }).current
 
-  // Initial load when assistants are ready
   useEffect(() => {
     if (!hasFetched) return
     loadStats()
   }, [hasFetched, loadStats])
 
-  // SSE-driven refresh + fallback poll every 60s
   useEffect(() => {
     if (!hasFetched) return
     const handler = () => loadStats()
@@ -538,7 +607,7 @@ export default function DashboardPage() {
     }
   }, [hasFetched, loadStats])
 
-  // ── Computed stats ──────────────────────────────────────────────────────────
+  // ── Computed stats ──
   const totalAssistants = assistants.length
   const activeAssistants = assistants.filter(a => a.integrations?.some(i => i.status === 'connected')).length
   const inactiveAssistants = totalAssistants - activeAssistants
@@ -566,8 +635,11 @@ export default function DashboardPage() {
       title: 'Assistentes', icon: Bot, value: totalAssistants, subtitle: 'Total configurados',
       extra: totalAssistants > 0 && (
         <div className="flex items-center gap-2 mt-2 flex-wrap">
-          <span className="text-[11px] text-emerald-500 font-medium">{activeAssistants} ativos</span>
-          {inactiveAssistants > 0 && <span className="text-[11px] text-subtle">· {inactiveAssistants} inativos</span>}
+          <span className="flex items-center gap-1 text-[11px] text-emerald-400 font-medium">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block" />
+            {activeAssistants} ativos
+          </span>
+          {inactiveAssistants > 0 && <span className="text-[11px] text-[#8a8a8a]">· {inactiveAssistants} inativos</span>}
           {hasAlert && <span title="Assistente precisa de atenção"><AlertTriangle size={12} className="text-yellow-500" /></span>}
         </div>
       ),
@@ -581,7 +653,7 @@ export default function DashboardPage() {
           </span>
           {errorIntegrations > 0
             ? <span className="text-[11px] text-red-400 font-medium">{errorIntegrations} com erro</span>
-            : activeIntegrations > 0 && <span className="text-[11px] text-subtle">Todas ok</span>}
+            : activeIntegrations > 0 && <span className="text-[11px] text-[#8a8a8a]">Todas ok</span>}
         </div>
       ),
     },
@@ -589,8 +661,8 @@ export default function DashboardPage() {
       title: 'Arquivos de Conhecimento', icon: FileText, value: totalFiles, subtitle: 'Documentos enviados',
       extra: (
         <div className="mt-2 space-y-0.5">
-          {totalSize > 0 && <p className="text-[11px] text-subtle">{formatBytes(totalSize)} total</p>}
-          {lastUpload && <p className="text-[11px] text-subtle truncate" title={lastUpload.name}>Último: {lastUpload.name}</p>}
+          {totalSize > 0 && <p className="text-[11px] text-[#8a8a8a]" style={{ fontFamily: "'JetBrains Mono', 'Fira Code', monospace" }}>{formatBytes(totalSize)} total</p>}
+          {lastUpload && <p className="text-[11px] text-[#8a8a8a] truncate" title={lastUpload.name}>Último: {lastUpload.name}</p>}
         </div>
       ),
     },
@@ -599,15 +671,21 @@ export default function DashboardPage() {
       extra: toolNames.length > 0 && (
         <div className="mt-2 flex flex-wrap gap-1">
           {toolNames.map(n => (
-            <span key={n} className="px-1.5 py-0.5 rounded text-[10px] bg-raised text-subtle truncate max-w-[90px]" title={n}>{n}</span>
+            <span
+              key={n}
+              className="px-1.5 py-0.5 rounded text-[10px] truncate max-w-[90px]"
+              style={{ background: '#1a1a1a', color: '#8a8a8a', border: '1px solid #1e1e1e', fontFamily: "'JetBrains Mono', 'Fira Code', monospace" }}
+              title={n}
+            >
+              {n}
+            </span>
           ))}
-          {totalTools > 3 && <span className="text-[10px] text-subtle">+{totalTools - 3}</span>}
+          {totalTools > 3 && <span className="text-[10px] text-[#8a8a8a]">+{totalTools - 3}</span>}
         </div>
       ),
     },
   ]
 
-  // ── Handlers ────────────────────────────────────────────────────────────────
   const openTestModal = (a: Assistant) => {
     setTestingAssistant(a)
     setShowPicker(false)
@@ -622,282 +700,332 @@ export default function DashboardPage() {
     }
   }
 
-  // ── Activity icon ────────────────────────────────────────────────────────────
   const activityIcon = (type: string): { icon: React.ReactNode; bg: string } => {
     switch (type) {
-      case 'error': return { icon: <AlertTriangle size={14} className="text-red-500" />, bg: 'bg-red-100 dark:bg-red-900/30' }
-      case 'upload': return { icon: <FileText size={14} className="text-[#ff6b2c]" />, bg: 'bg-[#ff6b2c]/10 dark:bg-[#ff6b2c]/10' }
-      case 'config': return { icon: <Settings size={14} className="text-[#ff6b2c]" />, bg: 'bg-[#ff6b2c]/10' }
-      default: return { icon: <MessageSquare size={14} className="text-emerald-500" />, bg: 'bg-emerald-100 dark:bg-emerald-900/30' }
+      case 'error': return { icon: <AlertTriangle size={14} className="text-red-500" />, bg: 'bg-red-900/30' }
+      case 'upload': return { icon: <FileText size={14} className="text-[#ff6b2c]" />, bg: 'bg-[rgba(255,107,44,0.1)]' }
+      case 'config': return { icon: <Settings size={14} className="text-[#ff6b2c]" />, bg: 'bg-[rgba(255,107,44,0.1)]' }
+      default: return { icon: <MessageSquare size={14} className="text-emerald-500" />, bg: 'bg-emerald-900/30' }
     }
   }
 
   return (
-    <div className="space-y-6 pb-8">
-      {/* 1. Title */}
-      <div className="flex flex-col gap-1">
-        <h2 className="text-3xl font-bold tracking-tight text-heading">Visão Geral</h2>
-        <p className="text-subtle">Veja o que está acontecendo com seus projetos hoje.</p>
-      </div>
+    <PageTransition>
+      <StaggerContainer className="space-y-6 pb-8">
+        {/* 1. Title */}
+        <StaggerItem>
+          <div className="flex flex-col gap-1">
+            <h2
+              className="text-3xl font-bold tracking-tight text-heading"
+            >
+              Visão Geral
+            </h2>
+            <p className="text-[#8a8a8a]">Veja o que está acontecendo com seus projetos hoje.</p>
+          </div>
+        </StaggerItem>
 
-      {/* 2. Quick Actions */}
-      <div className="flex flex-wrap gap-2">
-        <Link href="/dashboard/assistants">
-          <Button variant="outline" size="sm" className="gap-1.5"><Bot size={14} /> Criar Assistente</Button>
-        </Link>
-        <Link href="/dashboard/assistants">
-          <Button variant="outline" size="sm" className="gap-1.5"><FileText size={14} /> Adicionar Arquivo</Button>
-        </Link>
-        <Button
-          variant="outline"
-          size="sm"
-          className="gap-1.5"
-          onPress={handleQuickTest}
-          isDisabled={assistants.length === 0}
-        >
-          <MessageSquare size={14} /> Testar Assistente
-        </Button>
-        <Link href="/dashboard/assistants">
-          <Button variant="outline" size="sm" className="gap-1.5"><BarChart3 size={14} /> Ver Logs</Button>
-        </Link>
-      </div>
+        {/* 2. Quick Actions */}
+        <StaggerItem>
+          <div className="flex flex-wrap gap-2">
+            <Link href="/dashboard/assistants">
+              <button className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-medium transition-all text-[#8a8a8a] hover:text-[#f0f0f0]" style={{ background: 'transparent', border: '1px solid #1e1e1e' }}>
+                <Bot size={14} /> Criar Assistente
+              </button>
+            </Link>
+            <Link href="/dashboard/assistants">
+              <button className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-medium transition-all text-[#8a8a8a] hover:text-[#f0f0f0]" style={{ background: 'transparent', border: '1px solid #1e1e1e' }}>
+                <FileText size={14} /> Adicionar Arquivo
+              </button>
+            </Link>
+            <button
+              className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-medium transition-all text-[#8a8a8a] hover:text-[#f0f0f0] disabled:opacity-40"
+              style={{ background: 'transparent', border: '1px solid #1e1e1e' }}
+              onClick={handleQuickTest}
+              disabled={assistants.length === 0}
+            >
+              <MessageSquare size={14} /> Testar Assistente
+            </button>
+            <Link href="/dashboard/assistants">
+              <button className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-medium transition-all text-[#8a8a8a] hover:text-[#f0f0f0]" style={{ background: 'transparent', border: '1px solid #1e1e1e' }}>
+                <BarChart3 size={14} /> Ver Logs
+              </button>
+            </Link>
+          </div>
+        </StaggerItem>
 
-      {/* 3. Stats Grid */}
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-        {stats.map((stat, i) => (
-          <Card key={i} className="shadow-sm">
-            <Card.Content className="p-4">
-              <div className="flex flex-row items-center justify-between pb-1">
-                <p className="text-sm font-medium text-subtle">{stat.title}</p>
-                <div className="w-7 h-7 rounded-full bg-raised flex items-center justify-center shrink-0 text-muted"><stat.icon size={14} /></div>
-              </div>
-              <div className="text-xl font-bold text-heading">{isLoading ? '...' : stat.value}</div>
-              <p className="text-xs text-subtle">{stat.subtitle}</p>
-              {!isLoading && stat.extra}
-            </Card.Content>
-          </Card>
-        ))}
-      </div>
+        {/* 3. Stats Grid */}
+        <StaggerItem>
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+            {stats.map((stat, i) => {
+              const iconStyle = statIconStyles[stat.title] || statIconStyles.Assistentes
+              const isFirst = i === 0
+              return (
+                <div
+                  key={i}
+                  className={`glass-card p-4 relative overflow-hidden ${isFirst ? 'glow-orange' : ''}`}
+                >
+                  <div className="flex flex-row items-center justify-between pb-1">
+                    <p className="text-sm font-medium text-[#8a8a8a]">{stat.title}</p>
+                    <div
+                      className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0"
+                      style={{ background: iconStyle.bg }}
+                    >
+                      <stat.icon size={16} className={i === 0 ? 'text-[#ff6b2c]' : i === 1 ? 'text-emerald-400' : i === 2 ? 'text-blue-400' : 'text-purple-400'} />
+                    </div>
+                  </div>
+                  <div className="text-xl font-bold text-heading">
+                    {isLoading ? '...' : stat.value}
+                  </div>
+                  <p className="text-xs text-[#8a8a8a]">{stat.subtitle}</p>
+                  {!isLoading && stat.extra}
+                </div>
+              )
+            })}
+          </div>
+        </StaggerItem>
 
-      {/* 4. Usage Over Time */}
-      <Card className="shadow-sm">
-        <Card.Header className="flex flex-col items-start px-6 pt-5 pb-0">
-          <Card.Title className="font-semibold text-base text-heading">Uso ao Longo do Tempo</Card.Title>
-          <Card.Description className="text-sm text-subtle">Requisições e tokens por dia — últimos 14 dias</Card.Description>
-        </Card.Header>
-        <Card.Content className="px-6 pb-5 pt-4">
-          <UsageChart data={usageData} loading={statsLoading} error={statsError} />
-        </Card.Content>
-      </Card>
-
-      {/* 4b. Pie + Area Charts */}
-      <div className="grid gap-6 grid-cols-1 lg:grid-cols-2">
-        <Card className="shadow-sm">
-          <Card.Header className="flex flex-col items-start px-6 pt-5 pb-0">
-            <Card.Title className="font-semibold text-base text-heading">Distribuição por Assistente</Card.Title>
-            <Card.Description className="text-sm text-subtle">Tokens usados nos últimos 7 dias</Card.Description>
-          </Card.Header>
-          <Card.Content className="px-6 pb-5 pt-4 flex items-center justify-center">
-            <PieChart
-              data={(() => {
-                const colors = ['#ff6b2c', '#ff8533', '#ffaa66', '#cc5500', '#e67300', '#ff944d', '#b34700', '#ffbf80']
-                return assistants.map((a, i) => ({
-                  label: a.name,
-                  value: assistantStats[a.id]?.total_tokens ?? 0,
-                  color: colors[i % colors.length],
-                }))
-              })()}
-            />
-          </Card.Content>
-        </Card>
-
-        <Card className="shadow-sm">
-          <Card.Header className="flex flex-col items-start px-6 pt-5 pb-0">
-            <Card.Title className="font-semibold text-base text-heading">Tendência de Tokens</Card.Title>
-            <Card.Description className="text-sm text-subtle">Uso diário de tokens — últimos 14 dias</Card.Description>
-          </Card.Header>
-          <Card.Content className="px-6 pb-5 pt-4">
-            <AreaChart data={usageData.map(d => ({ date: d.date, value: d.tokens }))} />
-          </Card.Content>
-        </Card>
-      </div>
-
-      {/* 5 + 6. Split: Seus Assistentes | Atividade Recente */}
-      <div className="grid gap-6 lg:grid-cols-2">
-
-        {/* Seus Assistentes */}
-        <Card className="shadow-sm flex flex-col">
-          <Card.Header className="flex flex-col items-start px-6 pt-5 pb-0 shrink-0">
-            <div className="flex items-center justify-between w-full">
-              <div>
-                <Card.Title className="font-semibold text-base text-heading">Seus Assistentes</Card.Title>
-                <Card.Description className="text-sm text-subtle">Status e métricas de cada assistente</Card.Description>
-              </div>
-              <Link href="/dashboard/assistants">
-                <Button variant="ghost" size="sm" className="text-subtle text-xs border-none">Ver todos →</Button>
-              </Link>
+        {/* 4. Usage Over Time */}
+        <StaggerItem>
+          <div className="glass-card p-6">
+            <div className="mb-4">
+              <h3 className="font-semibold text-base text-[#f0f0f0]">Uso ao Longo do Tempo</h3>
+              <p className="text-sm text-[#8a8a8a]" style={{ fontFamily: "'JetBrains Mono', 'Fira Code', monospace" }}>Requisições e tokens por dia — últimos 14 dias</p>
             </div>
-          </Card.Header>
-          <Card.Content className="p-4 overflow-y-auto" style={{ maxHeight: '520px' }}>
-            {isLoading ? (
-              <p className="text-sm text-subtle p-2">Carregando...</p>
-            ) : assistants.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-10 text-center">
-                <div className="mb-3 text-muted"><Bot size={36} strokeWidth={1.5} /></div>
-                <h3 className="text-sm font-semibold text-heading mb-1">Nenhum assistente ainda</h3>
-                <p className="text-xs text-subtle mb-4 max-w-xs">Crie seu primeiro assistente para começar com atendimento ao cliente com IA.</p>
-                <Link href="/dashboard/assistants">
-                  <Button variant="primary" size="sm">Criar Assistente</Button>
-                </Link>
+            <UsageChart data={usageData} loading={statsLoading} error={statsError} />
+          </div>
+        </StaggerItem>
+
+        {/* 4b. Pie + Area Charts */}
+        <StaggerItem>
+          <div className="grid gap-6 grid-cols-1 lg:grid-cols-2">
+            <div className="glass-card p-6">
+              <div className="mb-4">
+                <h3 className="font-semibold text-base text-[#f0f0f0]">Distribuição por Assistente</h3>
+                <p className="text-sm text-[#8a8a8a]" style={{ fontFamily: "'JetBrains Mono', 'Fira Code', monospace" }}>Tokens usados nos últimos 7 dias</p>
               </div>
-            ) : (
-              <div className="space-y-1">
-                {assistants.map((assistant) => {
-                  const status = getStatus(assistant)
-                  const stats = assistantStats[assistant.id]
-                  const sparkline = stats?.sparkline?.length ? stats.sparkline : null
-                  const msgs = stats?.total_messages ?? 0
-                  const tokens = stats?.total_tokens ?? 0
-                  const lastAt = stats?.last_interaction_at ?? null
-                  const tokensStr = tokens > 1000 ? `${(tokens / 1000).toFixed(1)}k` : `${tokens}`
-                  const cost = `$${((tokens / 1000) * 0.002).toFixed(2)}`
+              <div className="flex items-center justify-center">
+                <PieChart
+                  data={(() => {
+                    const colors = ['#ff6b2c', '#ff8533', '#ff6b2c', '#cc5500', '#ff6b2c', '#ff8533', '#b34700', '#ffbf80']
+                    return assistants.map((a, i) => ({
+                      label: a.name,
+                      value: assistantStats[a.id]?.total_tokens ?? 0,
+                      color: colors[i % colors.length],
+                    }))
+                  })()}
+                />
+              </div>
+            </div>
 
-                  return (
-                    <div key={assistant.id} className="flex flex-col gap-2 p-3 rounded-xl hover:bg-raised/60 transition-colors">
-                      <div className="flex items-start gap-3">
-                        {/* Avatar */}
-                        <div className="w-9 h-9 rounded-full bg-gradient-to-br from-[#ff6b2c] to-[#ff8533] flex items-center justify-center text-sm font-bold text-white shrink-0">
-                          {assistant.name.charAt(0).toUpperCase()}
-                        </div>
+            <div className="glass-card p-6">
+              <div className="mb-4">
+                <h3 className="font-semibold text-base text-[#f0f0f0]">Tendência de Tokens</h3>
+                <p className="text-sm text-[#8a8a8a]" style={{ fontFamily: "'JetBrains Mono', 'Fira Code', monospace" }}>Uso diário de tokens — últimos 14 dias</p>
+              </div>
+              <AreaChart data={usageData.map(d => ({ date: d.date, value: d.tokens }))} />
+            </div>
+          </div>
+        </StaggerItem>
 
-                        {/* Info */}
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <p className="text-sm font-semibold text-heading">{assistant.name}</p>
-                            <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold uppercase flex items-center gap-1 ${status.cls}`}>
-                              <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${status.dot}`} />
-                              {status.label}
-                            </span>
-                          </div>
-                          <p className="text-xs text-subtle mt-0.5 truncate">
-                            {assistant.llmProvider} · {assistant.model}
-                          </p>
-                          <div className="flex items-center gap-3 mt-1 flex-wrap">
-                            <span className="text-[11px] text-subtle flex items-center gap-1">
-                              <MessageSquare size={10} /> <span className="text-heading font-medium">{msgs}</span> conv (7d)
-                            </span>
-                            <span className="text-[11px] text-subtle flex items-center gap-1">
-                              <Hash size={10} /> {tokensStr} · {cost}
-                            </span>
-                            {lastAt && (
-                              <span className="text-[11px] text-subtle flex items-center gap-1"><Clock size={10} /> {relativeTime(lastAt)}</span>
+        {/* 5 + 6. Assistants + Activity */}
+        <StaggerItem>
+          <div className="grid gap-6 lg:grid-cols-2">
+            {/* Seus Assistentes */}
+            <div className="glass-card flex flex-col">
+              <div className="px-6 pt-5 pb-3 shrink-0">
+                <div className="flex items-center justify-between w-full">
+                  <div>
+                    <h3 className="font-semibold text-base text-[#f0f0f0]">Seus Assistentes</h3>
+                    <p className="text-sm text-[#8a8a8a]">Status e métricas de cada assistente</p>
+                  </div>
+                  <Link href="/dashboard/assistants">
+                    <button className="text-[#8a8a8a] text-xs hover:text-[#ff6b2c] transition-colors">Ver todos →</button>
+                  </Link>
+                </div>
+              </div>
+              <div className="p-4 overflow-y-auto" style={{ maxHeight: '520px' }}>
+                {isLoading ? (
+                  <p className="text-sm text-[#8a8a8a] p-2">Carregando...</p>
+                ) : assistants.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-10 text-center">
+                    {/* Cat mascot silhouette for empty state */}
+                    <div className="mb-4 opacity-30">
+                      <svg viewBox="0 0 120 120" width={72} height={72} fill="none">
+                        <path d="M18 72C18 44 34 24 60 24C86 24 102 44 102 72C102 92 88 108 60 108C32 108 18 92 18 72Z" fill="#ff6b2c" opacity="0.3" />
+                        <path d="M26 52L16 18L46 38Z" fill="#ff6b2c" opacity="0.2" />
+                        <path d="M94 52L104 18L74 38Z" fill="#ff6b2c" opacity="0.2" />
+                        <ellipse cx="44" cy="68" rx="9" ry="7" fill="#ff6b2c" opacity="0.15" />
+                        <ellipse cx="76" cy="68" rx="9" ry="7" fill="#ff6b2c" opacity="0.15" />
+                        <path d="M56 84L60 80L64 84L60 88Z" fill="#ff6b2c" opacity="0.15" />
+                      </svg>
+                    </div>
+                    <h3 className="text-sm font-semibold text-[#f0f0f0] mb-1">Crie seu primeiro assistente</h3>
+                    <p className="text-xs text-[#8a8a8a] mb-4 max-w-xs">Configure um assistente de IA para atendimento ao cliente via WhatsApp ou Telegram.</p>
+                    <Link href="/dashboard/assistants">
+                      <button className="btn-neu text-sm">Criar Assistente</button>
+                    </Link>
+                  </div>
+                ) : (
+                  <div className="space-y-1">
+                    {assistants.map((assistant) => {
+                      const status = getStatus(assistant)
+                      const stats = assistantStats[assistant.id]
+                      const sparkline = stats?.sparkline?.length ? stats.sparkline : null
+                      const msgs = stats?.total_messages ?? 0
+                      const tokens = stats?.total_tokens ?? 0
+                      const lastAt = stats?.last_interaction_at ?? null
+                      const tokensStr = tokens > 1000 ? `${(tokens / 1000).toFixed(1)}k` : `${tokens}`
+                      const cost = `$${((tokens / 1000) * 0.002).toFixed(2)}`
+
+                      return (
+                        <div
+                          key={assistant.id}
+                          className="flex flex-col gap-2 p-3 rounded-xl transition-all duration-200 hover:bg-[rgba(255,255,255,0.03)]"
+                          style={{ border: '1px solid transparent' }}
+                          onMouseEnter={(e) => (e.currentTarget.style.borderColor = '#1e1e1e')}
+                          onMouseLeave={(e) => (e.currentTarget.style.borderColor = 'transparent')}
+                        >
+                          <div className="flex items-start gap-3">
+                            <div
+                              className="w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold text-white shrink-0"
+                              style={{
+                                background: 'linear-gradient(135deg, #ff6b2c, #ff8533)',
+                                border: '2px solid rgba(255,107,44,0.3)',
+                              }}
+                            >
+                              {assistant.name.charAt(0).toUpperCase()}
+                            </div>
+
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <p className="text-sm font-semibold text-[#f0f0f0]">{assistant.name}</p>
+                                <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold uppercase flex items-center gap-1 ${status.cls}`}>
+                                  <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${status.dot}`} />
+                                  {status.label}
+                                </span>
+                              </div>
+                              <p className="text-xs text-[#8a8a8a] mt-0.5 truncate" style={{ fontFamily: "'JetBrains Mono', 'Fira Code', monospace" }}>
+                                {assistant.llmProvider} · {assistant.model}
+                              </p>
+                              <div className="flex items-center gap-3 mt-1 flex-wrap">
+                                <span className="text-[11px] text-[#8a8a8a] flex items-center gap-1" style={{ fontFamily: "'JetBrains Mono', 'Fira Code', monospace" }}>
+                                  <MessageSquare size={10} /> <span className="text-[#f0f0f0] font-medium">{msgs}</span> conv (7d)
+                                </span>
+                                <span className="text-[11px] text-[#8a8a8a] flex items-center gap-1" style={{ fontFamily: "'JetBrains Mono', 'Fira Code', monospace" }}>
+                                  <Hash size={10} /> {tokensStr} · {cost}
+                                </span>
+                                {lastAt && (
+                                  <span className="text-[11px] text-[#8a8a8a] flex items-center gap-1" style={{ fontFamily: "'JetBrains Mono', 'Fira Code', monospace" }}>
+                                    <Clock size={10} /> {relativeTime(lastAt)}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+
+                            {sparkline && (
+                              <div className="hidden sm:flex items-end pt-1">
+                                <Sparkline data={sparkline} />
+                              </div>
                             )}
                           </div>
-                        </div>
 
-                        {/* Sparkline */}
-                        {sparkline && (
-                          <div className="hidden sm:flex items-end pt-1">
-                            <Sparkline data={sparkline} />
+                          <div className="flex items-center gap-1.5 pl-12">
+                            <button
+                              className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium transition-all text-[#8a8a8a] hover:text-[#ff6b2c]"
+                              style={{ background: '#1a1a1a', border: '1px solid #1e1e1e' }}
+                              onClick={() => setTestingAssistant(assistant)}
+                            >
+                              <MessageSquare size={12} />Testar
+                            </button>
+                            <Link href={`/dashboard/assistants/${assistant.id}`}>
+                              <button className="px-3 py-1.5 rounded-lg text-xs text-[#8a8a8a] hover:text-[#f0f0f0] transition-colors">
+                                Ver Logs
+                              </button>
+                            </Link>
                           </div>
-                        )}
-                      </div>
-
-                      {/* Actions */}
-                      <div className="flex items-center gap-1.5 pl-12">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="text-xs h-7 px-3"
-                          onPress={() => setTestingAssistant(assistant)}
-                        >
-                          <MessageSquare size={12} className="mr-1 inline-block" />Testar
-                        </Button>
-                        <Link href={`/dashboard/assistants/${assistant.id}`}>
-                          <Button variant="ghost" size="sm" className="text-xs h-7 px-3 border-none text-subtle">
-                            Ver Logs
-                          </Button>
-                        </Link>
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
-            )}
-          </Card.Content>
-        </Card>
-
-        {/* Atividade Recente */}
-        <Card className="shadow-sm flex flex-col">
-          <Card.Header className="flex flex-col items-start px-6 pt-5 pb-0 shrink-0">
-            <div className="flex items-center justify-between w-full">
-              <div>
-                <Card.Title className="font-semibold text-base text-heading">Atividade Recente</Card.Title>
-                <Card.Description className="text-sm text-subtle">Últimas interações e eventos</Card.Description>
-              </div>
-              {statsLoading && <span className="text-xs text-subtle animate-pulse">Carregando...</span>}
-            </div>
-          </Card.Header>
-          <Card.Content className="p-4 overflow-y-auto" style={{ maxHeight: '520px' }}>
-            {!statsLoading && activity.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-10 text-center">
-                <div className="mb-3 text-muted"><InboxIcon size={36} strokeWidth={1.5} /></div>
-                <p className="text-sm text-subtle">Nenhuma atividade registrada ainda.</p>
-                <p className="text-xs text-subtle mt-1">As conversas aparecerão aqui automaticamente.</p>
-              </div>
-            ) : (
-              <div className="space-y-0">
-                {(activity.length > 0 ? activity : []).map((event, i) => {
-                  const { icon, bg } = activityIcon(event.event_type)
-                  return (
-                    <div
-                      key={i}
-                      className={`flex items-start gap-3 py-3 ${i < activity.length - 1 ? 'border-b border-dim' : ''}`}
-                    >
-                      <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm shrink-0 mt-0.5 ${bg}`}>
-                        {icon}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm text-heading leading-snug">{event.description}</p>
-                        {event.assistant_name && (
-                          <p className="text-[11px] text-subtle mt-0.5">{event.assistant_name}</p>
-                        )}
-                      </div>
-                      <span className="text-[11px] text-subtle shrink-0 mt-0.5">{relativeTime(event.timestamp)}</span>
-                    </div>
-                  )
-                })}
-                {statsLoading && (
-                  <div className="space-y-3 pt-1">
-                    {Array.from({ length: 5 }).map((_, i) => (
-                      <div key={i} className="flex items-center gap-3 py-2">
-                        <div className="w-8 h-8 rounded-full bg-raised animate-pulse shrink-0" />
-                        <div className="flex-1 space-y-1.5">
-                          <div className="h-3 bg-raised rounded animate-pulse w-3/4" />
-                          <div className="h-2.5 bg-raised rounded animate-pulse w-1/2" />
                         </div>
-                      </div>
-                    ))}
+                      )
+                    })}
                   </div>
                 )}
               </div>
-            )}
-          </Card.Content>
-        </Card>
+            </div>
 
-      </div>
+            {/* Atividade Recente */}
+            <div className="glass-card flex flex-col">
+              <div className="px-6 pt-5 pb-3 shrink-0">
+                <div className="flex items-center justify-between w-full">
+                  <div>
+                    <h3 className="font-semibold text-base text-[#f0f0f0]">Atividade Recente</h3>
+                    <p className="text-sm text-[#8a8a8a]">Últimas interações e eventos</p>
+                  </div>
+                  {statsLoading && <span className="text-xs text-[#8a8a8a] animate-pulse">Carregando...</span>}
+                </div>
+              </div>
+              <div className="p-4 overflow-y-auto" style={{ maxHeight: '520px' }}>
+                {!statsLoading && activity.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-10 text-center">
+                    <div className="mb-3 opacity-30">
+                      <InboxIcon size={36} strokeWidth={1.5} className="text-[#ff6b2c]" />
+                    </div>
+                    <p className="text-sm text-[#8a8a8a]">Nenhuma atividade registrada ainda.</p>
+                    <p className="text-xs text-[#5a5a5a] mt-1">As conversas aparecerão aqui automaticamente.</p>
+                  </div>
+                ) : (
+                  <div className="space-y-0">
+                    {(activity.length > 0 ? activity : []).map((event, i) => {
+                      const { icon, bg } = activityIcon(event.event_type)
+                      return (
+                        <div
+                          key={i}
+                          className={`flex items-start gap-3 py-3 ${i < activity.length - 1 ? '' : ''}`}
+                          style={{ borderBottom: i < activity.length - 1 ? '1px solid #1e1e1e' : 'none' }}
+                        >
+                          <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm shrink-0 mt-0.5 ${bg}`}>
+                            {icon}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm text-[#f0f0f0] leading-snug">{event.description}</p>
+                            {event.assistant_name && (
+                              <p className="text-[11px] text-[#8a8a8a] mt-0.5" style={{ fontFamily: "'JetBrains Mono', 'Fira Code', monospace" }}>{event.assistant_name}</p>
+                            )}
+                          </div>
+                          <span className="text-[11px] text-[#8a8a8a] shrink-0 mt-0.5" style={{ fontFamily: "'JetBrains Mono', 'Fira Code', monospace" }}>{relativeTime(event.timestamp)}</span>
+                        </div>
+                      )
+                    })}
+                    {statsLoading && (
+                      <div className="space-y-3 pt-1">
+                        {Array.from({ length: 5 }).map((_, i) => (
+                          <div key={i} className="flex items-center gap-3 py-2">
+                            <div className="w-8 h-8 rounded-full animate-pulse shrink-0" style={{ background: '#1e1e1e' }} />
+                            <div className="flex-1 space-y-1.5">
+                              <div className="h-3 rounded animate-pulse w-3/4" style={{ background: '#1e1e1e' }} />
+                              <div className="h-2.5 rounded animate-pulse w-1/2" style={{ background: '#1a1a1a' }} />
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </StaggerItem>
 
-      {/* Modals */}
-      {testingAssistant && (
-        <ChatTestModal assistant={testingAssistant} onClose={() => setTestingAssistant(null)} onMessageSent={loadStats} />
-      )}
-      {showPicker && (
-        <AssistantPicker
-          assistants={assistants}
-          onSelect={openTestModal}
-          onClose={() => setShowPicker(false)}
-        />
-      )}
-    </div>
+        {/* Modals */}
+        {testingAssistant && (
+          <ChatTestModal assistant={testingAssistant} onClose={() => setTestingAssistant(null)} onMessageSent={loadStats} />
+        )}
+        {showPicker && (
+          <AssistantPicker
+            assistants={assistants}
+            onSelect={openTestModal}
+            onClose={() => setShowPicker(false)}
+          />
+        )}
+      </StaggerContainer>
+    </PageTransition>
   )
 }

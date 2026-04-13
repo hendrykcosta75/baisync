@@ -275,9 +275,9 @@ function BaileysForm({ assistant, shareToken, isReadOnly }: { assistant: Assista
                 Desconectar
               </Button>
             ) : (
-              <Button variant="primary" type="submit" isDisabled={connecting}>
+              <button className="btn-neu text-sm" type="submit" disabled={connecting}>
                 {connecting ? 'Conectando...' : 'Conectar'}
-              </Button>
+              </button>
             )}
           </div>
         )}
@@ -831,7 +831,7 @@ function CommonSettingsSection({ assistant, shareToken, isReadOnly }: { assistan
             {saved && (
               <span className="text-sm text-emerald-600 dark:text-emerald-400 font-medium">Salvo!</span>
             )}
-            <Button variant="primary" type="submit">Salvar Configurações</Button>
+            <button className="btn-neu text-sm" type="submit">Salvar Configurações</button>
           </div>
         )}
       </Form>

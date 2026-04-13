@@ -9,21 +9,21 @@ import { NotificationBell } from '@/components/notifications/NotificationBell'
 import { WorkspaceModal } from '@/components/workspace/workspace-modal'
 import { Users } from 'lucide-react'
 
-const mono = "'JetBrains Mono', 'Fira Code', monospace"
-
 export function Header({ onMenuClick }: { onMenuClick: () => void }) {
   const { user, logout } = useAuthStore()
   const { activeWorkspace } = useWorkspaceStore()
   const router = useRouter()
   const [wsModalOpen, setWsModalOpen] = useState(false)
 
-  const isPersonal = activeWorkspace?.workspace_type === 'personal'
-
   return (
     <>
       <header
-        className="h-14 flex items-center justify-between px-4 lg:px-6 border-b border-[#2a2a2a] sticky top-0 z-30"
-        style={{ background: '#0d0d0d' }}
+        className="h-14 flex items-center justify-between px-4 lg:px-6 sticky top-0 z-30"
+        style={{
+          background: 'rgba(10, 10, 10, 0.8)',
+          backdropFilter: 'blur(20px)',
+          WebkitBackdropFilter: 'blur(20px)',
+        }}
       >
         <div className="flex items-center gap-3">
           {/* Mobile menu toggle */}
@@ -38,11 +38,11 @@ export function Header({ onMenuClick }: { onMenuClick: () => void }) {
             </svg>
           </Button>
 
-          {/* PAINEL title with shimmer */}
+          {/* PAINEL title with gradient shimmer */}
           <span
             className="hidden sm:inline-block text-[13px] font-bold tracking-[2px] uppercase"
             style={{
-              fontFamily: mono,
+              fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
               background: 'linear-gradient(90deg, #ff6b2c, #ff8533, #ff6b2c)',
               backgroundSize: '200% 100%',
               WebkitBackgroundClip: 'text',
@@ -59,7 +59,7 @@ export function Header({ onMenuClick }: { onMenuClick: () => void }) {
           {/* Workspace members button */}
           <button
             onClick={() => setWsModalOpen(true)}
-            className="w-[34px] h-[34px] rounded-full flex items-center justify-center text-[#8a8a8a] hover:text-white hover:bg-[#252525] transition-colors relative"
+            className="w-[34px] h-[34px] rounded-full flex items-center justify-center text-[#8a8a8a] hover:text-[#f0f0f0] hover:bg-[rgba(255,107,44,0.06)] transition-colors relative"
             title="Membros do workspace"
           >
             <Users size={17} />
@@ -72,10 +72,14 @@ export function Header({ onMenuClick }: { onMenuClick: () => void }) {
               <div
                 role="button"
                 tabIndex={0}
-                className="w-[34px] h-[34px] rounded-full flex items-center justify-center text-[13px] font-semibold text-white cursor-pointer transition-opacity hover:opacity-80"
-                style={{ background: '#ff6b2c' }}
+                className="w-[34px] h-[34px] rounded-[10px] flex items-center justify-center text-[13px] font-semibold cursor-pointer transition-all"
+                style={{
+                  background: '#121212',
+                  boxShadow: '3px 3px 7px rgba(0,0,0,0.45), -1px -1px 5px rgba(255,255,255,0.03)',
+                  color: '#D4835A',
+                }}
               >
-                {user?.name?.slice(0, 1).toUpperCase() || 'U'}
+                {user?.name?.slice(0, 2).toUpperCase() || 'U'}
               </div>
             </Dropdown.Trigger>
             <Dropdown.Popover>

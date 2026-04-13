@@ -193,18 +193,18 @@ function AudioConfigSection({ assistant, shareToken }: { assistant: Assistant; s
                   <label
                     className={`flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-colors ${
                       value === m.id
-                        ? 'border-primary bg-primary/5'
-                        : 'border-dim hover:border-primary/40'
+                        ? 'border-[#ff6b2c] bg-[#ff6b2c]/5'
+                        : 'border-dim hover:border-[#ff6b2c]/40'
                     }`}
                     onClick={() => onChange(m.id)}
                   >
                     <span className={`mt-0.5 w-4 h-4 rounded-full border-2 flex-shrink-0 flex items-center justify-center ${
-                      value === m.id ? 'border-primary' : 'border-muted'
+                      value === m.id ? 'border-[#ff6b2c]' : 'border-muted'
                     }`}>
-                      {value === m.id && <span className="w-2 h-2 rounded-full bg-primary" />}
+                      {value === m.id && <span className="w-2 h-2 rounded-full bg-[#ff6b2c]" />}
                     </span>
                     <span>
-                      <span className="block text-sm font-medium text-foreground">{m.label}</span>
+                      <span className={`block text-sm font-medium ${value === m.id ? 'text-[#ff6b2c]' : 'text-foreground'}`}>{m.label}</span>
                       <span className="block text-xs text-muted mt-0.5">{m.description}</span>
                     </span>
                   </label>
@@ -378,9 +378,9 @@ function AudioConfigSection({ assistant, shareToken }: { assistant: Assistant; s
         )}
 
         <div className="flex items-center gap-3 pt-1">
-          <Button type="submit" variant="primary" size="sm">
+          <button type="submit" className="btn-neu text-sm">
             Salvar configurações de áudio
-          </Button>
+          </button>
           {saved && <span className="text-xs font-medium text-emerald-500">Salvo!</span>}
         </div>
       </Form>
@@ -445,9 +445,9 @@ export function OverviewTab({ assistant, isReadOnly, shareToken }: OverviewTabPr
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-lg font-semibold text-foreground">Identidade do Assistente</h3>
           {!isReadOnly && (
-            <Button variant="secondary" size="sm" onPress={() => setIsEditing(true)}>
+            <button className="btn-neu text-sm" onClick={() => setIsEditing(true)}>
               Editar Configurações
-            </Button>
+            </button>
           )}
         </div>
 

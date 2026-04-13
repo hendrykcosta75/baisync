@@ -489,7 +489,7 @@ export function ConversationsTab({ assistant, shareToken, isReadOnly }: Conversa
                           className={`flex items-end gap-1.5 ${msg.sender === 'user' ? 'justify-start' : 'justify-end'}`}
                         >
                           {msg.sender === 'user' ? (
-                            <div className="max-w-[75%] px-4 py-2.5 rounded-2xl text-sm bg-raised text-body">
+                            <div className="max-w-[75%] px-4 py-2.5 rounded-2xl text-sm text-body" style={{ background: '#1e1e1e', border: '1px solid #282828' }}>
                               <p className="whitespace-pre-wrap">{msg.content}</p>
                               <div className="flex items-center gap-2 mt-1 text-subtle">
                                 <span className="text-[10px]">

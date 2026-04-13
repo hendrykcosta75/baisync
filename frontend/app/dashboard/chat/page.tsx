@@ -88,7 +88,7 @@ function Section({
     <div className="mb-1">
       <div className="flex items-center px-3 py-1.5 group">
         <button
-          className="flex items-center gap-1 text-[11px] uppercase font-bold text-[#5a5a5a] tracking-wider hover:text-[#c0c0c0] transition-colors"
+          className="flex items-center gap-1 text-[11px] uppercase font-bold text-[#555555] tracking-wider hover:text-[#c0c0c0] transition-colors"
           style={{ fontFamily: mono }}
           onClick={() => setOpen(!open)}
         >
@@ -165,19 +165,19 @@ function ChannelSettingsModal({ channel, onClose }: { channel: Channel; onClose:
       <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50" onClick={onClose} />
       <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
         <div
-          className="w-full max-w-lg rounded-xl border border-[#2a2a2a] shadow-2xl overflow-hidden"
-          style={{ background: '#1a1a1a' }}
+          className="w-full max-w-lg rounded-xl shadow-2xl overflow-hidden"
+          style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)' }}
           onClick={e => e.stopPropagation()}
         >
           {/* Header */}
-          <div className="flex items-center justify-between px-5 py-4 border-b border-[#2a2a2a]">
+          <div className="flex items-center justify-between px-5 py-4" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
             <div className="flex items-center gap-2">
-              <Settings size={16} className="text-[#5a5a5a]" />
-              <h3 className="text-white font-bold text-[15px]" style={{ fontFamily: mono }}>
+              <Settings size={16} className="text-[#555555]" />
+              <h3 className="font-bold text-[15px]" style={{ fontFamily: mono, color: '#e2e0da' }}>
                 Configurações do Canal
               </h3>
             </div>
-            <button onClick={onClose} className="text-[#5a5a5a] hover:text-white transition-colors">
+            <button onClick={onClose} className="text-[#555555] hover:text-[#e2e0da] transition-colors">
               <X size={18} />
             </button>
           </div>
@@ -185,30 +185,34 @@ function ChannelSettingsModal({ channel, onClose }: { channel: Channel; onClose:
           <div className="px-5 py-4 space-y-5 max-h-[70vh] overflow-y-auto">
             {/* Name & Description */}
             <div className="space-y-3">
-              <label className="text-[11px] uppercase font-bold text-[#5a5a5a] tracking-wider" style={{ fontFamily: mono }}>
+              <label className="text-[11px] uppercase font-bold text-[#555555] tracking-wider" style={{ fontFamily: mono }}>
                 Nome do canal
               </label>
               <input
                 value={channelName}
                 onChange={e => setChannelName(e.target.value)}
-                className="w-full rounded-lg px-3 py-2.5 text-[13px] text-white border border-[#2a2a2a] bg-[#141414] focus:border-[#ff6b2c] focus:outline-none"
-                style={{ fontFamily: mono }}
+                className="w-full rounded-lg px-3 py-2.5 text-[13px] focus:outline-none"
+                style={{ fontFamily: mono, color: '#e2e0da', border: '1px solid rgba(255,255,255,0.06)', background: 'rgba(17,17,17,0.8)', }}
+                onFocus={e => e.currentTarget.style.borderColor = 'rgba(249,115,22,0.4)'}
+                onBlur={e => e.currentTarget.style.borderColor = 'rgba(255,255,255,0.06)'}
               />
-              <label className="text-[11px] uppercase font-bold text-[#5a5a5a] tracking-wider" style={{ fontFamily: mono }}>
+              <label className="text-[11px] uppercase font-bold text-[#555555] tracking-wider" style={{ fontFamily: mono }}>
                 Descrição
               </label>
               <input
                 value={channelDesc}
                 onChange={e => setChannelDesc(e.target.value)}
                 placeholder="Descrição opcional..."
-                className="w-full rounded-lg px-3 py-2.5 text-[13px] text-white border border-[#2a2a2a] bg-[#141414] focus:border-[#ff6b2c] focus:outline-none placeholder-[#5a5a5a]"
-                style={{ fontFamily: mono }}
+                className="w-full rounded-lg px-3 py-2.5 text-[13px] focus:outline-none placeholder-[#555555]"
+                style={{ fontFamily: mono, color: '#e2e0da', border: '1px solid rgba(255,255,255,0.06)', background: 'rgba(17,17,17,0.8)', }}
+                onFocus={e => e.currentTarget.style.borderColor = 'rgba(249,115,22,0.4)'}
+                onBlur={e => e.currentTarget.style.borderColor = 'rgba(255,255,255,0.06)'}
               />
               <button
                 onClick={handleSave}
                 disabled={saving || channelName === channel.name && channelDesc === (channel.description || '')}
-                className="w-full py-2.5 rounded-lg text-[13px] font-bold text-white transition-colors disabled:opacity-30"
-                style={{ background: '#ff6b2c', fontFamily: mono }}
+                className="w-full py-2.5 rounded-lg text-[13px] font-bold transition-colors disabled:opacity-30"
+                style={{ background: 'linear-gradient(135deg, #ff6b2c, #ff8533)', fontFamily: mono, color: '#e2e0da' }}
               >
                 {saving ? 'Salvando...' : 'Salvar'}
               </button>
@@ -217,30 +221,33 @@ function ChannelSettingsModal({ channel, onClose }: { channel: Channel; onClose:
             {/* Members */}
             <div className="space-y-3">
               <div className="flex items-center justify-between">
-                <span className="text-[11px] uppercase font-bold text-[#5a5a5a] tracking-wider" style={{ fontFamily: mono }}>
+                <span className="text-[11px] uppercase font-bold text-[#555555] tracking-wider" style={{ fontFamily: mono }}>
                   Membros ({members.length})
                 </span>
                 <button
                   onClick={() => setShowAddMember(!showAddMember)}
-                  className="text-[#5a5a5a] hover:text-[#ff6b2c] transition-colors"
+                  className="text-[#555555] hover:text-[#ff6b2c] transition-colors"
                 >
                   <UserPlus size={14} />
                 </button>
               </div>
 
               {showAddMember && nonMembers.length > 0 && (
-                <div className="rounded-lg border border-[#2a2a2a] overflow-hidden" style={{ background: '#141414' }}>
+                <div className="rounded-lg overflow-hidden" style={{ border: '1px solid rgba(255,255,255,0.06)', background: 'rgba(17,17,17,0.8)' }}>
                   {nonMembers.map(m => (
                     <button
                       key={m.user_id}
-                      className="w-full flex items-center gap-2 px-3 py-2 text-left text-[#8a8a8a] hover:text-white hover:bg-[#252525] transition-colors"
+                      className="w-full flex items-center gap-2 px-3 py-2 text-left text-[#8a8a8a] hover:text-[#e2e0da] transition-colors"
+                      style={{ background: 'transparent' }}
+                      onMouseEnter={e => e.currentTarget.style.background = '#252525'}
+                      onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
                       onClick={() => handleAddMember(m.user_id)}
                     >
                       <div className="w-6 h-6 rounded-full flex items-center justify-center text-[9px] font-bold" style={{ background: 'linear-gradient(135deg, #ff6b2c, #ff8533)', color: '#fff' }}>
                         {(m.user_name || '?').slice(0, 2).toUpperCase()}
                       </div>
                       <span className="text-[12px] truncate" style={{ fontFamily: mono }}>{m.user_name || m.user_email}</span>
-                      <Plus size={12} className="ml-auto text-[#5a5a5a]" />
+                      <Plus size={12} className="ml-auto text-[#555555]" />
                     </button>
                   ))}
                 </div>
@@ -248,17 +255,23 @@ function ChannelSettingsModal({ channel, onClose }: { channel: Channel; onClose:
 
               <div className="space-y-1">
                 {members.map(m => (
-                  <div key={m.user_id} className="flex items-center gap-2 px-3 py-2 rounded-lg group hover:bg-[#252525] transition-colors">
+                  <div
+                    key={m.user_id}
+                    className="flex items-center gap-2 px-3 py-2 rounded-lg group transition-colors"
+                    style={{ background: 'transparent' }}
+                    onMouseEnter={e => e.currentTarget.style.background = '#252525'}
+                    onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                  >
                     <div className="w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0" style={{ background: 'linear-gradient(135deg, #ff6b2c, #ff8533)', color: '#fff' }}>
                       {(m.user_name || '?').slice(0, 2).toUpperCase()}
                     </div>
                     <div className="flex-1 min-w-0">
-                      <p className="text-white text-[13px] truncate" style={{ fontFamily: mono }}>{m.user_name || 'Sem nome'}</p>
-                      <p className="text-[#5a5a5a] text-[11px] truncate" style={{ fontFamily: mono }}>{m.user_email}</p>
+                      <p className="text-[13px] truncate" style={{ fontFamily: mono, color: '#e2e0da' }}>{m.user_name || 'Sem nome'}</p>
+                      <p className="text-[#555555] text-[11px] truncate" style={{ fontFamily: mono }}>{m.user_email}</p>
                     </div>
                     <span className="text-[10px] px-2 py-0.5 rounded-full font-bold" style={{
                       fontFamily: mono,
-                      background: m.role === 'owner' ? 'rgba(255,107,44,0.15)' : '#252525',
+                      background: m.role === 'owner' ? 'rgba(255,107,44,0.12)' : '#252525',
                       color: m.role === 'owner' ? '#ff6b2c' : '#8a8a8a',
                     }}>
                       {m.role}
@@ -266,7 +279,7 @@ function ChannelSettingsModal({ channel, onClose }: { channel: Channel; onClose:
                     {m.user_id !== user?.id && m.role !== 'owner' && (
                       <button
                         onClick={() => handleRemoveMember(m.user_id)}
-                        className="opacity-0 group-hover:opacity-100 text-[#5a5a5a] hover:text-red-400 transition-all"
+                        className="opacity-0 group-hover:opacity-100 text-[#555555] hover:text-red-400 transition-all"
                       >
                         <UserMinus size={14} />
                       </button>
@@ -300,8 +313,10 @@ function ChannelSettingsModal({ channel, onClose }: { channel: Channel; onClose:
                   </button>
                   <button
                     onClick={() => setConfirmDelete(false)}
-                    className="px-4 py-2 rounded-lg text-[12px] font-bold text-[#8a8a8a] border border-[#2a2a2a] hover:bg-[#252525] transition-colors"
-                    style={{ fontFamily: mono }}
+                    className="px-4 py-2 rounded-lg text-[12px] font-bold text-[#8a8a8a] transition-colors"
+                    style={{ fontFamily: mono, border: '1px solid rgba(255,255,255,0.06)', background: 'transparent' }}
+                    onMouseEnter={e => e.currentTarget.style.background = '#252525'}
+                    onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
                   >
                     Cancelar
                   </button>
@@ -360,9 +375,12 @@ function ChannelListPanel() {
 
   if (!activeWorkspace || activeWorkspace.workspace_type === 'personal') {
     return (
-      <div className="w-[240px] border-r border-[#2a2a2a] flex flex-col items-center justify-center p-6 text-center shrink-0" style={{ background: '#141414' }}>
-        <MessageSquare size={28} className="text-[#2a2a2a] mb-3" />
-        <p className="text-[#5a5a5a] text-[12px]" style={{ fontFamily: mono }}>
+      <div
+        className="w-[240px] flex flex-col items-center justify-center p-6 text-center shrink-0"
+        style={{ background: 'rgba(17,17,17,0.6)', backdropFilter: 'blur(20px)', borderRight: '1px solid rgba(255,255,255,0.06)' }}
+      >
+        <MessageSquare size={28} className="text-[#ff6b2c] mb-3" style={{ opacity: 0.4 }} />
+        <p className="text-[#555555] text-[12px]" style={{ fontFamily: mono }}>
           Chat disponível em workspaces de empresa
         </p>
       </div>
@@ -370,9 +388,12 @@ function ChannelListPanel() {
   }
 
   return (
-    <div className="w-[240px] border-r border-[#2a2a2a] flex flex-col shrink-0 overflow-hidden" style={{ background: '#141414' }}>
-      <div className="px-4 py-3 border-b border-[#2a2a2a]">
-        <h3 className="text-white text-[13px] font-bold truncate" style={{ fontFamily: mono }}>
+    <div
+      className="w-[240px] flex flex-col shrink-0 overflow-hidden"
+      style={{ background: 'rgba(17,17,17,0.6)', backdropFilter: 'blur(20px)', borderRight: '1px solid rgba(255,255,255,0.06)' }}
+    >
+      <div className="px-4 py-3" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+        <h3 className="text-[13px] font-bold truncate" style={{ fontFamily: mono, color: '#e2e0da' }}>
           {activeWorkspace.workspace_name}
         </h3>
       </div>
@@ -382,7 +403,7 @@ function ChannelListPanel() {
         <Section
           title="Canais"
           action={
-            <button className="text-[#5a5a5a] hover:text-white p-0.5" onClick={() => setShowCreate(!showCreate)}>
+            <button className="text-[#555555] hover:text-[#e2e0da] p-0.5" onClick={() => setShowCreate(!showCreate)}>
               <Plus size={13} />
             </button>
           }
@@ -395,10 +416,12 @@ function ChannelListPanel() {
                 onChange={e => setNewChannelName(e.target.value)}
                 onKeyDown={e => e.key === 'Enter' && handleCreateChannel()}
                 autoFocus
-                className="flex-1 rounded-md px-2 py-1 text-[12px] text-white border border-[#2a2a2a] bg-[#1a1a1a] focus:border-[#ff6b2c] focus:outline-none"
-                style={{ fontFamily: mono }}
+                className="flex-1 rounded-md px-2 py-1 text-[12px] focus:outline-none"
+                style={{ fontFamily: mono, color: '#e2e0da', border: '1px solid rgba(255,255,255,0.06)', background: 'rgba(255,255,255,0.02)' }}
+                onFocus={e => e.currentTarget.style.borderColor = 'rgba(249,115,22,0.4)'}
+                onBlur={e => e.currentTarget.style.borderColor = 'rgba(255,255,255,0.06)'}
               />
-              <button onClick={handleCreateChannel} className="text-[#ff6b2c] hover:text-white px-1">
+              <button onClick={handleCreateChannel} className="text-[#ff6b2c] hover:text-[#e2e0da] px-1">
                 <Plus size={14} />
               </button>
             </div>
@@ -411,8 +434,13 @@ function ChannelListPanel() {
               <button
                 key={ch.id}
                 className={`w-full flex items-center gap-2 px-3 py-1.5 rounded-md text-left transition-colors ${
-                  isActive ? 'bg-[#ff6b2c]/10 text-[#ff6b2c]' : unread > 0 ? 'text-white' : 'text-[#8a8a8a] hover:text-white hover:bg-[#252525]'
+                  isActive ? 'text-[#ff6b2c]' : unread > 0 ? 'text-[#e2e0da]' : 'text-[#8a8a8a] hover:text-[#e2e0da]'
                 }`}
+                style={{
+                  background: isActive ? 'rgba(255,255,255,0.06)' : undefined,
+                }}
+                onMouseEnter={e => { if (!isActive) e.currentTarget.style.background = '#252525' }}
+                onMouseLeave={e => { if (!isActive) e.currentTarget.style.background = '' }}
                 onClick={() => setActiveChannel(ch)}
               >
                 {ch.type === 'private' ? <Lock size={13} className="shrink-0 opacity-60" /> : <Hash size={13} className="shrink-0 opacity-60" />}
@@ -420,7 +448,7 @@ function ChannelListPanel() {
                   {ch.name}
                 </span>
                 {unread > 0 && (
-                  <span className="ml-auto text-[10px] font-bold bg-[#ff6b2c] text-white w-5 h-5 flex items-center justify-center rounded-full shrink-0">
+                  <span className="ml-auto text-[10px] font-bold text-white w-5 h-5 flex items-center justify-center rounded-full shrink-0" style={{ background: 'linear-gradient(135deg, #ff6b2c, #ff8533)' }}>
                     {unread > 9 ? '9+' : unread}
                   </span>
                 )}
@@ -433,19 +461,22 @@ function ChannelListPanel() {
         <Section
           title="Mensagens Diretas"
           action={
-            <button className="text-[#5a5a5a] hover:text-white p-0.5" onClick={() => setShowDmPicker(!showDmPicker)}>
+            <button className="text-[#555555] hover:text-[#e2e0da] p-0.5" onClick={() => setShowDmPicker(!showDmPicker)}>
               <Plus size={13} />
             </button>
           }
         >
           {showDmPicker && (
-            <div className="mb-1.5 mx-1.5 rounded-md border border-[#2a2a2a] overflow-hidden" style={{ background: '#1a1a1a' }}>
+            <div className="mb-1.5 mx-1.5 rounded-md overflow-hidden" style={{ border: '1px solid rgba(255,255,255,0.06)', background: 'rgba(255,255,255,0.02)' }}>
               {members
                 .filter(m => m.user_id !== user?.id)
                 .map(m => (
                   <button
                     key={m.user_id}
-                    className="w-full flex items-center gap-2 px-3 py-2 text-left text-[#8a8a8a] hover:text-white hover:bg-[#252525] transition-colors"
+                    className="w-full flex items-center gap-2 px-3 py-2 text-left text-[#8a8a8a] hover:text-[#e2e0da] transition-colors"
+                    style={{ background: 'transparent' }}
+                    onMouseEnter={e => e.currentTarget.style.background = '#252525'}
+                    onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
                     onClick={() => handleCreateDm(m.user_id)}
                   >
                     <div className="w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold" style={{ background: 'linear-gradient(135deg, #ff6b2c, #ff8533)', color: '#fff' }}>
@@ -465,8 +496,13 @@ function ChannelListPanel() {
               <button
                 key={dm.id}
                 className={`w-full flex items-center gap-2 px-3 py-1.5 rounded-md text-left transition-colors ${
-                  isActive ? 'bg-[#ff6b2c]/10 text-[#ff6b2c]' : unread > 0 ? 'text-white' : 'text-[#8a8a8a] hover:text-white hover:bg-[#252525]'
+                  isActive ? 'text-[#ff6b2c]' : unread > 0 ? 'text-[#e2e0da]' : 'text-[#8a8a8a] hover:text-[#e2e0da]'
                 }`}
+                style={{
+                  background: isActive ? 'rgba(255,255,255,0.06)' : undefined,
+                }}
+                onMouseEnter={e => { if (!isActive) e.currentTarget.style.background = '#252525' }}
+                onMouseLeave={e => { if (!isActive) e.currentTarget.style.background = '' }}
                 onClick={() => setActiveChannel(dm)}
               >
                 <div className="w-5 h-5 rounded-full flex items-center justify-center text-[8px] font-bold shrink-0" style={{ background: 'linear-gradient(135deg, #ff6b2c, #ff8533)', color: '#fff' }}>
@@ -476,7 +512,7 @@ function ChannelListPanel() {
                   {other?.name || other?.email || 'DM'}
                 </span>
                 {unread > 0 && (
-                  <span className="ml-auto text-[10px] font-bold bg-[#ff6b2c] text-white w-5 h-5 flex items-center justify-center rounded-full shrink-0">
+                  <span className="ml-auto text-[10px] font-bold text-white w-5 h-5 flex items-center justify-center rounded-full shrink-0" style={{ background: 'linear-gradient(135deg, #ff6b2c, #ff8533)' }}>
                     {unread > 9 ? '9+' : unread}
                   </span>
                 )}
@@ -571,8 +607,8 @@ function MarkdownContextMenu({
       <div className="fixed inset-0 z-40" onClick={onClose} onContextMenu={e => { e.preventDefault(); onClose() }} />
       <div
         ref={menuRef}
-        className="fixed z-50 w-48 rounded-lg border border-[#2a2a2a] shadow-2xl py-1"
-        style={{ background: '#1a1a1a', left: adjustedPos.x, top: adjustedPos.y }}
+        className="fixed z-50 w-48 rounded-lg shadow-2xl py-1"
+        style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)', left: adjustedPos.x, top: adjustedPos.y, backdropFilter: 'blur(20px)' }}
         onMouseLeave={() => setOpenSub(null)}
       >
         {contextMenuItems.map((group, gi) => (
@@ -581,22 +617,29 @@ function MarkdownContextMenu({
             className="relative"
             onMouseEnter={() => setOpenSub(gi)}
           >
-            <div className="flex items-center justify-between px-3 py-2 text-[12px] text-[#c0c0c0] hover:bg-[#252525] hover:text-white cursor-default transition-colors" style={{ fontFamily: mono }}>
+            <div
+              className="flex items-center justify-between px-3 py-2 text-[12px] text-[#c0c0c0] hover:text-[#e2e0da] cursor-default transition-colors"
+              style={{ fontFamily: mono }}
+              onMouseEnter={e => e.currentTarget.style.background = '#252525'}
+              onMouseLeave={e => e.currentTarget.style.background = ''}
+            >
               {group.label}
-              <ChevronRight size={11} className="text-[#5a5a5a]" />
+              <ChevronRight size={11} className="text-[#555555]" />
             </div>
             {openSub === gi && group.items && (
               <div
-                className="absolute left-full top-0 w-48 rounded-lg border border-[#2a2a2a] shadow-2xl py-1 -mt-1 z-[60]"
-                style={{ background: '#1a1a1a' }}
+                className="absolute left-full top-0 w-48 rounded-lg shadow-2xl py-1 -mt-1 z-[60]"
+                style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)', backdropFilter: 'blur(20px)' }}
                 onMouseEnter={() => setOpenSub(gi)}
                 onMouseLeave={() => setOpenSub(null)}
               >
                 {group.items.map(item => (
                   <button
                     key={item.label}
-                    className="w-full text-left px-3 py-2 text-[12px] text-[#c0c0c0] hover:bg-[#252525] hover:text-white transition-colors"
+                    className="w-full text-left px-3 py-2 text-[12px] text-[#c0c0c0] hover:text-[#e2e0da] transition-colors"
                     style={{ fontFamily: mono }}
+                    onMouseEnter={e => e.currentTarget.style.background = '#252525'}
+                    onMouseLeave={e => e.currentTarget.style.background = ''}
                     onClick={() => { onInsert(item.insert, item.wrap); onClose() }}
                   >
                     {item.label}
@@ -790,18 +833,18 @@ function NotesEditor({
         /* Rendered mode — click anywhere to edit */
         <div
           className="flex-1 overflow-y-auto px-5 py-4 cursor-text prose prose-sm prose-invert max-w-none
-            prose-headings:text-white prose-headings:font-bold
+            prose-headings:text-[#e2e0da] prose-headings:font-bold
             prose-p:text-[#c0c0c0] prose-p:leading-relaxed
             prose-a:text-[#ff6b2c] prose-a:no-underline hover:prose-a:underline
-            prose-strong:text-white
+            prose-strong:text-[#e2e0da]
             prose-code:text-[#ff6b2c] prose-code:bg-[#252525] prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:text-[12px]
-            prose-pre:bg-[#141414] prose-pre:border prose-pre:border-[#2a2a2a] prose-pre:rounded-lg
-            prose-blockquote:border-[#ff6b2c]/30 prose-blockquote:text-[#8a8a8a]
+            prose-pre:bg-[rgba(17,17,17,0.8)] prose-pre:border prose-pre:border-[rgba(255,255,255,0.06)] prose-pre:rounded-lg
+            prose-blockquote:border-[rgba(249,115,22,0.4)] prose-blockquote:text-[#8a8a8a]
             prose-li:text-[#c0c0c0]
-            prose-hr:border-[#2a2a2a]
+            prose-hr:border-[rgba(255,255,255,0.06)]
             prose-table:text-[#c0c0c0]
-            prose-th:text-white prose-th:border-b prose-th:border-[#2a2a2a] prose-th:px-3 prose-th:py-1.5
-            prose-td:border-b prose-td:border-[#2a2a2a]/50 prose-td:px-3 prose-td:py-1.5"
+            prose-th:text-[#e2e0da] prose-th:border-b prose-th:border-[rgba(255,255,255,0.06)] prose-th:px-3 prose-th:py-1.5
+            prose-td:border-b prose-td:border-[rgba(255,107,44,0.04)] prose-td:px-3 prose-td:py-1.5"
           style={{ fontFamily: mono, fontSize: 13 }}
           onClick={() => setEditing(true)}
         >
@@ -887,16 +930,19 @@ function ChannelTabs({
   }
 
   return (
-    <div className="flex items-center border-b border-[#2a2a2a] shrink-0" style={{ background: '#141414' }}>
+    <div className="flex items-center shrink-0" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)', background: 'rgba(17,17,17,0.8)', backdropFilter: 'blur(12px)' }}>
       <div className="flex items-center gap-0.5 px-4 flex-1 min-w-0 overflow-x-auto">
         {/* Messages tab */}
         <button
           className={`px-3 py-2 text-[12px] font-medium border-b-2 transition-colors whitespace-nowrap ${
             activeTab === 'messages'
-              ? 'border-[#ff6b2c] text-white'
-              : 'border-transparent text-[#5a5a5a] hover:text-[#c0c0c0]'
+              ? 'border-[#ff6b2c] text-[#ff6b2c]'
+              : 'border-transparent text-[#555555] hover:text-[#c0c0c0]'
           }`}
-          style={{ fontFamily: mono }}
+          style={{
+            fontFamily: mono,
+            background: activeTab === 'messages' ? '#252525' : undefined,
+          }}
           onClick={() => onTabChange('messages')}
         >
           Mensagens
@@ -913,18 +959,21 @@ function ChannelTabs({
                   onKeyDown={e => { if (e.key === 'Enter') finishRename(note.id); if (e.key === 'Escape') setRenamingId(null) }}
                   onBlur={() => finishRename(note.id)}
                   autoFocus
-                  className="w-24 px-2 py-1 text-[12px] text-white rounded border border-[#ff6b2c] bg-[#141414] focus:outline-none"
-                  style={{ fontFamily: mono }}
+                  className="w-24 px-2 py-1 text-[12px] rounded focus:outline-none"
+                  style={{ fontFamily: mono, color: '#e2e0da', border: '1px solid #ff6b2c', background: 'rgba(17,17,17,0.8)' }}
                 />
               </div>
             ) : (
               <button
                 className={`px-3 py-2 text-[12px] font-medium border-b-2 transition-colors whitespace-nowrap ${
                   activeTab === `note-${note.id}`
-                    ? 'border-[#ff6b2c] text-white'
-                    : 'border-transparent text-[#5a5a5a] hover:text-[#c0c0c0]'
+                    ? 'border-[#ff6b2c] text-[#ff6b2c]'
+                    : 'border-transparent text-[#555555] hover:text-[#c0c0c0]'
                 }`}
-                style={{ fontFamily: mono }}
+                style={{
+                  fontFamily: mono,
+                  background: activeTab === `note-${note.id}` ? '#252525' : undefined,
+                }}
                 onClick={() => onTabChange(`note-${note.id}`)}
                 onDoubleClick={() => startRename(note.id, note.title)}
               >
@@ -933,7 +982,7 @@ function ChannelTabs({
             )}
             <button
               onClick={() => removeTab(note.id)}
-              className="opacity-0 group-hover:opacity-100 text-[#5a5a5a] hover:text-red-400 p-0.5 -ml-1 transition-opacity"
+              className="opacity-0 group-hover:opacity-100 text-[#555555] hover:text-red-400 p-0.5 -ml-1 transition-opacity"
             >
               <X size={10} />
             </button>
@@ -946,17 +995,22 @@ function ChannelTabs({
         <div className="relative px-2 shrink-0">
           <button
             onClick={() => setShowAddMenu(!showAddMenu)}
-            className="w-6 h-6 rounded flex items-center justify-center text-[#5a5a5a] hover:text-white hover:bg-[#252525] transition-colors"
+            className="w-6 h-6 rounded flex items-center justify-center text-[#555555] hover:text-[#e2e0da] transition-colors"
+            style={{ background: 'transparent' }}
+            onMouseEnter={e => e.currentTarget.style.background = '#252525'}
+            onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
           >
             <Plus size={14} />
           </button>
           {showAddMenu && (
             <>
               <div className="fixed inset-0 z-10" onClick={() => setShowAddMenu(false)} />
-              <div className="absolute right-0 top-full mt-1 z-20 w-44 rounded-lg border border-[#2a2a2a] shadow-xl overflow-hidden" style={{ background: '#1a1a1a' }}>
+              <div className="absolute right-0 top-full mt-1 z-20 w-44 rounded-lg shadow-xl overflow-hidden" style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)', backdropFilter: 'blur(20px)' }}>
                 <button
-                  className="w-full flex items-center gap-2 px-3 py-2.5 text-[12px] text-[#8a8a8a] hover:text-white hover:bg-[#252525] transition-colors text-left"
+                  className="w-full flex items-center gap-2 px-3 py-2.5 text-[12px] text-[#8a8a8a] hover:text-[#e2e0da] transition-colors text-left"
                   style={{ fontFamily: mono }}
+                  onMouseEnter={e => e.currentTarget.style.background = '#252525'}
+                  onMouseLeave={e => e.currentTarget.style.background = ''}
                   onClick={addNotesTab}
                 >
                   <FileText size={13} />
@@ -1031,8 +1085,8 @@ function MessageArea() {
     return (
       <div className="flex-1 flex items-center justify-center">
         <div className="text-center">
-          <MessageSquare size={40} className="mx-auto text-[#2a2a2a] mb-3" />
-          <p className="text-[#5a5a5a] text-[13px]" style={{ fontFamily: mono }}>
+          <MessageSquare size={40} className="mx-auto mb-3" style={{ color: 'rgba(255,107,44,0.12)' }} />
+          <p className="text-[#555555] text-[13px]" style={{ fontFamily: mono }}>
             Selecione um canal ou conversa
           </p>
         </div>
@@ -1052,14 +1106,17 @@ function MessageArea() {
   return (
     <div className="flex-1 flex flex-col min-w-0">
       {/* Channel Header */}
-      <div className="flex items-center justify-between px-5 h-12 border-b border-[#2a2a2a] shrink-0" style={{ background: '#141414' }}>
+      <div
+        className="flex items-center justify-between px-5 h-12 shrink-0"
+        style={{ background: 'rgba(17,17,17,0.8)', backdropFilter: 'blur(12px)', borderBottom: '1px solid rgba(255,255,255,0.06)' }}
+      >
         <div className="flex items-center gap-2 min-w-0">
-          {activeChannel.type !== 'dm' && <Hash size={16} className="text-[#5a5a5a] shrink-0" />}
-          <h2 className="text-white font-bold text-[15px] truncate" style={{ fontFamily: mono }}>
+          {activeChannel.type !== 'dm' && <Hash size={16} className="text-[#555555] shrink-0" />}
+          <h2 className="font-bold text-[15px] truncate" style={{ fontFamily: mono, color: '#e2e0da' }}>
             {channelLabel}
           </h2>
           {activeChannel.description && (
-            <span className="text-[#5a5a5a] text-[12px] hidden sm:block truncate ml-2" style={{ fontFamily: mono }}>
+            <span className="text-[#555555] text-[12px] hidden sm:block truncate ml-2" style={{ fontFamily: mono }}>
               {activeChannel.description}
             </span>
           )}
@@ -1068,7 +1125,9 @@ function MessageArea() {
           {activeChannel.type !== 'dm' && (
             <button
               onClick={() => setShowSettings(true)}
-              className="text-[#5a5a5a] hover:text-white p-1.5 rounded-lg hover:bg-[#252525] transition-colors"
+              className="text-[#555555] hover:text-[#e2e0da] p-1.5 rounded-lg transition-colors"
+              onMouseEnter={e => e.currentTarget.style.background = '#252525'}
+              onMouseLeave={e => e.currentTarget.style.background = ''}
             >
               <Settings size={16} />
             </button>
@@ -1093,16 +1152,16 @@ function MessageArea() {
             onScroll={handleScroll}
           >
             {isLoading && messages.length === 0 && (
-              <div className="text-center text-[#5a5a5a] text-[12px] py-8" style={{ fontFamily: mono }}>Carregando...</div>
+              <div className="text-center text-[#555555] text-[12px] py-8" style={{ fontFamily: mono }}>Carregando...</div>
             )}
 
             {displayMessages.length === 0 && !isLoading && (
               <div className="text-center py-12">
-                <Hash size={36} className="mx-auto text-[#2a2a2a] mb-3" />
-                <p className="text-white font-bold text-[16px] mb-1" style={{ fontFamily: mono }}>
+                <Hash size={36} className="mx-auto mb-3" style={{ color: 'rgba(255,107,44,0.12)' }} />
+                <p className="font-bold text-[16px] mb-1" style={{ fontFamily: mono, color: '#e2e0da' }}>
                   {activeChannel.type === 'dm' ? 'Início da conversa' : `# ${activeChannel.name}`}
                 </p>
-                <p className="text-[#5a5a5a] text-[13px]" style={{ fontFamily: mono }}>
+                <p className="text-[#555555] text-[13px]" style={{ fontFamily: mono }}>
                   {activeChannel.type === 'dm'
                     ? 'Envie a primeira mensagem.'
                     : `Este é o início do canal # ${activeChannel.name}. ${activeChannel.description || ''}`}
@@ -1117,48 +1176,55 @@ function MessageArea() {
               if (isSystem) {
                 return (
                   <div key={msg.id} className="flex items-center gap-3 py-1">
-                    <div className="flex-1 h-px bg-[#2a2a2a]" />
-                    <span className="text-[11px] text-[#5a5a5a] whitespace-nowrap" style={{ fontFamily: mono }}>{msg.content}</span>
-                    <div className="flex-1 h-px bg-[#2a2a2a]" />
+                    <div className="flex-1 h-px" style={{ background: 'rgba(255,255,255,0.06)' }} />
+                    <span className="text-[11px] text-[#555555] whitespace-nowrap" style={{ fontFamily: mono }}>{msg.content}</span>
+                    <div className="flex-1 h-px" style={{ background: 'rgba(255,255,255,0.06)' }} />
                   </div>
                 )
               }
 
               return (
-                <div key={msg.id} className="flex gap-3 group hover:bg-[#1e1e1e]/50 -mx-2 px-2 py-1 rounded-lg transition-colors">
+                <div
+                  key={msg.id}
+                  className="flex gap-3 group -mx-2 px-2 py-1 rounded-lg transition-colors"
+                  style={{ background: 'transparent' }}
+                  onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.02)'}
+                  onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                >
                   <div
                     className="w-8 h-8 rounded-lg flex items-center justify-center text-[10px] font-bold shrink-0 mt-0.5"
                     style={{
                       background: isOwn
                         ? 'linear-gradient(135deg, #ff6b2c, #ff8533)'
-                        : 'rgba(255,255,255,0.06)',
+                        : '#252525',
                       color: isOwn ? '#fff' : '#8a8a8a',
                       fontFamily: mono,
+                      border: isOwn ? '2px solid rgba(249,115,22,0.4)' : 'none',
                     }}
                   >
                     {msg.sender_name.slice(0, 2).toUpperCase()}
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-baseline gap-2">
-                      <span className="text-white text-[13px] font-bold" style={{ fontFamily: mono }}>
+                      <span className="text-[13px] font-bold" style={{ fontFamily: mono, color: '#e2e0da' }}>
                         {msg.sender_name}
                       </span>
-                      <span className="text-[11px] text-[#5a5a5a]" style={{ fontFamily: mono }}>
+                      <span className="text-[11px] text-[#555555]" style={{ fontFamily: mono }}>
                         {new Date(msg.created_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
                       </span>
                       {msg.edited_at && <span className="text-[10px] text-[#4a4a4a]">(editado)</span>}
                     </div>
                     <div
                       className="text-[#c0c0c0] text-[13px] leading-relaxed break-words prose prose-sm prose-invert max-w-none
-                        prose-headings:text-white prose-headings:font-bold prose-headings:mt-2 prose-headings:mb-1
+                        prose-headings:text-[#e2e0da] prose-headings:font-bold prose-headings:mt-2 prose-headings:mb-1
                         prose-p:text-[#c0c0c0] prose-p:leading-relaxed prose-p:my-0.5
                         prose-a:text-[#ff6b2c] prose-a:no-underline hover:prose-a:underline
-                        prose-strong:text-white
+                        prose-strong:text-[#e2e0da]
                         prose-code:text-[#ff6b2c] prose-code:bg-[#252525] prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:text-[12px]
-                        prose-pre:bg-[#141414] prose-pre:border prose-pre:border-[#2a2a2a] prose-pre:rounded-lg prose-pre:my-1
-                        prose-blockquote:border-[#ff6b2c]/30 prose-blockquote:text-[#8a8a8a]
+                        prose-pre:bg-[rgba(17,17,17,0.8)] prose-pre:border prose-pre:border-[rgba(255,255,255,0.06)] prose-pre:rounded-lg prose-pre:my-1
+                        prose-blockquote:border-[rgba(249,115,22,0.4)] prose-blockquote:text-[#8a8a8a]
                         prose-li:text-[#c0c0c0]
-                        prose-hr:border-[#2a2a2a]"
+                        prose-hr:border-[rgba(255,255,255,0.06)]"
                       style={{ fontFamily: mono }}
                     >
                       <Markdown remarkPlugins={[remarkGfm]}>{msg.content}</Markdown>
@@ -1171,10 +1237,20 @@ function MessageArea() {
           </div>
 
           {/* Input */}
-          <div className="px-5 py-3 border-t border-[#2a2a2a]">
+          <div className="px-5 py-3" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
             <div
-              className="flex items-end gap-2 rounded-xl border border-[#2a2a2a] focus-within:border-[#ff6b2c]/50 transition-colors"
-              style={{ background: '#1a1a1a' }}
+              className="flex items-end gap-2 rounded-xl transition-all"
+              style={{ background: '#222222', border: '1px solid rgba(255,255,255,0.06)' }}
+              onFocus={e => {
+                const el = e.currentTarget
+                el.style.borderColor = 'rgba(249,115,22,0.4)'
+                el.style.boxShadow = '0 0 20px rgba(255,107,44,0.1)'
+              }}
+              onBlur={e => {
+                const el = e.currentTarget
+                el.style.borderColor = 'rgba(255,255,255,0.06)'
+                el.style.boxShadow = 'none'
+              }}
             >
               <textarea
                 value={input}
@@ -1186,15 +1262,18 @@ function MessageArea() {
                   }
                 }}
                 placeholder={`Enviar mensagem para ${activeChannel.type === 'dm' ? channelLabel : '#' + activeChannel.name}`}
-                className="flex-1 resize-none bg-transparent px-4 py-3 text-[13px] text-white focus:outline-none placeholder-[#5a5a5a]"
-                style={{ fontFamily: mono, minHeight: 44, maxHeight: 120 }}
+                className="flex-1 resize-none bg-transparent px-4 py-3 text-[13px] focus:outline-none placeholder-[#555555]"
+                style={{ fontFamily: mono, minHeight: 44, maxHeight: 120, color: '#e2e0da' }}
                 rows={1}
               />
               <button
                 onClick={handleSend}
                 disabled={!input.trim()}
                 className="m-1.5 w-8 h-8 rounded-lg flex items-center justify-center transition-colors disabled:opacity-30"
-                style={{ background: input.trim() ? '#ff6b2c' : 'transparent', color: input.trim() ? '#fff' : '#5a5a5a' }}
+                style={{
+                  background: input.trim() ? 'linear-gradient(135deg, #ff6b2c, #ff8533)' : 'transparent',
+                  color: input.trim() ? '#fff' : '#555555',
+                }}
               >
                 <Send size={15} />
               </button>
@@ -1215,7 +1294,7 @@ function MessageArea() {
 export default function ChatPage() {
   useChatSSE()
   return (
-    <div className="flex h-[calc(100vh-3.5rem)] -m-5 lg:-m-6 overflow-hidden border-l border-[#2a2a2a]" style={{ background: '#0d0d0d' }}>
+    <div className="flex h-[calc(100vh-3.5rem)] -m-5 lg:-m-6 overflow-hidden" style={{ background: '#0a0a0a', borderLeft: '1px solid rgba(255,255,255,0.06)' }}>
       <ChannelListPanel />
       <MessageArea />
     </div>

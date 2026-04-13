@@ -6,6 +6,7 @@ import { usePathname, useRouter } from 'next/navigation'
 import { Button } from '@heroui/react'
 import { useAdminStore } from '@/store/useAdminStore'
 import { LayoutDashboard, Users, Plug, Cpu } from 'lucide-react'
+import { BaisyncLogo } from '@/components/baisync-logo'
 
 const mono = "'JetBrains Mono', 'Fira Code', monospace"
 
@@ -46,23 +47,7 @@ export function AdminSidebar({ isOpen, onClose }: { isOpen: boolean; onClose: ()
         {/* Logo */}
         <div className="h-16 flex items-center px-6 border-b border-[#1a1a1a]">
           <Link href="/admin" className="flex items-center gap-2.5">
-            <div
-              style={{
-                width: 28,
-                height: 28,
-                borderRadius: 8,
-                background: 'linear-gradient(135deg, #FF6B00, #ff8533)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                fontFamily: mono,
-                fontSize: 13,
-                fontWeight: 800,
-                color: '#000',
-              }}
-            >
-              B
-            </div>
+            <BaisyncLogo size={46} />
             <span
               style={{
                 fontFamily: mono,

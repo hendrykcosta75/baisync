@@ -480,9 +480,9 @@ export function ToolsTab({ assistant, shareToken, isReadOnly }: ToolsTabProps) {
           </p>
         </div>
         {!isReadOnly && (
-          <Button variant="primary" onPress={openCreateModal}>
+          <button className="btn-neu btn-neu-lg" onClick={openCreateModal}>
             Adicionar Ferramenta
-          </Button>
+          </button>
         )}
       </div>
 

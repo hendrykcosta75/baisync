@@ -123,7 +123,7 @@ pub async fn invite_member(
     // Send invite email
     let invite_url = format!("{}/workspace-invite?token={}", config.app_url, invite.token);
     let subject = format!("Convite para {} - Baisync", ws.name);
-    let body_html = crate::services::email::wrap_invite_email(&ws.name, &invite.role, &invite_url);
+    let body_html = crate::services::email::wrap_invite_email(&config, &ws.name, &invite.role, &invite_url);
 
     let config_clone = config.clone();
     let email = invite.email.clone();

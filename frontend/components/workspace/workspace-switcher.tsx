@@ -47,18 +47,20 @@ export function WorkspaceSwitcher({ collapsed }: { collapsed: boolean }) {
   // Collapsed: just show icon
   if (collapsed) {
     return (
-      <div className="hidden lg:flex items-center justify-center py-3 border-b border-[#2a2a2a]">
+      <div className="hidden lg:flex items-center justify-center h-14 shrink-0" style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
         <button
-          className="w-8 h-8 rounded-md flex items-center justify-center font-bold text-[12px] hover:opacity-80 transition-opacity"
+          className="w-8 h-8 rounded-[10px] flex items-center justify-center hover:opacity-80 transition-opacity"
           style={{
-            background: 'linear-gradient(135deg, #ff6b2c, #ff8533)',
-            color: '#fff',
-            fontFamily: mono,
+            background: '#121212',
+            boxShadow: '3px 3px 7px rgba(0,0,0,0.45), -1px -1px 5px rgba(255,255,255,0.03)',
+            color: '#D4835A',
           }}
           onClick={() => setIsOpen(!isOpen)}
           title={displayName}
         >
-          {displayName.charAt(0).toUpperCase()}
+          {activeWorkspace?.workspace_type === 'personal'
+            ? <User size={15} />
+            : <span style={{ fontFamily: mono, fontSize: 12, fontWeight: 700 }}>{displayName.charAt(0).toUpperCase()}</span>}
         </button>
       </div>
     )
@@ -66,27 +68,30 @@ export function WorkspaceSwitcher({ collapsed }: { collapsed: boolean }) {
 
   return (
     <div className="relative">
-      {/* Workspace select box */}
+      {/* Workspace select box — primary sidebar element */}
       <button
-        className="w-full flex items-center gap-2.5 px-4 py-3 border-b border-[#2a2a2a] hover:bg-[#1e1e1e] transition-colors"
+        className="w-full flex items-center gap-2.5 px-4 h-14 shrink-0 hover:bg-[#1a1a1a] transition-colors"
+        style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}
         onClick={() => setIsOpen(!isOpen)}
       >
         <div
-          className="w-7 h-7 rounded-md flex items-center justify-center font-bold text-[11px] shrink-0"
+          className="w-8 h-8 rounded-[10px] flex items-center justify-center shrink-0"
           style={{
-            background: 'linear-gradient(135deg, #ff6b2c, #ff8533)',
-            color: '#fff',
-            fontFamily: mono,
+            background: '#121212',
+            boxShadow: '3px 3px 7px rgba(0,0,0,0.45), -1px -1px 5px rgba(255,255,255,0.03)',
+            color: '#D4835A',
           }}
         >
-          {displayName.charAt(0).toUpperCase()}
+          {activeWorkspace?.workspace_type === 'personal'
+            ? <User size={14} />
+            : <span style={{ fontFamily: mono, fontSize: 11, fontWeight: 700 }}>{displayName.charAt(0).toUpperCase()}</span>}
         </div>
         <div className="flex-1 min-w-0 text-left">
-          <span className="text-[13px] font-semibold text-white truncate block" style={{ fontFamily: mono }}>
+          <span className="text-[15px] font-semibold text-white truncate block" style={{ fontFamily: mono, letterSpacing: '-0.02em' }}>
             {displayName}
           </span>
         </div>
-        <ChevronDown size={14} className={`text-[#5a5a5a] shrink-0 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+        <ChevronDown size={12} className={`shrink-0 transition-transform ${isOpen ? 'rotate-180' : ''}`} style={{ color: '#D4835A', opacity: 0.5 }} />
       </button>
 
       {/* Dropdown */}

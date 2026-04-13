@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import Link from 'next/link'
 import { Menu, X } from 'lucide-react'
+import { BaisyncLogo } from '@/components/baisync-logo'
 
 const mono = "'JetBrains Mono', 'Fira Code', monospace"
 
@@ -25,24 +26,8 @@ function LogoExpand() {
   return (
     <Link href="/" className="flex items-center gap-2.5 group/logo">
       {/* Icon — full 360° sync spin on hover */}
-      <div
-        className="group-hover/logo:rotate-[360deg] transition-transform duration-700 ease-in-out"
-        style={{
-          width: 28,
-          height: 28,
-          borderRadius: 8,
-          background: 'linear-gradient(135deg, #FF6B00, #ff8533)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          fontFamily: mono,
-          fontSize: 13,
-          fontWeight: 800,
-          color: '#000',
-          flexShrink: 0,
-        }}
-      >
-        B
+      <div className="group-hover/logo:rotate-[360deg] transition-transform duration-700 ease-in-out shrink-0">
+        <BaisyncLogo size={46} />
       </div>
 
       {/* Text — single row, accent letters always visible, hidden parts expand */}

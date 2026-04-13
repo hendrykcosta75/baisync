@@ -63,14 +63,13 @@ function GitHubIcon() {
 
 function BaisyncLogo() {
   return (
-    <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
-      <rect width="28" height="28" rx="6" fill="#FF6B00" />
-      <path
-        d="M8 8h4.5a3.5 3.5 0 0 1 0 7H8V8zm0 7h5a3.5 3.5 0 0 1 0 7H8v-7z"
-        fill="#000"
-        fillOpacity="0.9"
-      />
-    </svg>
+    <img
+      src="/Logo (7).png"
+      alt="Baisync"
+      width={46}
+      height={46}
+      style={{ objectFit: 'contain' }}
+    />
   );
 }
 
