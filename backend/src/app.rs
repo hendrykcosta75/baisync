@@ -318,7 +318,7 @@ pub fn build_router(
         )
         .route(
             "/api/workspaces/{id}",
-            get(handlers::workspaces::get).put(handlers::workspaces::update),
+            get(handlers::workspaces::get).put(handlers::workspaces::update).delete(handlers::workspaces::delete),
         )
         .route(
             "/api/workspaces/{id}/switch",

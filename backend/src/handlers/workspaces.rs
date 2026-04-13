@@ -72,6 +72,36 @@ pub async fn update(
     Ok(Json(serde_json::json!({ "workspace": ws })))
 }
 
+pub async fn delete(
+    Extension(db): Extension<DbSession>,
+    Extension(auth_user): Extension<AuthUser>,
+    Extension(jwt_secret): Extension<String>,
+    Path(id): Path<uuid::Uuid>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let role = ws_service::get_member_role(&db, &id, &auth_user.user_id).await?;
+    if role != "owner" {
+        return Err(AppError::Forbidden("Only the owner can delete a workspace".into()));
+    }
+
+    let ws = ws_service::get_workspace(&db, &id).await?;
+    if ws.workspace_type == "personal" {
+        return Err(AppError::BadRequest("Cannot delete personal workspace".into()));
+    }
+
+    ws_service::delete_workspace(&db, &id).await?;
+
+    // Switch caller back to personal workspace and issue new token
+    ws_service::switch_workspace(&db, &auth_user.user_id, &auth_user.user_id).await?;
+    let token = crate::services::auth::create_jwt_with_workspace(
+        &auth_user.user_id,
+        &auth_user.email,
+        &auth_user.user_id,
+        &jwt_secret,
+    )?;
+
+    Ok(Json(serde_json::json!({ "success": true, "token": token, "workspace_id": auth_user.user_id })))
+}
+
 pub async fn switch(
     Extension(db): Extension<DbSession>,
     Extension(auth_user): Extension<AuthUser>,

@@ -86,12 +86,56 @@ export const handlers = [
 
   // Workspaces
   http.get('/api/workspaces', () => {
-    return HttpResponse.json([{
-      id: '880e8400-ws',
-      name: 'Personal',
-      type: 'personal',
-      owner_id: mockUser.id,
-    }])
+    return HttpResponse.json({
+      workspaces: [
+        {
+          workspace_id: mockUser.id,
+          workspace_name: 'Perfil de Test User',
+          workspace_type: 'personal',
+          role: 'owner',
+          joined_at: '2024-01-01T00:00:00Z',
+        },
+        {
+          workspace_id: '880e8400-e29b-41d4-a716-446655440002',
+          workspace_name: 'Company Workspace',
+          workspace_type: 'company',
+          role: 'owner',
+          joined_at: '2024-01-01T00:00:00Z',
+        },
+      ],
+      active_workspace_id: mockUser.id,
+    })
+  }),
+
+  http.post('/api/workspaces/:id/switch', () => {
+    return HttpResponse.json({ token: 'mock-jwt-token-switched', workspace_id: '880e8400-e29b-41d4-a716-446655440002' })
+  }),
+
+  http.get('/api/workspaces/:id/members', () => {
+    return HttpResponse.json({
+      members: [{
+        workspace_id: '880e8400-e29b-41d4-a716-446655440002',
+        user_id: mockUser.id,
+        role: 'owner',
+        invited_by: null,
+        joined_at: '2024-01-01T00:00:00Z',
+        user_name: mockUser.name,
+        user_email: mockUser.email,
+      }],
+    })
+  }),
+
+  http.delete('/api/workspaces/:id', ({ params }) => {
+    const id = params.id as string
+    // Cannot delete personal workspace
+    if (id === mockUser.id) {
+      return HttpResponse.json({ error: 'Cannot delete personal workspace' }, { status: 400 })
+    }
+    return HttpResponse.json({
+      success: true,
+      token: 'mock-jwt-token-after-delete',
+      workspace_id: mockUser.id,
+    })
   }),
 
   // User profile

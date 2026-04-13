@@ -82,10 +82,11 @@ async function proxyRequest(request: NextRequest, context: { params: Promise<{ p
     return response
   }
 
-  // Workspace switch or invite accept — update auth cookie with new JWT
+  // Workspace switch, delete, or invite accept — update auth cookie with new JWT
   const isWorkspaceSwitch = /^workspaces\/[^/]+\/switch$/.test(joinedPath)
+  const isWorkspaceDelete = /^workspaces\/[^/]+$/.test(joinedPath) && request.method === 'DELETE'
   const isInviteAccept = /^workspace-invites\/[^/]+\/accept$/.test(joinedPath)
-  if ((isWorkspaceSwitch || isInviteAccept) && backendRes.ok) {
+  if ((isWorkspaceSwitch || isWorkspaceDelete || isInviteAccept) && backendRes.ok) {
     const body = await backendRes.json()
     const response = Response.json(body, { status: backendRes.status })
     if (body.token) {

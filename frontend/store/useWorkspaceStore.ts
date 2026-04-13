@@ -51,6 +51,7 @@ interface WorkspaceState {
   createWorkspace: (name: string) => Promise<void>
   updateWorkspace: (workspaceId: string, name: string) => Promise<void>
   inviteMember: (workspaceId: string, email: string, role?: string) => Promise<void>
+  deleteWorkspace: (workspaceId: string) => Promise<void>
   removeMember: (workspaceId: string, userId: string) => Promise<void>
   updateMemberRole: (workspaceId: string, userId: string, role: string) => Promise<void>
   fetchMembers: (workspaceId: string) => Promise<void>
@@ -139,6 +140,24 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
       body: JSON.stringify({ name }),
     })
     await get().fetchWorkspaces()
+  },
+
+  deleteWorkspace: async (workspaceId: string) => {
+    const data = await apiFetch<{ success: boolean; workspace_id: string }>(
+      `/api/workspaces/${workspaceId}`,
+      { method: 'DELETE' }
+    )
+
+    // The proxy route handler updates the auth-token cookie automatically.
+    // Update localStorage to point to the personal workspace returned by the backend.
+    if (data.workspace_id) {
+      localStorage.setItem('active-workspace-id', data.workspace_id)
+    }
+
+    localStorage.removeItem('assistant-storage')
+    localStorage.removeItem('api-keys-storage')
+
+    window.location.reload()
   },
 
   inviteMember: async (workspaceId: string, email: string, role = 'member') => {

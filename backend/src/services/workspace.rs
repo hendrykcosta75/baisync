@@ -141,6 +141,52 @@ pub async fn update_workspace(
     Ok(())
 }
 
+pub async fn delete_workspace(
+    db: &DbSession,
+    workspace_id: &Uuid,
+) -> Result<(), AppError> {
+    // Remove all members and their denormalized entries
+    let members = list_members(db, workspace_id).await?;
+    for m in &members {
+        remove_member(db, workspace_id, &m.user_id).await?;
+
+        // Reset active workspace to personal if they were on this workspace
+        let active = get_active_workspace_id(db, &m.user_id).await.unwrap_or(m.user_id);
+        if active == *workspace_id {
+            let _ = db.query_unpaged(
+                "UPDATE inertial_eclipse.users SET active_workspace_id = ? WHERE id = ?",
+                (&m.user_id, &m.user_id),
+            ).await;
+        }
+    }
+
+    // Delete invites
+    db.query_unpaged(
+        "DELETE FROM inertial_eclipse.workspace_invites WHERE workspace_id = ?",
+        (workspace_id,),
+    )
+    .await
+    .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+
+    // Delete API keys
+    db.query_unpaged(
+        "DELETE FROM inertial_eclipse.workspace_api_keys WHERE workspace_id = ?",
+        (workspace_id,),
+    )
+    .await
+    .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+
+    // Delete the workspace itself
+    db.query_unpaged(
+        "DELETE FROM inertial_eclipse.workspaces WHERE id = ?",
+        (workspace_id,),
+    )
+    .await
+    .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+
+    Ok(())
+}
+
 pub async fn list_user_workspaces(
     db: &DbSession,
     user_id: &Uuid,
