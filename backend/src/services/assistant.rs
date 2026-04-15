@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 use scylla::frame::value::CqlTimestamp;
-use scylla::FromRow;
+use scylla::DeserializeRow;
 use uuid::Uuid;
 
 use crate::db::DbSession;
@@ -19,7 +19,7 @@ fn ts_now() -> CqlTimestamp {
 
 // --- Assistants ---
 
-#[derive(FromRow)]
+#[derive(DeserializeRow)]
 struct AssistantRow {
     user_id: Uuid,
     id: Uuid,
@@ -100,14 +100,11 @@ pub async fn list_assistants(
         .await
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
-    let rows = result
-        .rows_typed::<AssistantRow>()
-        .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+    let result = result.into_rows_result()?;
 
     let mut assistants = Vec::new();
-    for row in rows {
-        let r = row.map_err(|e| AppError::DatabaseError(e.to_string()))?;
-        assistants.push(row_to_assistant(r));
+    for row in result.rows::<AssistantRow>()?.flatten() {
+        assistants.push(row_to_assistant(row));
     }
 
     Ok(assistants)
@@ -127,7 +124,8 @@ pub async fn get_assistant(
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     let row = result
-        .single_row_typed::<AssistantRow>()
+        .into_rows_result()?
+        .single_row::<AssistantRow>()
         .map_err(|_| AppError::NotFound("Assistant not found".into()))?;
 
     Ok(row_to_assistant(row))
@@ -294,8 +292,10 @@ pub async fn delete_assistant(
         (assistant_id, user_id),
     ).await.map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
-    for row in convs.rows_typed::<(Uuid,)>().map_err(|e| AppError::DatabaseError(e.to_string()))? {
-        if let Ok((conv_id,)) = row {
+    let convs = convs.into_rows_result()?;
+    for row in convs.rows::<(Uuid,)>()?.flatten() {
+        let (conv_id,) = row;
+        {
             // Delete messages for this conversation (PK: conversation_id, id)
             let _ = db.query_unpaged(
                 "DELETE FROM inertial_eclipse.messages WHERE conversation_id = ?",
@@ -392,12 +392,9 @@ pub async fn list_tools(
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     let mut tools = Vec::new();
-    for row in result
-        .rows_typed::<ToolRow>()
-        .map_err(|e| AppError::DatabaseError(e.to_string()))?
-    {
-        let r = row.map_err(|e| AppError::DatabaseError(e.to_string()))?;
-        tools.push(row_to_tool(r));
+    let result = result.into_rows_result()?;
+    for row in result.rows::<ToolRow>()?.flatten() {
+        tools.push(row_to_tool(row));
     }
 
     Ok(tools)
@@ -461,7 +458,8 @@ pub async fn update_tool(
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     let existing = result
-        .single_row_typed::<ToolRow>()
+        .into_rows_result()?
+        .single_row::<ToolRow>()
         .map_err(|_| AppError::NotFound("Tool not found".into()))?;
 
     let name = req.name.unwrap_or(existing.2);
@@ -565,11 +563,8 @@ pub async fn list_tool_call_logs(
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     let mut logs = Vec::new();
-    for row in result
-        .rows_typed::<ToolCallLogRow>()
-        .map_err(|e| AppError::DatabaseError(e.to_string()))?
-    {
-        let r = row.map_err(|e| AppError::DatabaseError(e.to_string()))?;
+    let result = result.into_rows_result()?;
+    for r in result.rows::<ToolCallLogRow>()?.flatten() {
         let called_at = r.9
             .map(|ts| chrono::DateTime::<chrono::Utc>::from(std::time::UNIX_EPOCH + std::time::Duration::from_millis(ts.0 as u64)))
             .unwrap_or_else(chrono::Utc::now);
@@ -608,11 +603,8 @@ pub async fn list_tool_call_logs_paged(
     .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     let mut logs = Vec::new();
-    for row in result
-        .rows_typed::<ToolCallLogRow>()
-        .map_err(|e| AppError::DatabaseError(e.to_string()))?
-    {
-        let r = row.map_err(|e| AppError::DatabaseError(e.to_string()))?;
+    let result = result.into_rows_result()?;
+    for r in result.rows::<ToolCallLogRow>()?.flatten() {
         let called_at = r.9
             .map(|ts| chrono::DateTime::<chrono::Utc>::from(std::time::UNIX_EPOCH + std::time::Duration::from_millis(ts.0 as u64)))
             .unwrap_or_else(chrono::Utc::now);
@@ -694,12 +686,9 @@ pub async fn list_integrations(
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     let mut integrations = Vec::new();
-    for row in result
-        .rows_typed::<IntegrationRow>()
-        .map_err(|e| AppError::DatabaseError(e.to_string()))?
-    {
-        let r = row.map_err(|e| AppError::DatabaseError(e.to_string()))?;
-        integrations.push(row_to_integration(r));
+    let result = result.into_rows_result()?;
+    for row in result.rows::<IntegrationRow>()?.flatten() {
+        integrations.push(row_to_integration(row));
     }
 
     Ok(integrations)
@@ -939,7 +928,8 @@ pub async fn get_by_share_token(
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     let row = result
-        .single_row_typed::<AssistantRow>()
+        .into_rows_result()?
+        .single_row::<AssistantRow>()
         .map_err(|_| AppError::NotFound("Token inválido ou assistente não encontrado".into()))?;
 
     Ok(row_to_assistant(row))
@@ -968,7 +958,8 @@ pub async fn get_by_any_token(
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     let row = result
-        .single_row_typed::<(Uuid, Uuid, String, bool)>()
+        .into_rows_result()?
+        .single_row::<(Uuid, Uuid, String, bool)>()
         .map_err(|_| AppError::NotFound("Token inválido ou assistente não encontrado".into()))?;
 
     let (owner_id, assistant_id, permission_level, is_revoked) = row;
@@ -1095,8 +1086,10 @@ async fn get_user_email_name(db: &DbSession, user_id: &Uuid) -> (String, String)
         .await
         .ok();
     if let Some(res) = result {
-        if let Ok(Some((email, name))) = res.maybe_first_row_typed::<(String, Option<String>)>() {
-            return (email, name.unwrap_or_default());
+        if let Ok(rows) = res.into_rows_result() {
+            if let Ok(Some((email, name))) = rows.maybe_first_row::<(String, Option<String>)>() {
+                return (email, name.unwrap_or_default());
+            }
         }
     }
     ("".to_string(), "".to_string())
@@ -1125,11 +1118,11 @@ pub async fn list_token_users(
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     let mut users = Vec::new();
-    for row in result
-        .rows_typed::<(Uuid, Uuid, String, String, String, Vec<String>, CqlTimestamp)>()
-        .map_err(|e| AppError::DatabaseError(e.to_string()))?
+    let result = result.into_rows_result()?;
+    for (_aid, uid, token, email, name, perms, ts) in result
+        .rows::<(Uuid, Uuid, String, String, String, Vec<String>, CqlTimestamp)>()?
+        .flatten()
     {
-        let (_aid, uid, token, email, name, perms, ts) = row.map_err(|e| AppError::DatabaseError(e.to_string()))?;
         users.push(TokenUser {
             user_id: uid,
             user_email: email,
@@ -1155,11 +1148,11 @@ pub async fn list_accepted_shares(
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     let mut shares = Vec::new();
-    for row in result
-        .rows_typed::<(Uuid, Uuid, String, String, Option<String>, Vec<String>, CqlTimestamp)>()
-        .map_err(|e| AppError::DatabaseError(e.to_string()))?
+    let result = result.into_rows_result()?;
+    for (uid, aid, token, name, desc, perms, ts) in result
+        .rows::<(Uuid, Uuid, String, String, Option<String>, Vec<String>, CqlTimestamp)>()?
+        .flatten()
     {
-        let (uid, aid, token, name, desc, perms, ts) = row.map_err(|e| AppError::DatabaseError(e.to_string()))?;
         shares.push(AcceptedShare {
             user_id: uid,
             assistant_id: aid,
@@ -1187,8 +1180,8 @@ pub async fn get_accepted_share(
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     let row = result
-        .maybe_first_row_typed::<(Uuid, Uuid, String, String, Option<String>, Vec<String>, CqlTimestamp)>()
-        .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+        .into_rows_result()?
+        .maybe_first_row::<(Uuid, Uuid, String, String, Option<String>, Vec<String>, CqlTimestamp)>()?;
 
     Ok(row.map(|(uid, aid, token, name, desc, perms, ts)| AcceptedShare {
         user_id: uid,

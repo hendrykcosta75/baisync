@@ -1,10 +1,10 @@
-use scylla::LegacySession;
+use scylla::Session;
 use std::path::Path;
 
 const MIGRATIONS_DIR_PROD: &str = "/app/migrations";
 const MIGRATIONS_DIR_DEV: &str = "migrations";
 
-pub async fn run_migrations(session: &LegacySession) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn run_migrations(session: &Session) -> Result<(), Box<dyn std::error::Error>> {
     let dir = if Path::new(MIGRATIONS_DIR_PROD).exists() {
         MIGRATIONS_DIR_PROD
     } else {

@@ -57,8 +57,8 @@ pub async fn get_dashboard_stats(db: &DbSession) -> Result<AdminDashboardStats, 
     let mut users_by_month_map: HashMap<String, i64> = HashMap::new();
     let mut recent_users: Vec<RecentUser> = Vec::new();
 
-    if let Ok(rows) = users_result.rows_typed::<(Uuid, String, String, DateTime<Utc>)>() {
-        for row in rows.flatten() {
+    if let Ok(rows) = users_result.into_rows_result() {
+        for row in rows.rows::<(Uuid, String, String, DateTime<Utc>)>().into_iter().flatten().flatten() {
             let (id, name, email, created_at) = row;
             total_users += 1;
             let month_key = created_at.format("%Y-%m").to_string();
@@ -99,8 +99,8 @@ pub async fn get_dashboard_stats(db: &DbSession) -> Result<AdminDashboardStats, 
     let mut total_assistants = 0_i64;
     let mut provider_map: HashMap<String, i64> = HashMap::new();
 
-    if let Ok(rows) = assistants_result.rows_typed::<(Uuid, Uuid, String)>() {
-        for row in rows.flatten() {
+    if let Ok(rows) = assistants_result.into_rows_result() {
+        for row in rows.rows::<(Uuid, Uuid, String)>().into_iter().flatten().flatten() {
             let (_user_id, _id, provider) = row;
             total_assistants += 1;
             *provider_map.entry(provider).or_insert(0) += 1;
@@ -121,10 +121,11 @@ pub async fn get_dashboard_stats(db: &DbSession) -> Result<AdminDashboardStats, 
         )
         .await
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
-    let total_conversations = convs_result
-        .rows_typed::<(Uuid, Uuid, Uuid)>()
-        .map(|rows| rows.count() as i64)
-        .unwrap_or(0);
+    let total_conversations = if let Ok(convs_rows) = convs_result.into_rows_result() {
+        convs_rows.rows::<(Uuid, Uuid, Uuid)>().map(|r| r.count() as i64).unwrap_or(0)
+    } else {
+        0
+    };
 
     // Count messages
     let msgs_result = db
@@ -134,10 +135,11 @@ pub async fn get_dashboard_stats(db: &DbSession) -> Result<AdminDashboardStats, 
         )
         .await
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
-    let total_messages = msgs_result
-        .rows_typed::<(Uuid, Uuid)>()
-        .map(|rows| rows.count() as i64)
-        .unwrap_or(0);
+    let total_messages = if let Ok(msgs_rows) = msgs_result.into_rows_result() {
+        msgs_rows.rows::<(Uuid, Uuid)>().map(|r| r.count() as i64).unwrap_or(0)
+    } else {
+        0
+    };
 
     // Financial stats from pix_charges with monthly breakdown
     let charges_result = db
@@ -155,8 +157,8 @@ pub async fn get_dashboard_stats(db: &DbSession) -> Result<AdminDashboardStats, 
     let mut cancelled_count = 0_i64;
     let mut revenue_month_map: HashMap<String, (f64, i64)> = HashMap::new();
 
-    if let Ok(rows) = charges_result.rows_typed::<(f64, String, DateTime<Utc>)>() {
-        for row in rows.flatten() {
+    if let Ok(rows) = charges_result.into_rows_result() {
+        for row in rows.rows::<(f64, String, DateTime<Utc>)>().into_iter().flatten().flatten() {
             let (amount, status, created_at) = row;
             total_charges += 1;
             let month_key = created_at.format("%Y-%m").to_string();
@@ -216,10 +218,8 @@ pub async fn list_all_users(db: &DbSession) -> Result<Vec<AdminUserInfo>, AppErr
 
     let mut users = Vec::new();
 
-    if let Ok(rows) =
-        result.rows_typed::<(Uuid, String, String, Option<bool>, DateTime<Utc>)>()
-    {
-        for row in rows.flatten() {
+    if let Ok(rows) = result.into_rows_result() {
+        for row in rows.rows::<(Uuid, String, String, Option<bool>, DateTime<Utc>)>().into_iter().flatten().flatten() {
             let (id, email, name, blocked, created_at) = row;
 
             // Count assistants for this user
@@ -231,8 +231,8 @@ pub async fn list_all_users(db: &DbSession) -> Result<Vec<AdminUserInfo>, AppErr
                 .await;
             let assistant_count = assistant_result
                 .ok()
-                .and_then(|r| r.rows_typed::<(Uuid,)>().ok())
-                .map(|rows| rows.count() as i64)
+                .and_then(|r| r.into_rows_result().ok())
+                .and_then(|r| { let count = r.rows::<(Uuid,)>().ok()?.count() as i64; Some(count) })
                 .unwrap_or(0);
 
             users.push(AdminUserInfo {
@@ -265,7 +265,9 @@ pub async fn get_user_detail(
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     let (id, email, name, blocked, created_at) = result
-        .single_row_typed::<(Uuid, String, String, Option<bool>, DateTime<Utc>)>()
+        .into_rows_result()
+        .map_err(|_| AppError::NotFound("User not found".into()))?
+        .single_row::<(Uuid, String, String, Option<bool>, DateTime<Utc>)>()
         .map_err(|_| AppError::NotFound("User not found".into()))?;
 
     // Get user's assistants
@@ -278,8 +280,8 @@ pub async fn get_user_detail(
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     let mut assistants = Vec::new();
-    if let Ok(rows) = assistants_result.rows_typed::<(Uuid, String, Option<String>)>() {
-        for row in rows.flatten() {
+    if let Ok(rows) = assistants_result.into_rows_result() {
+        for row in rows.rows::<(Uuid, String, Option<String>)>().into_iter().flatten().flatten() {
             let (aid, aname, adesc) = row;
             assistants.push(AdminUserAssistant {
                 id: aid,
@@ -325,8 +327,8 @@ pub async fn create_user(
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     if existing
-        .maybe_first_row_typed::<(Uuid,)>()
-        .map_err(|e| AppError::DatabaseError(e.to_string()))?
+        .into_rows_result()?
+        .maybe_first_row::<(Uuid,)>()?
         .is_some()
     {
         return Err(AppError::BadRequest("Email already registered".into()));
@@ -368,7 +370,9 @@ pub async fn block_user(
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     result
-        .single_row_typed::<(Uuid,)>()
+        .into_rows_result()
+        .map_err(|_| AppError::NotFound("User not found".into()))?
+        .single_row::<(Uuid,)>()
         .map_err(|_| AppError::NotFound("User not found".into()))?;
 
     let now = CqlTimestamp(Utc::now().timestamp_millis());
@@ -392,8 +396,8 @@ pub async fn list_all_integrations(db: &DbSession) -> Result<AdminIntegrationsRe
         .await
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
     let mut user_map: HashMap<Uuid, (String, String)> = HashMap::new();
-    if let Ok(rows) = users_result.rows_typed::<(Uuid, String, String)>() {
-        for row in rows.flatten() {
+    if let Ok(rows) = users_result.into_rows_result() {
+        for row in rows.rows::<(Uuid, String, String)>().into_iter().flatten().flatten() {
             user_map.insert(row.0, (row.1, row.2));
         }
     }
@@ -407,8 +411,8 @@ pub async fn list_all_integrations(db: &DbSession) -> Result<AdminIntegrationsRe
         .await
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
     let mut assistant_map: HashMap<(Uuid, Uuid), String> = HashMap::new();
-    if let Ok(rows) = assistants_result.rows_typed::<(Uuid, Uuid, String)>() {
-        for row in rows.flatten() {
+    if let Ok(rows) = assistants_result.into_rows_result() {
+        for row in rows.rows::<(Uuid, Uuid, String)>().into_iter().flatten().flatten() {
             assistant_map.insert((row.0, row.1), row.2);
         }
     }
@@ -429,8 +433,8 @@ pub async fn list_all_integrations(db: &DbSession) -> Result<AdminIntegrationsRe
     let mut channel_map: HashMap<String, i64> = HashMap::new();
     let mut provider_map: HashMap<String, i64> = HashMap::new();
 
-    if let Ok(rows) = integrations_result.rows_typed::<(Uuid, Uuid, Uuid, String, String, String, Option<String>, DateTime<Utc>)>() {
-        for row in rows.flatten() {
+    if let Ok(rows) = integrations_result.into_rows_result() {
+        for row in rows.rows::<(Uuid, Uuid, Uuid, String, String, String, Option<String>, DateTime<Utc>)>().into_iter().flatten().flatten() {
             let (assistant_id, user_id, id, channel, provider, status, phone, created_at) = row;
             total += 1;
 
@@ -506,8 +510,8 @@ pub async fn get_platform_usage(db: &DbSession) -> Result<AdminUsageResponse, Ap
         .await
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
     let mut user_map: HashMap<Uuid, (String, String)> = HashMap::new();
-    if let Ok(rows) = users_result.rows_typed::<(Uuid, String, String)>() {
-        for row in rows.flatten() {
+    if let Ok(rows) = users_result.into_rows_result() {
+        for row in rows.rows::<(Uuid, String, String)>().into_iter().flatten().flatten() {
             user_map.insert(row.0, (row.1, row.2));
         }
     }
@@ -521,8 +525,8 @@ pub async fn get_platform_usage(db: &DbSession) -> Result<AdminUsageResponse, Ap
         .await
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
     let mut assistant_map: HashMap<(Uuid, Uuid), (String, String)> = HashMap::new();
-    if let Ok(rows) = assistants_result.rows_typed::<(Uuid, Uuid, String, String)>() {
-        for row in rows.flatten() {
+    if let Ok(rows) = assistants_result.into_rows_result() {
+        for row in rows.rows::<(Uuid, Uuid, String, String)>().into_iter().flatten().flatten() {
             assistant_map.insert((row.0, row.1), (row.2, row.3));
         }
     }
@@ -543,8 +547,8 @@ pub async fn get_platform_usage(db: &DbSession) -> Result<AdminUsageResponse, Ap
     let mut user_tokens_map: HashMap<Uuid, i64> = HashMap::new();
     let mut assistant_tokens_map: HashMap<(Uuid, Uuid), i64> = HashMap::new();
 
-    if let Ok(rows) = usage_result.rows_typed::<(Uuid, Uuid, String, i64, i64)>() {
-        for row in rows.flatten() {
+    if let Ok(rows) = usage_result.into_rows_result() {
+        for row in rows.rows::<(Uuid, Uuid, String, i64, i64)>().into_iter().flatten().flatten() {
             let (user_id, assistant_id, period, tokens, messages) = row;
             let month = if period.len() >= 7 {
                 period[..7].to_string()
@@ -635,8 +639,8 @@ pub async fn get_platform_usage(db: &DbSession) -> Result<AdminUsageResponse, Ap
         )
         .await
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
-    if let Ok(rows) = usage_result2.rows_typed::<(Uuid, Uuid, i64)>() {
-        for row in rows.flatten() {
+    if let Ok(rows) = usage_result2.into_rows_result() {
+        for row in rows.rows::<(Uuid, Uuid, i64)>().into_iter().flatten().flatten() {
             let (uid, aid, tokens) = row;
             let provider = assistant_map
                 .get(&(uid, aid))
@@ -678,7 +682,9 @@ pub async fn get_user_detail_enriched(
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     let (id, email, name, blocked, created_at, two_factor_enabled, key_openai, key_claude, key_gemini, key_elevenlabs, key_mercadopago) = result
-        .single_row_typed::<(Uuid, String, String, Option<bool>, DateTime<Utc>, Option<bool>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>)>()
+        .into_rows_result()
+        .map_err(|_| AppError::NotFound("User not found".into()))?
+        .single_row::<(Uuid, String, String, Option<bool>, DateTime<Utc>, Option<bool>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>)>()
         .map_err(|_| AppError::NotFound("User not found".into()))?;
 
     // Get user's assistants with enriched data
@@ -691,8 +697,8 @@ pub async fn get_user_detail_enriched(
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     let mut assistants = Vec::new();
-    if let Ok(rows) = assistants_result.rows_typed::<(Uuid, String, Option<String>, String, String)>() {
-        for row in rows.flatten() {
+    if let Ok(rows) = assistants_result.into_rows_result() {
+        for row in rows.rows::<(Uuid, String, Option<String>, String, String)>().into_iter().flatten().flatten() {
             let (aid, aname, adesc, provider, model) = row;
 
             // Count tools
@@ -703,8 +709,8 @@ pub async fn get_user_detail_enriched(
                 )
                 .await
                 .ok()
-                .and_then(|r| r.rows_typed::<(Uuid,)>().ok())
-                .map(|rows| rows.count() as i64)
+                .and_then(|r| r.into_rows_result().ok())
+                .and_then(|r| { let count = r.rows::<(Uuid,)>().ok()?.count() as i64; Some(count) })
                 .unwrap_or(0);
 
             // Count files
@@ -715,8 +721,8 @@ pub async fn get_user_detail_enriched(
                 )
                 .await
                 .ok()
-                .and_then(|r| r.rows_typed::<(Uuid,)>().ok())
-                .map(|rows| rows.count() as i64)
+                .and_then(|r| r.into_rows_result().ok())
+                .and_then(|r| { let count = r.rows::<(Uuid,)>().ok()?.count() as i64; Some(count) })
                 .unwrap_or(0);
 
             // Count integrations
@@ -727,8 +733,8 @@ pub async fn get_user_detail_enriched(
                 )
                 .await
                 .ok()
-                .and_then(|r| r.rows_typed::<(Uuid,)>().ok())
-                .map(|rows| rows.count() as i64)
+                .and_then(|r| r.into_rows_result().ok())
+                .and_then(|r| { let count = r.rows::<(Uuid,)>().ok()?.count() as i64; Some(count) })
                 .unwrap_or(0);
 
             assistants.push(AdminUserAssistantEnriched {
@@ -759,8 +765,8 @@ pub async fn get_user_detail_enriched(
     let mut cancelled_charges = 0_i64;
     let mut recent_charges: Vec<AdminChargeInfo> = Vec::new();
 
-    if let Ok(rows) = charges_result.rows_typed::<(Uuid, f64, String, Option<String>, Option<String>, DateTime<Utc>)>() {
-        for row in rows.flatten() {
+    if let Ok(rows) = charges_result.into_rows_result() {
+        for row in rows.rows::<(Uuid, f64, String, Option<String>, Option<String>, DateTime<Utc>)>().into_iter().flatten().flatten() {
             let (cid, amount, status, description, customer_name, created_at) = row;
             match status.as_str() {
                 "approved" => {
@@ -795,8 +801,8 @@ pub async fn get_user_detail_enriched(
             )
             .await;
         if let Ok(res) = usage_result {
-            if let Ok(rows) = res.rows_typed::<(i64, i64)>() {
-                for row in rows.flatten() {
+            if let Ok(rows) = res.into_rows_result() {
+                for row in rows.rows::<(i64, i64)>().into_iter().flatten().flatten() {
                     total_tokens += row.0;
                     total_messages += row.1;
                 }
@@ -814,8 +820,8 @@ pub async fn get_user_detail_enriched(
             )
             .await;
         if let Ok(int_res) = int_result {
-            if let Ok(rows) = int_res.rows_typed::<(Uuid, String, String, String, Option<String>)>() {
-                for row in rows.flatten() {
+            if let Ok(rows) = int_res.into_rows_result() {
+                for row in rows.rows::<(Uuid, String, String, String, Option<String>)>().into_iter().flatten().flatten() {
                     integrations.push(AdminUserIntegration {
                         id: row.0,
                         assistant_id: assistant.id,
@@ -839,8 +845,8 @@ pub async fn get_user_detail_enriched(
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     let mut appt_status_map: HashMap<String, i64> = HashMap::new();
-    if let Ok(rows) = appt_result.rows_typed::<(String,)>() {
-        for row in rows.flatten() {
+    if let Ok(rows) = appt_result.into_rows_result() {
+        for row in rows.rows::<(String,)>().into_iter().flatten().flatten() {
             *appt_status_map.entry(row.0).or_insert(0) += 1;
         }
     }
@@ -885,7 +891,9 @@ pub async fn delete_user(db: &DbSession, user_id: &Uuid) -> Result<(), AppError>
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     result
-        .single_row_typed::<(Uuid,)>()
+        .into_rows_result()
+        .map_err(|_| AppError::NotFound("User not found".into()))?
+        .single_row::<(Uuid,)>()
         .map_err(|_| AppError::NotFound("User not found".into()))?;
 
     // Delete user's assistants and related data
@@ -897,8 +905,8 @@ pub async fn delete_user(db: &DbSession, user_id: &Uuid) -> Result<(), AppError>
         .await
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
-    if let Ok(rows) = assistants.rows_typed::<(Uuid,)>() {
-        for row in rows.flatten() {
+    if let Ok(rows) = assistants.into_rows_result() {
+        for row in rows.rows::<(Uuid,)>().into_iter().flatten().flatten() {
             let assistant_id = row.0;
             if let Err(e) = db.query_unpaged("DELETE FROM inertial_eclipse.assistant_tools WHERE assistant_id = ?", (&assistant_id,)).await {
                 warn!(user_id = %user_id, assistant_id = %assistant_id, error = %e, "Failed to delete assistant_tools");
@@ -921,8 +929,8 @@ pub async fn delete_user(db: &DbSession, user_id: &Uuid) -> Result<(), AppError>
                 )
                 .await;
             if let Ok(conv_result) = convs {
-                if let Ok(conv_rows) = conv_result.rows_typed::<(Uuid,)>() {
-                    for conv in conv_rows.flatten() {
+                if let Ok(conv_rows) = conv_result.into_rows_result() {
+                    for conv in conv_rows.rows::<(Uuid,)>().into_iter().flatten().flatten() {
                         if let Err(e) = db.query_unpaged("DELETE FROM inertial_eclipse.messages WHERE conversation_id = ?", (&conv.0,)).await {
                             warn!(conversation_id = %conv.0, error = %e, "Failed to delete messages");
                         }

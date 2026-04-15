@@ -60,6 +60,7 @@ pub async fn update(
     Ok(Json(appointment))
 }
 
+#[allow(dead_code)]
 pub async fn cancel(
     Extension(db): Extension<DbSession>,
     Extension(auth_user): Extension<AuthUser>,

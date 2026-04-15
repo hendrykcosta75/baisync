@@ -9,6 +9,7 @@ use crate::services::encryption::EncryptionService;
 const CHUNK_SIZE: usize = 1500;
 const CHUNK_OVERLAP: usize = 200;
 
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct FileRecord {
     pub assistant_id: Uuid,
@@ -125,10 +126,8 @@ pub async fn list_files(
     let mut files = Vec::new();
     let mut seen_names = std::collections::HashSet::new();
 
-    for row in result
-        .rows_typed::<(Uuid, Uuid, Uuid, String, i32, String, DateTime<Utc>)>()
-        .map_err(|e| AppError::DatabaseError(e.to_string()))?
-    {
+    let rows = result.into_rows_result()?;
+    for row in rows.rows::<(Uuid, Uuid, Uuid, String, i32, String, DateTime<Utc>)>()? {
         let r = row.map_err(|e| AppError::DatabaseError(e.to_string()))?;
         // Deduplicate chunks — only show base file name
         let base_name = r.3.split(" [part ").next().unwrap_or(&r.3).to_string();
@@ -165,7 +164,8 @@ pub async fn delete_file(
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     let name = result
-        .single_row_typed::<(String,)>()
+        .into_rows_result().ok()
+        .and_then(|r| r.single_row::<(String,)>().ok())
         .map(|r| r.0)
         .unwrap_or_default();
 
@@ -180,10 +180,8 @@ pub async fn delete_file(
         .await
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
-    for row in all
-        .rows_typed::<(Uuid, String)>()
-        .map_err(|e| AppError::DatabaseError(e.to_string()))?
-    {
+    let all_rows = all.into_rows_result()?;
+    for row in all_rows.rows::<(Uuid, String)>()? {
         let (chunk_id, chunk_name) = row.map_err(|e| AppError::DatabaseError(e.to_string()))?;
         let chunk_base = chunk_name.split(" [part ").next().unwrap_or(&chunk_name);
         if chunk_base == base_name {
@@ -217,10 +215,8 @@ pub async fn retrieve_context(
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     let mut contexts = Vec::new();
-    for row in result
-        .rows_typed::<(String,)>()
-        .map_err(|e| AppError::DatabaseError(e.to_string()))?
-    {
+    let rows = result.into_rows_result()?;
+    for row in rows.rows::<(String,)>()? {
         let (text,) = row.map_err(|e| AppError::DatabaseError(e.to_string()))?;
         if !text.trim().is_empty() {
             contexts.push(text);

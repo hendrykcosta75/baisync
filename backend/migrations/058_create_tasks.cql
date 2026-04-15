@@ -1,0 +1,20 @@
+CREATE TABLE IF NOT EXISTS inertial_eclipse.tasks (
+  team_id UUID,
+  id UUID,
+  title text,
+  description text,
+  status text,
+  priority text,
+  assignee_id UUID,
+  created_by UUID,
+  due_date timestamp,
+  tags set<text>,
+  checklist_total int,
+  checklist_done int,
+  okr_objective_id UUID,
+  okr_key_result_id UUID,
+  position int,
+  created_at timestamp,
+  updated_at timestamp,
+  PRIMARY KEY (team_id, id)
+);

@@ -131,7 +131,7 @@ pub async fn register_user(
         .await
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
-    if existing.maybe_first_row_typed::<(Uuid,)>().map_err(|e| AppError::DatabaseError(e.to_string()))?.is_some() {
+    if existing.into_rows_result()?.maybe_first_row::<(Uuid,)>()?.is_some() {
         return Err(AppError::BadRequest("Email already registered".into()));
     }
 
@@ -157,6 +157,7 @@ pub async fn register_user(
             email: email.to_string(),
             name: name.to_string(),
             two_factor_enabled: false,
+            has_avatar: false,
             created_at: Utc::now(),
         },
     })
@@ -177,7 +178,8 @@ pub async fn login_user(
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     let (id, email, password_hash, name, two_factor_enabled, blocked, created_at) = result
-        .single_row_typed::<(Uuid, String, String, String, Option<bool>, Option<bool>, DateTime<Utc>)>()
+        .into_rows_result()?
+        .single_row::<(Uuid, String, String, String, Option<bool>, Option<bool>, DateTime<Utc>)>()
         .map_err(|_| AppError::Unauthorized("Invalid email or password".into()))?;
 
     if blocked.unwrap_or(false) {
@@ -204,6 +206,7 @@ pub async fn login_user(
             email,
             name,
             two_factor_enabled: two_factor_enabled.unwrap_or(false),
+            has_avatar: has_avatar(db, &id).await,
             created_at: ts_to_dt(created_at),
         },
     })
@@ -219,7 +222,8 @@ pub async fn get_user_by_id(db: &DbSession, user_id: &Uuid) -> Result<User, AppE
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     let (id, email, password_hash, name, two_factor_enabled, two_factor_secret, api_key_openai, api_key_claude, api_key_gemini, api_key_elevenlabs, api_key_mercadopago, api_key_stripe, blocked, created_at, updated_at) = result
-        .single_row_typed::<(Uuid, String, String, String, Option<bool>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<bool>, DateTime<Utc>, DateTime<Utc>)>()
+        .into_rows_result()?
+        .single_row::<(Uuid, String, String, String, Option<bool>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<bool>, DateTime<Utc>, DateTime<Utc>)>()
         .map_err(|_| AppError::NotFound("User not found".into()))?;
 
     Ok(User {
@@ -294,8 +298,7 @@ pub async fn update_profile(
     .await
     .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
-    let user = get_user_by_id(db, user_id).await?;
-    Ok(user.into())
+    get_user_public_with_avatar(db, user_id).await
 }
 
 pub async fn change_password(
@@ -343,8 +346,8 @@ pub async fn delete_account(
         .await
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
-    if let Ok(rows) = assistants.rows_typed::<(Uuid,)>() {
-        for row in rows.flatten() {
+    if let Ok(rows) = assistants.into_rows_result() {
+        for row in rows.rows::<(Uuid,)>().into_iter().flatten().flatten() {
             let assistant_id = row.0;
             // Delete related data
             let _ = db.query_unpaged("DELETE FROM inertial_eclipse.assistant_tools WHERE assistant_id = ?", (&assistant_id,)).await;
@@ -404,7 +407,8 @@ pub async fn reset_password(
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     let (user_id,) = result
-        .single_row_typed::<(Uuid,)>()
+        .into_rows_result()?
+        .single_row::<(Uuid,)>()
         .map_err(|_| AppError::BadRequest("Invalid or expired reset token".into()))?;
 
     let password_hash = hash_password(new_password)?;
@@ -419,6 +423,94 @@ pub async fn reset_password(
     .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     Ok(())
+}
+
+// ─── Avatar ───
+
+pub async fn has_avatar(db: &DbSession, user_id: &Uuid) -> bool {
+    let result = db
+        .query_unpaged(
+            "SELECT avatar_mime FROM inertial_eclipse.users WHERE id = ?",
+            (user_id,),
+        )
+        .await
+        .ok();
+
+    if let Some(r) = result {
+        if let Ok(rows) = r.into_rows_result() {
+            if let Ok(Some((mime,))) = rows.maybe_first_row::<(Option<String>,)>() {
+                return mime.is_some_and(|m| !m.is_empty());
+            }
+        }
+    }
+    false
+}
+
+pub async fn upload_avatar(
+    db: &DbSession,
+    user_id: &Uuid,
+    data: &[u8],
+    mime_type: &str,
+) -> Result<(), AppError> {
+    let now = ts_now();
+    db.query_unpaged(
+        "UPDATE inertial_eclipse.users SET avatar_data = ?, avatar_mime = ?, updated_at = ? WHERE id = ?",
+        (data, mime_type, now, user_id),
+    )
+    .await
+    .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+
+    Ok(())
+}
+
+pub async fn delete_avatar(db: &DbSession, user_id: &Uuid) -> Result<(), AppError> {
+    let now = ts_now();
+    let empty: Option<&[u8]> = None;
+    let empty_mime: Option<&str> = None;
+    db.query_unpaged(
+        "UPDATE inertial_eclipse.users SET avatar_data = ?, avatar_mime = ?, updated_at = ? WHERE id = ?",
+        (&empty, &empty_mime, now, user_id),
+    )
+    .await
+    .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+    Ok(())
+}
+
+pub async fn get_avatar(db: &DbSession, user_id: &Uuid) -> Result<(String, Vec<u8>), AppError> {
+    let result = db
+        .query_unpaged(
+            "SELECT avatar_mime, avatar_data FROM inertial_eclipse.users WHERE id = ?",
+            (user_id,),
+        )
+        .await
+        .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+
+    let row = result
+        .into_rows_result()?
+        .single_row::<(Option<String>, Option<Vec<u8>>)>()
+        .map_err(|_| AppError::NotFound("User not found".into()))?;
+
+    let mime = row.0.ok_or_else(|| AppError::NotFound("No avatar".into()))?;
+    let data = row.1.ok_or_else(|| AppError::NotFound("No avatar data".into()))?;
+
+    if mime.is_empty() || data.is_empty() {
+        return Err(AppError::NotFound("No avatar".into()));
+    }
+
+    Ok((mime, data))
+}
+
+pub async fn get_user_public_with_avatar(db: &DbSession, user_id: &Uuid) -> Result<UserPublic, AppError> {
+    let user = get_user_by_id(db, user_id).await?;
+    let avatar = has_avatar(db, user_id).await;
+    Ok(UserPublic {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        two_factor_enabled: user.two_factor_enabled,
+        has_avatar: avatar,
+        created_at: user.created_at,
+    })
 }
 
 #[cfg(test)]

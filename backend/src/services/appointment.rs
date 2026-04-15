@@ -192,9 +192,9 @@ pub async fn get_appointment(
         .await
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
-    let row = result
-        .rows_typed::<AppointmentRow>()
-        .map_err(|e| AppError::DatabaseError(e.to_string()))?
+    let rows = result.into_rows_result()?;
+    let row = rows
+        .rows::<AppointmentRow>()?
         .next()
         .ok_or_else(|| AppError::NotFound("Appointment not found".into()))?
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
@@ -215,10 +215,8 @@ pub async fn list_appointments(
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     let mut appointments = Vec::new();
-    for row in result
-        .rows_typed::<AppointmentRow>()
-        .map_err(|e| AppError::DatabaseError(e.to_string()))?
-    {
+    let rows = result.into_rows_result()?;
+    for row in rows.rows::<AppointmentRow>()? {
         let r = row.map_err(|e| AppError::DatabaseError(e.to_string()))?;
         appointments.push(row_to_appointment(r));
     }
@@ -363,10 +361,8 @@ pub async fn list_by_assistant_range(
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     let mut items = Vec::new();
-    for row in result
-        .rows_typed::<ByAssistantRow>()
-        .map_err(|e| AppError::DatabaseError(e.to_string()))?
-    {
+    let rows = result.into_rows_result()?;
+    for row in rows.rows::<ByAssistantRow>()? {
         let r = row.map_err(|e| AppError::DatabaseError(e.to_string()))?;
         let status = r.7.unwrap_or_default();
         if status == "cancelled" {
@@ -545,9 +541,9 @@ pub async fn get_availability(
         .await
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
-    let row = result
-        .rows_typed::<AvailabilityRow>()
-        .map_err(|e| AppError::DatabaseError(e.to_string()))?
+    let rows = result.into_rows_result()?;
+    let row = rows
+        .rows::<AvailabilityRow>()?
         .next();
 
     match row {

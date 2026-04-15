@@ -101,7 +101,7 @@ pub async fn get_workspace(db: &DbSession, workspace_id: &Uuid) -> Result<Worksp
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     let (id, name, workspace_type, owner_id, created_at, updated_at) = result
-        .single_row_typed::<(Uuid, String, String, Uuid, DateTime<Utc>, DateTime<Utc>)>()
+        .into_rows_result()?.single_row::<(Uuid, String, String, Uuid, DateTime<Utc>, DateTime<Utc>)>()
         .map_err(|_| AppError::NotFound("Workspace not found".into()))?;
 
     Ok(Workspace {
@@ -199,12 +199,10 @@ pub async fn list_user_workspaces(
         .await
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
-    let rows = result
-        .rows_typed::<(Uuid, Uuid, Option<String>, Option<String>, Option<String>, DateTime<Utc>)>()
-        .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+    let rows = result.into_rows_result()?;
 
     let mut workspaces = Vec::new();
-    for row in rows.flatten() {
+    for row in rows.rows::<(Uuid, Uuid, Option<String>, Option<String>, Option<String>, DateTime<Utc>)>()?.flatten() {
         workspaces.push(UserWorkspace {
             user_id: row.0,
             workspace_id: row.1,
@@ -249,7 +247,7 @@ pub async fn get_active_workspace_id(
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     let (active_ws,) = result
-        .single_row_typed::<(Option<Uuid>,)>()
+        .into_rows_result()?.single_row::<(Option<Uuid>,)>()
         .map_err(|_| AppError::NotFound("User not found".into()))?;
 
     // Fallback to user_id if no active workspace set
@@ -343,12 +341,10 @@ pub async fn list_members(
         .await
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
-    let rows = result
-        .rows_typed::<(Uuid, Uuid, String, Option<Uuid>, DateTime<Utc>)>()
-        .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+    let rows = result.into_rows_result()?;
 
     let mut members = Vec::new();
-    for row in rows.flatten() {
+    for row in rows.rows::<(Uuid, Uuid, String, Option<Uuid>, DateTime<Utc>)>()?.flatten() {
         // Fetch user name and email
         let user_info = db
             .query_unpaged(
@@ -357,7 +353,8 @@ pub async fn list_members(
             )
             .await
             .ok()
-            .and_then(|r| r.maybe_first_row_typed::<(String, String)>().ok().flatten());
+            .and_then(|r| r.into_rows_result().ok())
+            .and_then(|r| r.maybe_first_row::<(String, String)>().ok().flatten());
 
         let (user_name, user_email) = match user_info {
             Some((n, e)) => (Some(n), Some(e)),
@@ -392,7 +389,7 @@ pub async fn get_member_role(
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     let (role,) = result
-        .single_row_typed::<(String,)>()
+        .into_rows_result()?.single_row::<(String,)>()
         .map_err(|_| AppError::Forbidden("Not a member of this workspace".into()))?;
 
     Ok(role)
@@ -412,6 +409,44 @@ pub async fn require_editor_role(
         ));
     }
     Ok(())
+}
+
+// ─── Granular Permission Helpers ───
+
+/// Can create/edit/delete strategic analyses (SWOT, PESTLE, VRIO, etc.)
+#[allow(dead_code)]
+pub fn can_edit_strategy(role: &str) -> bool {
+    matches!(role, "owner" | "admin" | "strategist")
+}
+
+/// Can create/edit/delete OKRs (objectives, key results)
+#[allow(dead_code)]
+pub fn can_edit_okrs(role: &str) -> bool {
+    matches!(role, "owner" | "admin" | "strategist")
+}
+
+/// Can add items to existing analyses (SWOT items, PESTLE factors, etc.)
+#[allow(dead_code)]
+pub fn can_add_items(role: &str) -> bool {
+    matches!(role, "owner" | "admin" | "strategist" | "analyst")
+}
+
+/// Can perform check-ins on key results
+#[allow(dead_code)]
+pub fn can_checkin(role: &str) -> bool {
+    matches!(role, "owner" | "admin" | "strategist" | "analyst" | "member")
+}
+
+/// Can manage workspace settings, invite/remove members
+#[allow(dead_code)]
+pub fn can_manage_workspace(role: &str) -> bool {
+    matches!(role, "owner" | "admin")
+}
+
+/// Can create/manage teams and assign tasks
+#[allow(dead_code)]
+pub fn can_manage_teams(role: &str) -> bool {
+    matches!(role, "owner" | "admin" | "strategist")
 }
 
 // ─── Invites ───
@@ -466,7 +501,7 @@ pub async fn get_invite_by_token(
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     let (id, workspace_id, email, role, invited_by, tok, expires_at, accepted, created_at) = result
-        .single_row_typed::<(Uuid, Uuid, String, String, Uuid, String, DateTime<Utc>, Option<bool>, DateTime<Utc>)>()
+        .into_rows_result()?.single_row::<(Uuid, Uuid, String, String, Uuid, String, DateTime<Utc>, Option<bool>, DateTime<Utc>)>()
         .map_err(|_| AppError::NotFound("Invite not found".into()))?;
 
     Ok(WorkspaceInvite {
@@ -522,7 +557,7 @@ pub async fn get_api_keys(
         .await
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
-    match result.maybe_first_row_typed::<(Uuid, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<DateTime<Utc>>)>() {
+    match result.into_rows_result()?.maybe_first_row::<(Uuid, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<DateTime<Utc>>)>() {
         Ok(Some(row)) => Ok(WorkspaceApiKeys {
             workspace_id: row.0,
             openai_api_key: row.1,
@@ -641,7 +676,8 @@ pub async fn get_decrypted_api_key(
         )
         .await
         .ok()
-        .and_then(|r| r.maybe_first_row_typed::<(Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>)>().ok().flatten());
+        .and_then(|r| r.into_rows_result().ok())
+        .and_then(|r| r.maybe_first_row::<(Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>)>().ok().flatten());
 
     if let Some((openai, claude, gemini, elevenlabs, mercadopago, stripe)) = user_result {
         let enc = match provider {
@@ -686,7 +722,8 @@ pub async fn get_api_keys_status(
             )
             .await
             .ok()
-            .and_then(|r| r.maybe_first_row_typed::<(Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>)>().ok().flatten());
+            .and_then(|r| r.into_rows_result().ok())
+            .and_then(|r| r.maybe_first_row::<(Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>)>().ok().flatten());
 
         if let Some((openai, claude, gemini, elevenlabs, mercadopago, stripe)) = user_result {
             resp.openai_configured = resp.openai_configured || openai.is_some();
@@ -703,6 +740,7 @@ pub async fn get_api_keys_status(
 
 /// Migrate API keys from user table to workspace_api_keys table.
 /// Used during data migration for existing users.
+#[allow(dead_code)]
 pub async fn migrate_user_api_keys(
     db: &DbSession,
     user_id: &Uuid,
@@ -716,8 +754,9 @@ pub async fn migrate_user_api_keys(
         .await
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
-    if let Ok(Some((openai, claude, gemini, elevenlabs, mercadopago, stripe))) = result
-        .maybe_first_row_typed::<(Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>)>()
+    let rows_result = result.into_rows_result()?;
+    if let Ok(Some((openai, claude, gemini, elevenlabs, mercadopago, stripe))) = rows_result
+        .maybe_first_row::<(Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>)>()
     {
         // Also fetch public keys
         let pks = db
@@ -727,7 +766,8 @@ pub async fn migrate_user_api_keys(
             )
             .await
             .ok()
-            .and_then(|r| r.maybe_first_row_typed::<(Option<String>, Option<String>)>().ok().flatten());
+            .and_then(|r| r.into_rows_result().ok())
+            .and_then(|r| r.maybe_first_row::<(Option<String>, Option<String>)>().ok().flatten());
         let (stripe_pk, mp_pk) = pks.unwrap_or((None, None));
 
         let now = ts_now();

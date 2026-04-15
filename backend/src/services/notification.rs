@@ -117,10 +117,8 @@ pub async fn list_notifications(
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     let mut notifications = Vec::new();
-    for row in result
-        .rows_typed::<NotificationRow>()
-        .map_err(|e| AppError::DatabaseError(e.to_string()))?
-    {
+    let rows = result.into_rows_result()?;
+    for row in rows.rows::<NotificationRow>()? {
         let r = row.map_err(|e| AppError::DatabaseError(e.to_string()))?;
         notifications.push(row_to_notification(r));
     }

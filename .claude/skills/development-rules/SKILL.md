@@ -1,6 +1,6 @@
 ---
 name: development-rules
-description: TRIGGER when implementing any new feature, modifying existing code, adding endpoints, changing models, or making any functional change. Enforces impact analysis, cross-system consistency, and test coverage before finalizing work.
+description: Read this skill BEFORE writing or modifying ANY code in this project. This skill contains the project's mandatory impact analysis checklist, cross-system dependency map, and test verification steps that MUST be followed for every change. Use this skill whenever the user asks to: add a feature, fix a bug, change a model/struct, add or modify an API endpoint, update a frontend form or page, add an integration (Stripe, etc.), change database schema, modify routes or permissions, update environment variables, or touch the Baisync Agent. Also use when the user says "implement", "build", "add", "create", "update", "fix", "refactor", "migrate", or "deploy". Without this skill, Claude will miss required cross-system updates (e.g., changing a backend struct without updating frontend types, adding a feature without updating the Baisync Agent, or modifying env vars without updating .env.example). This skill is the project's engineering checklist — skip it and things break silently.
 
 ---
 

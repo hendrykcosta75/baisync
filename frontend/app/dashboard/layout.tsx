@@ -9,6 +9,7 @@ import { BaisyncBubble } from '@/components/baisync/baisync-bubble'
 import { BaisyncPanel } from '@/components/baisync/baisync-panel'
 import { useRealtimeEvents } from '@/lib/useRealtimeEvents'
 import { ErrorModal } from '@/components/error-modal'
+import { ToastContainer } from '@/components/toast-container'
 
 const DEFAULT_WIDTH = 220
 
@@ -113,13 +114,13 @@ export default function DashboardLayout({
 
       <div className="flex-1 flex flex-col min-w-0 relative">
         {/* Decorative orbs — subtle */}
-        <div className="decorative-orb" style={{ width: 400, height: 400, top: -150, right: -150, opacity: 0.3 }} />
-        <div className="decorative-orb" style={{ width: 300, height: 300, top: -120, left: -120, opacity: 0.15 }} />
-        <div className="decorative-orb" style={{ width: 250, height: 250, bottom: 150, left: -100, opacity: 0.15 }} />
+        <div className="decorative-orb pointer-events-none" style={{ width: 400, height: 400, top: -150, right: -150, opacity: 0.3, zIndex: 0 }} />
+        <div className="decorative-orb pointer-events-none" style={{ width: 300, height: 300, top: -120, left: -120, opacity: 0.15, zIndex: 0 }} />
+        <div className="decorative-orb pointer-events-none" style={{ width: 250, height: 250, bottom: 150, left: -100, opacity: 0.15, zIndex: 0 }} />
 
         <Header onMenuClick={() => setIsSidebarOpen(true)} />
 
-        <main className="flex-1 overflow-y-auto p-5 lg:p-6 relative z-[1]">
+        <main className="flex-1 overflow-y-auto p-5 lg:p-6 relative">
           <div className="mx-auto max-w-7xl">
             {children}
           </div>
@@ -131,6 +132,7 @@ export default function DashboardLayout({
         <BaisyncPanel />
       </BaisyncErrorBoundary>
       <ErrorModal />
+      <ToastContainer />
     </div>
   )
 }

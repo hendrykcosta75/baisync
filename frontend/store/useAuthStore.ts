@@ -5,6 +5,7 @@ interface User {
   id: string
   email: string
   name: string
+  has_avatar?: boolean
 }
 
 interface AuthState {
@@ -22,6 +23,8 @@ interface AuthState {
   enable2FA: () => Promise<string>
   verify2FA: (code: string) => Promise<string>
   updateProfile: (name: string) => Promise<void>
+  uploadAvatar: (file: File) => Promise<void>
+  deleteAvatar: () => Promise<void>
   changePassword: (currentPassword: string, newPassword: string) => Promise<string>
   deleteAccount: (password: string) => Promise<void>
   clearError: () => void
@@ -124,8 +127,8 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
   fetchMe: async () => {
     set({ isLoading: true })
     try {
-      const data = await apiFetch<User & { workspace_id?: string }>('/api/auth/me')
-      const freshUser = { id: data.id, email: data.email, name: data.name }
+      const data = await apiFetch<User & { workspace_id?: string; has_avatar?: boolean }>('/api/auth/me')
+      const freshUser = { id: data.id, email: data.email, name: data.name, has_avatar: data.has_avatar }
       localStorage.setItem('auth-user', JSON.stringify(freshUser))
       // Sync active workspace ID from JWT so frontend matches backend context
       if (data.workspace_id) {
@@ -178,13 +181,36 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
         method: 'PUT',
         body: JSON.stringify({ name }),
       })
-      const updatedUser = { id: data.id, email: data.email, name: data.name }
+      const currentUser = get().user
+      const updatedUser = { id: data.id, email: data.email, name: data.name, has_avatar: currentUser?.has_avatar }
       localStorage.setItem('auth-user', JSON.stringify(updatedUser))
       set({ user: updatedUser, isLoading: false })
     } catch (err) {
       const message = err instanceof ApiError ? err.message : 'Falha ao atualizar perfil'
       set({ isLoading: false, error: message })
       throw err
+    }
+  },
+
+  uploadAvatar: async (file) => {
+    const formData = new FormData()
+    formData.append('file', file)
+    await apiFetch('/api/user/avatar', { method: 'POST', body: formData })
+    const user = get().user
+    if (user) {
+      const updated = { ...user, has_avatar: true }
+      localStorage.setItem('auth-user', JSON.stringify(updated))
+      set({ user: updated })
+    }
+  },
+
+  deleteAvatar: async () => {
+    await apiFetch('/api/user/avatar', { method: 'DELETE' })
+    const user = get().user
+    if (user) {
+      const updated = { ...user, has_avatar: false }
+      localStorage.setItem('auth-user', JSON.stringify(updated))
+      set({ user: updated })
     }
   },
 

@@ -45,6 +45,17 @@ export interface ChannelNote {
   updated_at: string
 }
 
+export interface ChannelCanvas {
+  id: string
+  channel_id: string
+  title: string
+  canvas_data: string
+  created_by: string
+  updated_by: string
+  created_at: string
+  updated_at: string
+}
+
 interface ChannelState {
   channels: Channel[]
   dms: Channel[]
@@ -52,6 +63,7 @@ interface ChannelState {
   messages: ChannelMessage[]
   members: ChannelMember[]
   notes: ChannelNote[]
+  canvases: ChannelCanvas[]
   nextCursor: string | null
   isLoading: boolean
 
@@ -76,10 +88,19 @@ interface ChannelState {
   createNote: (channelId: string, title: string) => Promise<ChannelNote>
   updateNote: (channelId: string, noteId: string, title?: string, content?: string) => Promise<void>
   deleteNote: (channelId: string, noteId: string) => Promise<void>
+  // Canvases
+  fetchCanvases: (channelId: string) => Promise<void>
+  createCanvas: (channelId: string, title: string) => Promise<ChannelCanvas>
+  getCanvas: (channelId: string, canvasId: string) => Promise<ChannelCanvas>
+  updateCanvas: (channelId: string, canvasId: string, title?: string, canvasData?: string) => Promise<void>
+  deleteCanvas: (channelId: string, canvasId: string) => Promise<void>
   // SSE-driven actions
   addNoteFromSSE: (note: ChannelNote) => void
   updateNoteFromSSE: (note: ChannelNote) => void
   removeNoteFromSSE: (noteId: string) => void
+  addCanvasFromSSE: (canvas: ChannelCanvas) => void
+  updateCanvasFromSSE: (canvas: ChannelCanvas) => void
+  removeCanvasFromSSE: (canvasId: string) => void
   handleRemovedFromChannel: (channelId: string) => void
 }
 
@@ -90,6 +111,7 @@ export const useChannelStore = create<ChannelState>()((set, get) => ({
   messages: [],
   members: [],
   notes: [],
+  canvases: [],
   nextCursor: null,
   isLoading: false,
 
@@ -325,6 +347,57 @@ export const useChannelStore = create<ChannelState>()((set, get) => ({
     set(s => ({ notes: s.notes.filter(n => n.id !== noteId) }))
   },
 
+  // Canvases
+  fetchCanvases: async (channelId: string) => {
+    const data = await apiFetch<{ canvases: ChannelCanvas[] }>(`/api/channels/${channelId}/canvases`)
+    set({ canvases: data.canvases })
+  },
+
+  createCanvas: async (channelId: string, title: string) => {
+    const data = await apiFetch<{ canvas: ChannelCanvas }>(`/api/channels/${channelId}/canvases`, {
+      method: 'POST',
+      body: JSON.stringify({ title }),
+    })
+    set(s => ({ canvases: [...s.canvases, data.canvas] }))
+    return data.canvas
+  },
+
+  getCanvas: async (channelId: string, canvasId: string) => {
+    const data = await apiFetch<{ canvas: ChannelCanvas }>(`/api/channels/${channelId}/canvases/${canvasId}`)
+    return data.canvas
+  },
+
+  updateCanvas: async (channelId: string, canvasId: string, title?: string, canvasData?: string) => {
+    await apiFetch(`/api/channels/${channelId}/canvases/${canvasId}`, {
+      method: 'PUT',
+      body: JSON.stringify({ title, canvas_data: canvasData }),
+    })
+    if (title) {
+      set(s => ({ canvases: s.canvases.map(c => c.id === canvasId ? { ...c, title } : c) }))
+    }
+  },
+
+  deleteCanvas: async (channelId: string, canvasId: string) => {
+    await apiFetch(`/api/channels/${channelId}/canvases/${canvasId}`, { method: 'DELETE' })
+    set(s => ({ canvases: s.canvases.filter(c => c.id !== canvasId) }))
+  },
+
+  addCanvasFromSSE: (canvas: ChannelCanvas) => {
+    set(s => ({
+      canvases: s.canvases.some(c => c.id === canvas.id) ? s.canvases : [...s.canvases, canvas],
+    }))
+  },
+
+  updateCanvasFromSSE: (canvas: ChannelCanvas) => {
+    set(s => ({
+      canvases: s.canvases.map(c => c.id === canvas.id ? { ...c, ...canvas } : c),
+    }))
+  },
+
+  removeCanvasFromSSE: (canvasId: string) => {
+    set(s => ({ canvases: s.canvases.filter(c => c.id !== canvasId) }))
+  },
+
   handleRemovedFromChannel: (channelId: string) => {
     set(s => ({
       channels: s.channels.filter(c => c.id !== channelId),
@@ -332,6 +405,7 @@ export const useChannelStore = create<ChannelState>()((set, get) => ({
       activeChannel: s.activeChannel?.id === channelId ? null : s.activeChannel,
       messages: s.activeChannel?.id === channelId ? [] : s.messages,
       notes: s.activeChannel?.id === channelId ? [] : s.notes,
+      canvases: s.activeChannel?.id === channelId ? [] : s.canvases,
       members: s.activeChannel?.id === channelId ? [] : s.members,
     }))
   },

@@ -544,7 +544,8 @@ pub fn spawn_mp_payment_poller(
             ).await;
 
             let created_at = charge_result.ok()
-                .and_then(|r| r.maybe_first_row_typed::<(CqlTimestamp,)>().ok().flatten())
+                .and_then(|r| r.into_rows_result().ok())
+                .and_then(|r| r.maybe_first_row::<(CqlTimestamp,)>().ok().flatten())
                 .map(|r| DateTime::from_timestamp_millis(r.0.0).unwrap_or_default())
                 .unwrap_or_default();
 
@@ -633,7 +634,9 @@ pub async fn check_charge_status(
     ).await.map_err(|e| AppError::DatabaseError(format!("Failed to query pix charge: {e}")))?;
 
     let row = result
-        .single_row_typed::<ChargeStatusRow>()
+        .into_rows_result()
+        .map_err(|_| AppError::NotFound("Cobrança não encontrada".into()))?
+        .single_row::<ChargeStatusRow>()
         .map_err(|_| AppError::NotFound("Cobrança não encontrada".into()))?;
 
     let charge = status_row_to_charge(row);
@@ -784,7 +787,8 @@ pub async fn notify_pix_payment_confirmed(
         ).await;
 
         let channel = conv_result.ok()
-            .and_then(|r| r.maybe_first_row_typed::<(String,)>().ok().flatten())
+            .and_then(|r| r.into_rows_result().ok())
+            .and_then(|r| r.maybe_first_row::<(String,)>().ok().flatten())
             .map(|r| r.0)
             .unwrap_or_default();
 
@@ -820,7 +824,9 @@ pub async fn process_webhook(
     ).await.map_err(|e| AppError::DatabaseError(format!("Failed to lookup charge by mp_id: {e}")))?;
 
     let row = result
-        .single_row_typed::<(String, Uuid, Uuid, Uuid)>()
+        .into_rows_result()
+        .map_err(|_| AppError::NotFound(format!("Charge not found for mp_payment_id: {mp_payment_id}")))?
+        .single_row::<(String, Uuid, Uuid, Uuid)>()
         .map_err(|_| AppError::NotFound(format!("Charge not found for mp_payment_id: {mp_payment_id}")))?;
 
     let user_id = row.1;
@@ -839,7 +845,8 @@ pub async fn process_webhook(
     ).await.map_err(|e| AppError::DatabaseError(format!("Failed to get charge: {e}")))?;
 
     let created_at_ts = charge_result
-        .single_row_typed::<(CqlTimestamp,)>()
+        .into_rows_result().ok()
+        .and_then(|r| r.single_row::<(CqlTimestamp,)>().ok())
         .map(|r| r.0)
         .unwrap_or(CqlTimestamp(0));
 
@@ -894,12 +901,10 @@ pub async fn list_charges_by_assistant(
         .await
         .map_err(|e| AppError::DatabaseError(format!("Failed to list charges: {e}")))?;
 
-    let rows = result
-        .rows_typed::<ChargeSummaryRow>()
-        .map_err(|e| AppError::DatabaseError(format!("Failed to deserialize: {e}")))?;
+    let rows = result.into_rows_result()?;
 
     let mut charges = Vec::new();
-    for row in rows {
+    for row in rows.rows::<ChargeSummaryRow>()? {
         let r = row.map_err(|e| AppError::DatabaseError(e.to_string()))?;
         charges.push(PixChargeSummary {
             id: r.0,
@@ -950,12 +955,10 @@ pub async fn get_user_financial_overview(
         (user_id,),
     ).await.map_err(|e| AppError::DatabaseError(format!("Failed to list assistants: {e}")))?;
 
-    let rows = result
-        .rows_typed::<(Uuid,)>()
-        .map_err(|e| AppError::DatabaseError(format!("Failed to deserialize: {e}")))?;
+    let rows = result.into_rows_result()?;
 
     let mut overviews = Vec::new();
-    for row in rows {
+    for row in rows.rows::<(Uuid,)>()? {
         if let Ok(r) = row {
             let summary = get_assistant_financial_summary(db, &r.0).await?;
             if summary.total_charges > 0 {

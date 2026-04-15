@@ -1,5 +1,8 @@
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
+use scylla::transport::query_result::{
+    IntoRowsResultError, MaybeFirstRowError, RowsError, SingleRowError,
+};
 use serde_json::json;
 use tracing::error;
 
@@ -23,6 +26,7 @@ pub enum AppError {
     #[error("Forbidden: {0}")]
     Forbidden(String),
 
+    #[allow(dead_code)]
     #[error("Rate limit exceeded")]
     RateLimitExceeded,
 
@@ -51,6 +55,30 @@ impl IntoResponse for AppError {
 
         let body = json!({ "error": message });
         (status, axum::Json(body)).into_response()
+    }
+}
+
+impl From<IntoRowsResultError> for AppError {
+    fn from(e: IntoRowsResultError) -> Self {
+        AppError::DatabaseError(e.to_string())
+    }
+}
+
+impl From<RowsError> for AppError {
+    fn from(e: RowsError) -> Self {
+        AppError::DatabaseError(e.to_string())
+    }
+}
+
+impl From<MaybeFirstRowError> for AppError {
+    fn from(e: MaybeFirstRowError) -> Self {
+        AppError::DatabaseError(e.to_string())
+    }
+}
+
+impl From<SingleRowError> for AppError {
+    fn from(e: SingleRowError) -> Self {
+        AppError::DatabaseError(e.to_string())
     }
 }
 

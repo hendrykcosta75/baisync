@@ -203,8 +203,12 @@ async fn get_usage_count(db: &DbSession, user_id: &Uuid) -> i64 {
 
     match result {
         Ok(res) => {
-            if let Ok(Some((count,))) = res.maybe_first_row_typed::<(i64,)>() {
-                count
+            if let Ok(rows) = res.into_rows_result() {
+                if let Ok(Some((count,))) = rows.maybe_first_row::<(i64,)>() {
+                    count
+                } else {
+                    0
+                }
             } else {
                 0
             }
@@ -545,6 +549,15 @@ IMPORTANTE: A integração com a API Oficial da Meta (WhatsApp Cloud API) e o Te
 - create_channel: data: {{workspace_id?, name, description?, channel_type?}} (cria canal, default tipo "public")
 - mark_channel_read: data: {{channel_id}} (marca todas as mensagens do canal como lidas)
 
+### Planejamento Estratégico (requer workspace_id do workspace ativo)
+- list_okrs: data: {{workspace_id}} (lista objetivos OKR com KRs e progresso)
+- list_swot: data: {{workspace_id}} (lista análises SWOT do workspace)
+
+- list_bowtie: data: {{workspace_id}} (lista análises de risco Bowtie do workspace)
+- list_stakeholders: data: {{workspace_id}} (lista mapas de stakeholders do workspace)
+- list_teams: data: {{workspace_id}} (lista equipes do workspace com membros)
+- get_strategy_map: data: {{workspace_id}} (retorna nós e conexões do mapa estratégico)
+
 ## REGRA CRÍTICA SOBRE IDs
 NUNCA invente, adivinhe ou use placeholders para IDs. Todo assistant_id, tool_id, conversation_id, workspace_id, channel_id etc. DEVE ser um UUID real que aparece no "Contexto do Usuário" ou "Contexto de Workspaces" acima, ou que foi retornado por uma ação anterior. Se você não sabe o ID, pergunte ao usuário ou use list_assistants/list_tools/list_workspaces/list_channels para descobrir. Ações com IDs inválidos falharão silenciosamente.
 
@@ -600,6 +613,8 @@ O usuário pode enviar imagens e documentos diretamente no chat. Quando receber 
 - Trocar workspace ativo e acessar informações de qualquer workspace
 - Enviar mensagens em canais, criar canais e gerenciar notas
 - Listar membros de workspaces
+- Consultar planejamento estratégico: OKRs, SWOT, Bowtie, Stakeholders
+- Ver equipes do workspace e mapa estratégico
 - Sugerir melhorias nos prompts dos assistentes
 - Diagnosticar problemas com assistentes com base nas configurações visíveis
 

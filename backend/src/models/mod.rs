@@ -6,8 +6,13 @@ pub mod conversation;
 pub mod integration;
 pub mod notification;
 pub mod card_charge;
+pub mod okr;
+pub mod strategy_map;
+pub mod swot;
+
 pub mod pagination;
 pub mod pix;
+pub mod team;
 pub mod usage;
 pub mod user;
 pub mod workspace;

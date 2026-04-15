@@ -13,7 +13,6 @@ use crate::config::Config;
 use crate::db::DbSession;
 use crate::errors::AppError;
 use crate::middleware::auth::AuthUser;
-use crate::models::conversation::Conversation;
 use crate::models::integration::UpdateIntegrationRequest;
 use crate::services::connection_state::{ConnectionState, ConnectionStateStore};
 use crate::services::encryption::EncryptionService;
@@ -361,7 +360,8 @@ async fn update_baileys_status(db: &DbSession, config: &Config, phone: &str, new
             )
             .await
             .ok()
-            .and_then(|res| res.single_row_typed::<(String,)>().ok())
+            .and_then(|res| res.into_rows_result().ok())
+            .and_then(|rows| rows.single_row::<(String,)>().ok())
             .map(|(n,)| n);
         r.unwrap_or_else(|| "seu assistente".to_string())
     };
@@ -404,7 +404,8 @@ async fn update_baileys_status(db: &DbSession, config: &Config, phone: &str, new
         )
         .await
         .ok()
-        .and_then(|res| res.single_row_typed::<(String,)>().ok())
+        .and_then(|res| res.into_rows_result().ok())
+        .and_then(|rows| rows.single_row::<(String,)>().ok())
         .map(|(e,)| e);
 
     if let Some(user_email) = user_email {
@@ -457,8 +458,7 @@ pub async fn webhook_meta_verify(
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     let found = result
-        .maybe_first_row_typed::<(Option<String>,)>()
-        .map_err(|e| AppError::DatabaseError(e.to_string()))?
+        .into_rows_result()?.maybe_first_row::<(Option<String>,)>()?
         .is_some();
 
     if !found {

@@ -1,6 +1,10 @@
-use axum::extract::Extension;
+use axum::body::Body;
+use axum::extract::{Extension, Multipart, Path};
+use axum::http::header;
+use axum::response::Response;
 use axum::Json;
 use serde_json::{json, Value};
+use uuid::Uuid;
 
 use crate::config::Config;
 use crate::db::DbSession;
@@ -49,8 +53,7 @@ pub async fn forgot_password(
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     if let Some((user_id,)) = result
-        .maybe_first_row_typed::<(uuid::Uuid,)>()
-        .map_err(|e| AppError::DatabaseError(e.to_string()))?
+        .into_rows_result()?.maybe_first_row::<(uuid::Uuid,)>()?
     {
         let row = (user_id,);
         let token = auth_service::generate_reset_token();
@@ -97,13 +100,13 @@ pub async fn me(
     Extension(db): Extension<DbSession>,
     Extension(auth_user): Extension<AuthUser>,
 ) -> Result<Json<Value>, AppError> {
-    let user = auth_service::get_user_by_id(&db, &auth_user.user_id).await?;
-    let public: UserPublic = user.into();
+    let public = auth_service::get_user_public_with_avatar(&db, &auth_user.user_id).await?;
     Ok(Json(json!({
         "id": public.id,
         "email": public.email,
         "name": public.name,
         "two_factor_enabled": public.two_factor_enabled,
+        "has_avatar": public.has_avatar,
         "created_at": public.created_at,
         "workspace_id": auth_user.workspace_id,
     })))
@@ -140,4 +143,64 @@ pub async fn delete_account(
 ) -> Result<Json<Value>, AppError> {
     auth_service::delete_account(&db, &auth_user.user_id, &req.password).await?;
     Ok(Json(json!({"message": "Conta removida com sucesso"})))
+}
+
+pub async fn upload_avatar(
+    Extension(db): Extension<DbSession>,
+    Extension(auth_user): Extension<AuthUser>,
+    mut multipart: Multipart,
+) -> Result<Json<Value>, AppError> {
+    let mut file_bytes = Vec::new();
+    let mut mime_type = "image/png".to_string();
+
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|e| AppError::BadRequest(format!("Multipart error: {e}")))?
+    {
+        if field.name() == Some("file") {
+            mime_type = field.content_type().unwrap_or("image/png").to_string();
+            file_bytes = field
+                .bytes()
+                .await
+                .map_err(|e| AppError::BadRequest(format!("Failed to read file: {e}")))?
+                .to_vec();
+        }
+    }
+
+    if file_bytes.is_empty() {
+        return Err(AppError::BadRequest("No file uploaded".into()));
+    }
+
+    // 2 MB limit for avatars
+    if file_bytes.len() > 2 * 1024 * 1024 {
+        return Err(AppError::BadRequest("Avatar too large (max 2MB)".into()));
+    }
+
+    auth_service::upload_avatar(&db, &auth_user.user_id, &file_bytes, &mime_type).await?;
+
+    Ok(Json(json!({ "success": true, "has_avatar": true })))
+}
+
+pub async fn delete_avatar(
+    Extension(db): Extension<DbSession>,
+    Extension(auth_user): Extension<AuthUser>,
+) -> Result<Json<Value>, AppError> {
+    auth_service::delete_avatar(&db, &auth_user.user_id).await?;
+    Ok(Json(json!({ "success": true })))
+}
+
+pub async fn get_avatar(
+    Extension(db): Extension<DbSession>,
+    Path(user_id): Path<Uuid>,
+) -> Result<Response, AppError> {
+    let (mime_type, data) = auth_service::get_avatar(&db, &user_id).await?;
+
+    let response = Response::builder()
+        .header(header::CONTENT_TYPE, mime_type)
+        .header(header::CACHE_CONTROL, "public, max-age=3600")
+        .body(Body::from(data))
+        .map_err(|e| AppError::InternalError(e.to_string()))?;
+
+    Ok(response)
 }

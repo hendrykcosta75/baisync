@@ -21,6 +21,7 @@ type LoginFormData = z.infer<typeof loginSchema>
 
 export default function LoginPage() {
   const [isVisible, setIsVisible] = useState(false)
+  const [pwFocused, setPwFocused] = useState(false)
   const router = useRouter()
   const { login, isLoading, error, clearError, isAuthenticated } = useAuthStore()
 
@@ -52,6 +53,8 @@ export default function LoginPage() {
 
   return (
     <AuthLayout
+      passwordVisible={isVisible}
+      passwordFocused={pwFocused}
       footerContent={
         <p style={{ fontFamily: mono, fontSize: 12, color: '#666' }}>
           Não tem uma conta?{' '}
@@ -99,6 +102,8 @@ export default function LoginPage() {
               type={isVisible ? "text" : "password"}
               className="border-[#222] hover:border-[#ff6b2c] focus-within:!border-[#ff6b2c] transition-colors shadow-sm w-full pr-10"
               {...register('password')}
+              onFocus={() => setPwFocused(true)}
+              onBlur={(e) => { setPwFocused(false); register('password').onBlur(e) }}
             />
             <button className="absolute right-3 top-1/2 -translate-y-1/2 focus:outline-none text-[#555] hover:text-[#ff6b2c]" type="button" onClick={toggleVisibility}>
               {isVisible ? (

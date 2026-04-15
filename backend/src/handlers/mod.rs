@@ -15,10 +15,15 @@ pub mod integrations;
 pub mod messages;
 pub mod models;
 pub mod notifications;
+pub mod okrs;
+pub mod strategy_map;
+pub mod swot;
+
 pub mod card_payment;
 pub mod pix;
 pub mod sharing;
 pub mod stats;
+pub mod teams;
 pub mod test_agent;
 pub mod tools;
 pub mod workspaces;

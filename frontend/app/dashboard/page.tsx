@@ -464,7 +464,7 @@ function ChatTestModal({ assistant, onClose, onMessageSent }: { assistant: Assis
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/50 backdrop-blur-sm p-0 sm:p-4">
+    <div className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center bg-black/50 backdrop-blur-sm p-0 sm:p-4">
       <div className="glass-card w-full sm:max-w-lg flex flex-col rounded-t-2xl sm:rounded-2xl" style={{ height: '520px' }}>
         <div className="flex items-center justify-between px-5 py-4 shrink-0" style={{ borderBottom: '1px solid #1e1e1e' }}>
           <div className="flex items-center gap-3">
@@ -570,7 +570,7 @@ function AssistantPicker({
   onClose: () => void
 }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
       <div className="glass-card w-full max-w-xs p-4">
         <p className="text-sm font-semibold text-heading mb-3">Qual assistente testar?</p>
         <div className="space-y-1 max-h-60 overflow-y-auto">
@@ -794,6 +794,7 @@ export default function DashboardPage() {
   }
 
   return (
+    <>
     <PageTransition>
       <StaggerContainer className="space-y-6 pb-8">
         {/* 1. Title */}
@@ -1092,18 +1093,20 @@ export default function DashboardPage() {
           </div>
         </StaggerItem>
 
-        {/* Modals */}
-        {testingAssistant && (
-          <ChatTestModal assistant={testingAssistant} onClose={() => setTestingAssistant(null)} onMessageSent={loadStats} />
-        )}
-        {showPicker && (
-          <AssistantPicker
-            assistants={assistants}
-            onSelect={openTestModal}
-            onClose={() => setShowPicker(false)}
-          />
-        )}
       </StaggerContainer>
     </PageTransition>
+
+    {/* Modals — outside PageTransition to avoid transform breaking position:fixed */}
+    {testingAssistant && (
+      <ChatTestModal assistant={testingAssistant} onClose={() => setTestingAssistant(null)} onMessageSent={loadStats} />
+    )}
+    {showPicker && (
+      <AssistantPicker
+        assistants={assistants}
+        onSelect={openTestModal}
+        onClose={() => setShowPicker(false)}
+      />
+    )}
+    </>
   )
 }

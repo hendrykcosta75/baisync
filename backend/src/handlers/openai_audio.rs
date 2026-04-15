@@ -8,7 +8,6 @@ use crate::errors::AppError;
 use crate::handlers::assistants::OwnerResolveQuery;
 use crate::middleware::auth::AuthUser;
 use crate::services::assistant as assistant_service;
-use crate::services::auth as auth_service;
 use crate::services::encryption::EncryptionService;
 
 #[derive(Debug, Serialize)]

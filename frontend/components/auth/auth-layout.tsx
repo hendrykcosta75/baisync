@@ -3,15 +3,20 @@
 import React from 'react'
 import Link from 'next/link'
 import { BaisyncLogo } from '@/components/baisync-logo'
+import { AuthCat } from '@/components/auth/auth-cat'
 
 const mono = "'JetBrains Mono', 'Fira Code', monospace"
 
 export function AuthLayout({
   children,
   footerContent,
+  passwordVisible,
+  passwordFocused,
 }: {
   children: React.ReactNode
   footerContent?: React.ReactNode
+  passwordVisible?: boolean
+  passwordFocused?: boolean
 }) {
   return (
     <div
@@ -97,6 +102,8 @@ export function AuthLayout({
             </div>
           )}
         </div>
+
+        <AuthCat passwordVisible={passwordVisible} passwordFocused={passwordFocused} />
       </div>
     </div>
   )

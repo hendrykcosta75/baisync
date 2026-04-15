@@ -1,29 +1,69 @@
 'use client'
 
-import React, { useCallback, useEffect, useRef } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useAuthStore } from '@/store/useAuthStore'
-import { LayoutDashboard, Bot, Banknote, CalendarDays, KeyRound, LogOut, MessageSquare } from 'lucide-react'
+import {
+  LayoutDashboard, Bot, Banknote, CalendarDays, KeyRound, LogOut,
+  MessageSquare, Users, Target, Map, Crosshair,
+  ChevronDown,
+} from 'lucide-react'
 import { WorkspaceSwitcher } from '@/components/workspace/workspace-switcher'
 
 const MIN_WIDTH = 72
 const MAX_WIDTH = 320
 const COLLAPSE_THRESHOLD = 140
 
-const sections = [
+interface NavLink {
+  name: string
+  href: string
+  icon: React.ElementType
+}
+
+interface NavGroup {
+  label: string
+  links: NavLink[]
+}
+
+interface NavSection {
+  label: string
+  groups?: NavGroup[]
+  links?: NavLink[]
+}
+
+const sections: NavSection[] = [
   {
-    label: 'Geral',
-    links: [
-      { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
-      { name: 'Financeiro', href: '/dashboard/financeiro', icon: Banknote },
+    label: 'Workspace',
+    groups: [
+      {
+        label: 'Planejamento',
+        links: [
+          { name: 'Objetivos e Resultados', href: '/dashboard/planning', icon: Target },
+          { name: 'Mapa Estratégico', href: '/dashboard/strategy-map', icon: Map },
+          { name: 'Análise SWOT', href: '/dashboard/swot', icon: Crosshair },
+        ],
+      },
+      {
+        label: 'Equipe',
+        links: [
+          { name: 'Grupos', href: '/dashboard/teams', icon: Users },
+          { name: 'Canais', href: '/dashboard/chat', icon: MessageSquare },
+        ],
+      },
     ],
   },
   {
-    label: 'Ferramentas',
+    label: 'Assistentes IA',
     links: [
+      { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
       { name: 'Assistentes', href: '/dashboard/assistants', icon: Bot },
-      { name: 'Canais', href: '/dashboard/chat', icon: MessageSquare },
+    ],
+  },
+  {
+    label: 'Geral',
+    links: [
+      { name: 'Financeiro', href: '/dashboard/financeiro', icon: Banknote },
       { name: 'Agenda', href: '/dashboard/calendar', icon: CalendarDays },
     ],
   },
@@ -34,6 +74,36 @@ const sections = [
     ],
   },
 ]
+
+function NavItem({ link, collapsed, isActive }: { link: NavLink; collapsed: boolean; isActive: boolean }) {
+  return (
+    <li>
+      <Link href={link.href} title={collapsed ? link.name : undefined}>
+        <div
+          className={`
+            flex items-center gap-2.5 rounded-[10px] transition-all duration-200 focus-visible:ring-2 focus-visible:ring-[#ff6b2c]/40 focus-visible:outline-none
+            ${collapsed ? 'justify-center py-2.5 px-0' : 'py-2 px-3'}
+            ${isActive
+              ? 'sidebar-item-active'
+              : 'text-[rgba(255,255,255,0.45)] hover:text-[rgba(255,255,255,0.88)] hover:bg-[rgba(255,255,255,0.03)]'}
+          `}
+          style={{
+            fontFamily: "'Fira Code', 'JetBrains Mono', monospace",
+            fontWeight: isActive ? 500 : 400,
+            fontSize: 12,
+          }}
+        >
+          <link.icon size={collapsed ? 18 : 14} className="shrink-0" style={{ opacity: isActive ? 1 : 0.6, color: isActive ? '#D4835A' : undefined }} />
+          {!collapsed && (
+            <span style={{ whiteSpace: 'nowrap', overflow: 'hidden' }}>
+              {link.name}
+            </span>
+          )}
+        </div>
+      </Link>
+    </li>
+  )
+}
 
 export function Sidebar({
   isOpen,
@@ -51,6 +121,55 @@ export function Sidebar({
   const dragRef = useRef<{ startX: number; startWidth: number } | null>(null)
 
   const collapsed = width <= COLLAPSE_THRESHOLD
+
+  // Track which groups are expanded (by "sectionLabel/groupLabel" key)
+  const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>(() => {
+    // Default: all groups expanded
+    const defaults: Record<string, boolean> = {}
+    for (const section of sections) {
+      if (section.groups) {
+        for (const group of section.groups) {
+          defaults[`${section.label}/${group.label}`] = false
+        }
+      }
+    }
+    return defaults
+  })
+
+  // Hover popover state for collapsed sidebar groups
+  const [hoverPopover, setHoverPopover] = useState<{ key: string; top: number; left: number } | null>(null)
+  const hoverTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const openPopover = useCallback((key: string, top: number, left: number) => {
+    if (hoverTimeoutRef.current) { clearTimeout(hoverTimeoutRef.current); hoverTimeoutRef.current = null }
+    setHoverPopover({ key, top, left })
+  }, [])
+
+  const closePopoverDelayed = useCallback(() => {
+    hoverTimeoutRef.current = setTimeout(() => setHoverPopover(null), 120)
+  }, [])
+
+  const keepPopover = useCallback(() => {
+    if (hoverTimeoutRef.current) { clearTimeout(hoverTimeoutRef.current); hoverTimeoutRef.current = null }
+  }, [])
+
+  // Auto-expand group containing active route
+  useEffect(() => {
+    for (const section of sections) {
+      if (section.groups) {
+        for (const group of section.groups) {
+          if (group.links.some((l) => pathname === l.href)) {
+            const key = `${section.label}/${group.label}`
+            setExpandedGroups((prev) => ({ ...prev, [key]: true }))
+          }
+        }
+      }
+    }
+  }, [pathname])
+
+  const toggleGroup = useCallback((key: string) => {
+    setExpandedGroups((prev) => ({ ...prev, [key]: !prev[key] }))
+  }, [])
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault()
@@ -136,38 +255,109 @@ export function Sidebar({
                 </div>
               )}
               {collapsed && <div className="h-3" />}
-              <ul className="px-2.5 space-y-0.5">
-                {section.links.map((link) => {
-                  const isActive = pathname === link.href
+
+              {/* Flat links (no groups) */}
+              {section.links && (
+                <ul className="px-2.5 space-y-0.5">
+                  {section.links.map((link) => (
+                    <NavItem key={link.name} link={link} collapsed={collapsed} isActive={pathname === link.href} />
+                  ))}
+                </ul>
+              )}
+
+              {/* Grouped links with collapsible headers */}
+              {section.groups && section.groups.map((group) => {
+                const key = `${section.label}/${group.label}`
+                const isExpanded = expandedGroups[key] ?? true
+                const hasActiveChild = group.links.some((l) => pathname === l.href)
+
+                if (collapsed) {
+                  // Collapsed sidebar: one icon per group with hover popover
+                  const groupIcons: Record<string, React.ElementType> = {
+                    'Planejamento': Target,
+                    'Equipe': Users,
+                  }
+                  const GroupIcon = groupIcons[group.label] || group.links[0]?.icon || Target
+
                   return (
-                    <li key={link.name}>
-                      <Link href={link.href} title={collapsed ? link.name : undefined}>
-                        <div
-                          className={`
-                            flex items-center gap-2.5 rounded-[10px] transition-all duration-200 focus-visible:ring-2 focus-visible:ring-[#ff6b2c]/40 focus-visible:outline-none
-                            ${collapsed ? 'justify-center py-2.5 px-0' : 'py-2.5 px-3'}
-                            ${isActive
-                              ? 'sidebar-item-active'
-                              : 'text-[rgba(255,255,255,0.45)] hover:text-[rgba(255,255,255,0.88)] hover:bg-[rgba(255,255,255,0.03)]'}
+                    <div key={key} className="relative px-2.5 mb-0.5">
+                      <div
+                        className="group/popover"
+                        onMouseEnter={(e) => {
+                          const rect = e.currentTarget.getBoundingClientRect()
+                          openPopover(key, rect.top, rect.right + 8)
+                        }}
+                        onMouseLeave={closePopoverDelayed}
+                      >
+                        <button
+                          className={`w-full flex items-center justify-center py-2.5 rounded-[10px] transition-all duration-200
+                            ${hasActiveChild ? 'sidebar-item-active' : 'text-[rgba(255,255,255,0.45)] hover:text-[rgba(255,255,255,0.88)] hover:bg-[rgba(255,255,255,0.03)]'}
                           `}
-                          style={{
-                            fontFamily: "'Fira Code', 'JetBrains Mono', monospace",
-                            fontWeight: isActive ? 500 : 400,
-                            fontSize: 13,
-                          }}
+                          title={group.label}
                         >
-                          <link.icon size={collapsed ? 20 : 18} className="shrink-0" style={{ opacity: isActive ? 1 : 0.6, color: isActive ? '#D4835A' : undefined }} />
-                          {!collapsed && (
-                            <span style={{ whiteSpace: 'nowrap', overflow: 'hidden' }}>
-                              {link.name}
-                            </span>
-                          )}
-                        </div>
-                      </Link>
-                    </li>
+                          <GroupIcon size={18} className="shrink-0" style={{ opacity: hasActiveChild ? 1 : 0.6, color: hasActiveChild ? '#D4835A' : undefined }} />
+                        </button>
+
+                        {/* Hover popover */}
+                        {hoverPopover?.key === key && (
+                          <div
+                            className="fixed z-[80] rounded-xl border border-dim shadow-2xl py-2 min-w-[180px]"
+                            style={{
+                              top: hoverPopover.top,
+                              left: hoverPopover.left,
+                              background: '#1a1a1a',
+                            }}
+                            onMouseEnter={keepPopover}
+                            onMouseLeave={closePopoverDelayed}
+                          >
+                            <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-[#4a4a4a]" style={{ fontFamily: "'JetBrains Mono', 'Fira Code', monospace" }}>
+                              {group.label}
+                            </div>
+                            {group.links.map((link) => {
+                              const isActive = pathname === link.href
+                              return (
+                                <Link key={link.href} href={link.href} onClick={onClose}>
+                                  <div className={`flex items-center gap-2.5 px-3 py-2 mx-1 rounded-lg transition-colors ${isActive ? 'text-[#D4835A] bg-[rgba(255,107,44,0.08)]' : 'text-[rgba(255,255,255,0.6)] hover:text-white hover:bg-[rgba(255,255,255,0.04)]'}`}
+                                       style={{ fontFamily: "'Fira Code', 'JetBrains Mono', monospace", fontSize: 12 }}>
+                                    <link.icon size={14} style={{ color: isActive ? '#D4835A' : undefined, opacity: isActive ? 1 : 0.6 }} />
+                                    <span>{link.name}</span>
+                                  </div>
+                                </Link>
+                              )
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    </div>
                   )
-                })}
-              </ul>
+                }
+
+                return (
+                  <div key={key} className="mb-0.5">
+                    <button
+                      onClick={() => toggleGroup(key)}
+                      className={`
+                        w-full flex items-center gap-2 px-5 py-1.5 text-[10px] font-semibold uppercase tracking-wider transition-colors duration-150
+                        ${hasActiveChild ? 'text-[#D4835A]/80' : 'text-[#4a4a4a] hover:text-[#6a6a6a]'}
+                      `}
+                      style={{ fontFamily: "'JetBrains Mono', 'Fira Code', monospace" }}
+                    >
+                      <ChevronDown
+                        size={10}
+                        className={`transition-transform duration-200 ${isExpanded ? '' : '-rotate-90'}`}
+                      />
+                      {group.label}
+                    </button>
+                    {isExpanded && (
+                      <ul className="px-2.5 space-y-0.5">
+                        {group.links.map((link) => (
+                          <NavItem key={link.name} link={link} collapsed={collapsed} isActive={pathname === link.href} />
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                )
+              })}
             </div>
           ))}
         </nav>

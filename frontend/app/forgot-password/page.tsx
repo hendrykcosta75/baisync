@@ -32,6 +32,7 @@ export default function ForgotPasswordPage() {
   const [emailSent, setEmailSent] = useState(false)
   const [resetSuccess, setResetSuccess] = useState(false)
   const [isVisible, setIsVisible] = useState(false)
+  const [pwFocused, setPwFocused] = useState(false)
   const { forgotPassword, resetPassword, isLoading, error, clearError } = useAuthStore()
 
   const forgotForm = useForm<ForgotFormData>({
@@ -68,6 +69,8 @@ export default function ForgotPasswordPage() {
 
   return (
     <AuthLayout
+      passwordVisible={isVisible}
+      passwordFocused={pwFocused}
       footerContent={
         <Link href="/login" style={{ fontFamily: mono, fontSize: 12, color: '#ff6b2c', fontWeight: 600 }} className="hover:underline">
           Voltar ao login
@@ -164,6 +167,8 @@ export default function ForgotPasswordPage() {
                 type={isVisible ? "text" : "password"}
                 className="border-[#222] hover:border-[#ff6b2c] focus-within:!border-[#ff6b2c] transition-colors shadow-sm w-full pr-10"
                 {...resetForm.register('password')}
+                onFocus={() => setPwFocused(true)}
+                onBlur={(e) => { setPwFocused(false); resetForm.register('password').onBlur(e) }}
               />
               <button className="absolute right-3 top-1/2 -translate-y-1/2 focus:outline-none text-[#555] hover:text-[#ff6b2c]" type="button" onClick={toggleVisibility}>
                 {isVisible ? (
@@ -190,6 +195,8 @@ export default function ForgotPasswordPage() {
               type={isVisible ? "text" : "password"}
               className="border-[#222] hover:border-[#ff6b2c] focus-within:!border-[#ff6b2c] transition-colors shadow-sm"
               {...resetForm.register('confirmPassword')}
+              onFocus={() => setPwFocused(true)}
+              onBlur={(e) => { setPwFocused(false); resetForm.register('confirmPassword').onBlur(e) }}
             />
             {resetForm.formState.errors.confirmPassword && (
               <p className="text-xs text-red-500">{resetForm.formState.errors.confirmPassword.message}</p>

@@ -6,9 +6,14 @@ import { Button, Select, ListBox } from '@heroui/react'
 import { Plus, Filter } from 'lucide-react'
 import { useCalendarStore } from '@/store/useCalendarStore'
 import { useAssistantStore } from '@/store/useAssistantStore'
+import { useWorkspaceStore } from '@/store/useWorkspaceStore'
+import { useAuthStore } from '@/store/useAuthStore'
+import { apiFetch } from '@/lib/api'
 import { AppointmentDetailModal } from '@/components/calendar/appointment-detail-modal'
 import { CreateEventModal } from '@/components/calendar/create-event-modal'
+import { TaskDetailModal } from '@/components/teams/task-detail-modal'
 import type { Appointment } from '@/types/appointment'
+import type { Task, TeamWithStats, TeamMember } from '@/types/team'
 
 import type { EventClickArg, DateSelectArg } from '@fullcalendar/core'
 import dayGridPlugin from '@fullcalendar/daygrid'
@@ -39,24 +44,66 @@ export default function CalendarPage() {
   const { appointments, isLoading, fetch, selectedAssistantId, setFilter } = useCalendarStore()
   const { assistants, fetchAssistants, hasFetched } = useAssistantStore()
 
+  const { activeWorkspace } = useWorkspaceStore()
+  const currentUserId = useAuthStore((s) => s.user?.id)
+
   const [selectedAppointment, setSelectedAppointment] = useState<Appointment | null>(null)
   const [detailOpen, setDetailOpen] = useState(false)
   const [createOpen, setCreateOpen] = useState(false)
   const [createDate, setCreateDate] = useState<string | null>(null)
   const [showFilter, setShowFilter] = useState(false)
+  const [allTasks, setAllTasks] = useState<(Task & { team_name?: string })[]>([])
+  const [selectedTask, setSelectedTask] = useState<Task | null>(null)
+  const [taskModalOpen, setTaskModalOpen] = useState(false)
+  const [taskMembers, setTaskMembers] = useState<TeamMember[]>([])
 
   useEffect(() => {
     fetch()
     if (!hasFetched) fetchAssistants()
   }, [fetch, fetchAssistants, hasFetched])
 
+  // Fetch tasks across all teams
+  useEffect(() => {
+    const wsId = activeWorkspace?.workspace_id
+    if (!wsId) return
+    let cancelled = false
+    ;(async () => {
+      try {
+        const { teams } = await apiFetch<{ teams: TeamWithStats[] }>(`/api/workspaces/${wsId}/teams`)
+        const taskPromises = teams.map(async (team) => {
+          try {
+            const { tasks } = await apiFetch<{ tasks: Task[] }>(`/api/teams/${team.id}/tasks`)
+            return tasks
+              .filter((t) => t.due_date && t.assignee_id === currentUserId)
+              .map((t) => ({ ...t, team_name: team.name }))
+          } catch {
+            return []
+          }
+        })
+        const results = await Promise.all(taskPromises)
+        if (!cancelled) setAllTasks(results.flat())
+      } catch {
+        // ignore
+      }
+    })()
+    return () => { cancelled = true }
+  }, [activeWorkspace?.workspace_id, currentUserId])
+
   const filteredAppointments = useMemo(() => {
     if (!selectedAssistantId) return appointments
     return appointments.filter(a => a.assistantId === selectedAssistantId)
   }, [appointments, selectedAssistantId])
 
-  const calendarEvents = useMemo(() =>
-    filteredAppointments.map(a => {
+  const TASK_STATUS_COLORS: Record<string, { bg: string; border: string; text: string }> = {
+    backlog: { bg: '#1e1e2e', border: '#6b7280', text: '#9ca3af' },
+    todo: { bg: '#1e1e2e', border: '#3b82f6', text: '#60a5fa' },
+    in_progress: { bg: '#1a1a2e', border: '#f59e0b', text: '#fbbf24' },
+    in_review: { bg: '#1a1a2e', border: '#a855f7', text: '#c084fc' },
+    done: { bg: '#1a2e1a', border: '#22c55e', text: '#4ade80' },
+  }
+
+  const calendarEvents = useMemo(() => {
+    const appointmentEvents = filteredAppointments.map(a => {
       const colors = STATUS_COLORS[a.status] || STATUS_COLORS.pending
       return {
         id: a.id,
@@ -68,10 +115,39 @@ export default function CalendarPage() {
         textColor: colors.text,
         extendedProps: { appointment: a },
       }
-    }),
-  [filteredAppointments])
+    })
 
-  const handleEventClick = useCallback((info: EventClickArg) => {
+    const taskEvents = allTasks.map(t => {
+      const colors = TASK_STATUS_COLORS[t.status] || TASK_STATUS_COLORS.todo
+      const isOverdue = t.due_date && new Date(t.due_date) < new Date() && t.status !== 'done'
+      return {
+        id: `task-${t.id}`,
+        title: `${t.team_name ? `[${t.team_name}] ` : ''}${t.title}`,
+        start: t.due_date!,
+        allDay: true,
+        backgroundColor: isOverdue ? '#2e1a1a' : colors.bg,
+        borderColor: isOverdue ? '#ef4444' : colors.border,
+        textColor: isOverdue ? '#f87171' : colors.text,
+        extendedProps: { task: t },
+      }
+    })
+
+    return [...appointmentEvents, ...taskEvents]
+  }, [filteredAppointments, allTasks])
+
+  const handleEventClick = useCallback(async (info: EventClickArg) => {
+    if (info.event.extendedProps.task) {
+      const task = info.event.extendedProps.task as Task & { team_name?: string }
+      setSelectedTask(task)
+      try {
+        const data = await apiFetch<{ members: TeamMember[] }>(`/api/teams/${task.team_id}/members`)
+        setTaskMembers(data.members)
+      } catch {
+        setTaskMembers([])
+      }
+      setTaskModalOpen(true)
+      return
+    }
     const appt = info.event.extendedProps.appointment as Appointment
     setSelectedAppointment(appt)
     setDetailOpen(true)
@@ -197,6 +273,15 @@ export default function CalendarPage() {
             <span className="text-[11px] text-muted">{STATUS_LABELS[status]}</span>
           </div>
         ))}
+        <div className="w-px h-4 bg-[rgba(255,255,255,0.08)]" />
+        <div className="flex items-center gap-1.5">
+          <div className="w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: '#3b82f6' }} />
+          <span className="text-[11px] text-muted">Tarefa</span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <div className="w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: '#ef4444' }} />
+          <span className="text-[11px] text-muted">Atrasada</span>
+        </div>
       </div>
 
       {/* Custom styles for FullCalendar — dark-first theme */}
@@ -336,6 +421,31 @@ export default function CalendarPage() {
         onClose={() => { setCreateOpen(false); setCreateDate(null) }}
         assistants={assistants}
         initialDate={createDate}
+      />
+
+      <TaskDetailModal
+        isOpen={taskModalOpen}
+        onClose={() => {
+          setTaskModalOpen(false)
+          setSelectedTask(null)
+          // Refresh tasks in case something changed
+          const wsId = activeWorkspace?.workspace_id
+          if (wsId) {
+            apiFetch<{ teams: TeamWithStats[] }>(`/api/workspaces/${wsId}/teams`).then(({ teams }) => {
+              Promise.all(teams.map(async (team) => {
+                try {
+                  const { tasks } = await apiFetch<{ tasks: Task[] }>(`/api/teams/${team.id}/tasks`)
+                  return tasks
+                    .filter((t) => t.due_date && t.assignee_id === currentUserId)
+                    .map((t) => ({ ...t, team_name: team.name }))
+                } catch { return [] }
+              })).then((results) => setAllTasks(results.flat()))
+            }).catch(() => {})
+          }
+        }}
+        task={selectedTask}
+        teamId={selectedTask?.team_id ?? ''}
+        members={taskMembers}
       />
     </div>
   )

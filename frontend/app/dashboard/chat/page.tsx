@@ -7,10 +7,12 @@ import { useAuthStore } from '@/store/useAuthStore'
 import { useErrorStore } from '@/store/useErrorStore'
 import {
   Hash, MessageSquare, Plus, Send, ChevronRight, Lock, UserPlus, X, FileText,
-  Settings, UserMinus,
+  Settings, UserMinus, PenTool, PanelLeftClose, PanelLeftOpen,
 } from 'lucide-react'
+import { ChannelCanvas } from '@/components/channels/channel-canvas'
 import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { UserAvatar } from '@/components/user-avatar'
 
 const mono = "'JetBrains Mono', 'Fira Code', monospace"
 
@@ -51,11 +53,28 @@ function useChatSSE() {
     const onMemberRemoved = (e: Event) => {
       const detail = (e as CustomEvent).detail
       if (!detail) return
-      // If the current user was removed, remove channel from list
       if (detail.user_id === user?.id) {
         store.handleRemovedFromChannel(detail.channel_id)
       } else if (store.activeChannel?.id === detail.channel_id) {
         store.fetchMembers(detail.channel_id)
+      }
+    }
+    const onCanvasCreated = (e: Event) => {
+      const canvas = (e as CustomEvent).detail
+      if (canvas && store.activeChannel?.id === canvas.channel_id) {
+        store.addCanvasFromSSE(canvas)
+      }
+    }
+    const onCanvasUpdated = (e: Event) => {
+      const canvas = (e as CustomEvent).detail
+      if (canvas && store.activeChannel?.id === canvas.channel_id) {
+        store.updateCanvasFromSSE(canvas)
+      }
+    }
+    const onCanvasDeleted = (e: Event) => {
+      const detail = (e as CustomEvent).detail
+      if (detail && store.activeChannel?.id === detail.channel_id) {
+        store.removeCanvasFromSSE(detail.canvas_id)
       }
     }
 
@@ -65,6 +84,9 @@ function useChatSSE() {
     window.addEventListener('sse:channel_note_deleted', onNoteDeleted)
     window.addEventListener('sse:channel_member_added', onMemberAdded)
     window.addEventListener('sse:channel_member_removed', onMemberRemoved)
+    window.addEventListener('sse:channel_canvas_created', onCanvasCreated)
+    window.addEventListener('sse:channel_canvas_updated', onCanvasUpdated)
+    window.addEventListener('sse:channel_canvas_deleted', onCanvasDeleted)
     return () => {
       window.removeEventListener('sse:channel_message', onMessage)
       window.removeEventListener('sse:channel_note_created', onNoteCreated)
@@ -72,6 +94,9 @@ function useChatSSE() {
       window.removeEventListener('sse:channel_note_deleted', onNoteDeleted)
       window.removeEventListener('sse:channel_member_added', onMemberAdded)
       window.removeEventListener('sse:channel_member_removed', onMemberRemoved)
+      window.removeEventListener('sse:channel_canvas_created', onCanvasCreated)
+      window.removeEventListener('sse:channel_canvas_updated', onCanvasUpdated)
+      window.removeEventListener('sse:channel_canvas_deleted', onCanvasDeleted)
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id])
@@ -162,15 +187,15 @@ function ChannelSettingsModal({ channel, onClose }: { channel: Channel; onClose:
 
   return (
     <>
-      <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50" onClick={onClose} />
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[60]" onClick={onClose} />
+      <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
         <div
           className="w-full max-w-lg rounded-xl shadow-2xl overflow-hidden"
-          style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)' }}
+          style={{ background: '#141414', border: '1px solid #1e1e1e' }}
           onClick={e => e.stopPropagation()}
         >
           {/* Header */}
-          <div className="flex items-center justify-between px-5 py-4" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+          <div className="flex items-center justify-between px-5 py-4" style={{ borderBottom: '1px solid #1e1e1e' }}>
             <div className="flex items-center gap-2">
               <Settings size={16} className="text-[#555555]" />
               <h3 className="font-bold text-[15px]" style={{ fontFamily: mono, color: '#e2e0da' }}>
@@ -243,9 +268,7 @@ function ChannelSettingsModal({ channel, onClose }: { channel: Channel; onClose:
                       onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
                       onClick={() => handleAddMember(m.user_id)}
                     >
-                      <div className="w-6 h-6 rounded-[8px] flex items-center justify-center text-[9px] font-semibold" style={{ background: '#121212', boxShadow: '3px 3px 7px rgba(0,0,0,0.45), -1px -1px 5px rgba(255,255,255,0.03)', color: '#D4835A' }}>
-                        {(m.user_name || '?').slice(0, 2).toUpperCase()}
-                      </div>
+                      <UserAvatar userId={m.user_id} name={m.user_name || m.user_email} size={24} />
                       <span className="text-[12px] truncate" style={{ fontFamily: mono }}>{m.user_name || m.user_email}</span>
                       <Plus size={12} className="ml-auto text-[#555555]" />
                     </button>
@@ -262,9 +285,7 @@ function ChannelSettingsModal({ channel, onClose }: { channel: Channel; onClose:
                     onMouseEnter={e => e.currentTarget.style.background = '#252525'}
                     onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
                   >
-                    <div className="w-7 h-7 rounded-[10px] flex items-center justify-center text-[10px] font-semibold shrink-0" style={{ background: '#121212', boxShadow: '3px 3px 7px rgba(0,0,0,0.45), -1px -1px 5px rgba(255,255,255,0.03)', color: '#D4835A' }}>
-                      {(m.user_name || '?').slice(0, 2).toUpperCase()}
-                    </div>
+                    <UserAvatar userId={m.user_id} name={m.user_name} size={28} />
                     <div className="flex-1 min-w-0">
                       <p className="text-[13px] truncate" style={{ fontFamily: mono, color: '#e2e0da' }}>{m.user_name || 'Sem nome'}</p>
                       <p className="text-[#555555] text-[11px] truncate" style={{ fontFamily: mono }}>{m.user_email}</p>
@@ -331,7 +352,7 @@ function ChannelSettingsModal({ channel, onClose }: { channel: Channel; onClose:
 }
 
 // ─── Channel List Panel ───
-function ChannelListPanel() {
+function ChannelListPanel({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
   const { channels, dms, activeChannel, setActiveChannel, fetchChannels, fetchDms, createChannel } = useChannelStore()
   const { activeWorkspace, members, fetchMembers } = useWorkspaceStore()
   const [showCreate, setShowCreate] = useState(false)
@@ -387,15 +408,31 @@ function ChannelListPanel() {
     )
   }
 
+  if (collapsed) {
+    return (
+      <div
+        className="w-10 flex flex-col items-center py-3 shrink-0"
+        style={{ background: 'rgba(17,17,17,0.6)', backdropFilter: 'blur(20px)', borderRight: '1px solid rgba(255,255,255,0.06)' }}
+      >
+        <button onClick={onToggle} className="text-[#555555] hover:text-[#e2e0da] p-1 rounded transition-colors">
+          <PanelLeftOpen size={16} />
+        </button>
+      </div>
+    )
+  }
+
   return (
     <div
       className="w-[240px] flex flex-col shrink-0 overflow-hidden"
       style={{ background: 'rgba(17,17,17,0.6)', backdropFilter: 'blur(20px)', borderRight: '1px solid rgba(255,255,255,0.06)' }}
     >
-      <div className="px-4 py-3" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+      <div className="flex items-center justify-between px-4 py-3" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
         <h3 className="text-[13px] font-bold truncate" style={{ fontFamily: mono, color: '#e2e0da' }}>
           {activeWorkspace.workspace_name}
         </h3>
+        <button onClick={onToggle} className="text-[#555555] hover:text-[#e2e0da] p-0.5 rounded transition-colors shrink-0">
+          <PanelLeftClose size={14} />
+        </button>
       </div>
 
       <div className="flex-1 overflow-y-auto py-2">
@@ -479,9 +516,7 @@ function ChannelListPanel() {
                     onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
                     onClick={() => handleCreateDm(m.user_id)}
                   >
-                    <div className="w-5 h-5 rounded-[8px] flex items-center justify-center text-[9px] font-semibold" style={{ background: '#121212', boxShadow: '3px 3px 7px rgba(0,0,0,0.45), -1px -1px 5px rgba(255,255,255,0.03)', color: '#D4835A' }}>
-                      {(m.user_name || '?').slice(0, 2).toUpperCase()}
-                    </div>
+                    <UserAvatar userId={m.user_id} name={m.user_name || m.user_email} size={20} />
                     <span className="text-[12px] truncate" style={{ fontFamily: mono }}>{m.user_name || m.user_email}</span>
                   </button>
                 ))}
@@ -505,9 +540,7 @@ function ChannelListPanel() {
                 onMouseLeave={e => { if (!isActive) e.currentTarget.style.background = '' }}
                 onClick={() => setActiveChannel(dm)}
               >
-                <div className="w-5 h-5 rounded-[7px] flex items-center justify-center text-[8px] font-semibold shrink-0" style={{ background: '#121212', boxShadow: '3px 3px 7px rgba(0,0,0,0.45), -1px -1px 5px rgba(255,255,255,0.03)', color: '#D4835A' }}>
-                  {(other?.name || '?').slice(0, 2).toUpperCase()}
-                </div>
+                <UserAvatar userId={other?.id} name={other?.name} size={20} />
                 <span className={`truncate text-[13px] ${unread > 0 ? 'font-bold' : ''}`} style={{ fontFamily: mono }}>
                   {other?.name || other?.email || 'DM'}
                 </span>
@@ -882,17 +915,19 @@ function ChannelTabs({
   activeTab: string
   onTabChange: (tab: string) => void
 }) {
-  const { notes, fetchNotes, createNote, deleteNote, updateNote } = useChannelStore()
+  const { notes, fetchNotes, createNote, deleteNote, updateNote, canvases, fetchCanvases, createCanvas, deleteCanvas, updateCanvas } = useChannelStore()
   const { showError } = useErrorStore()
   const [showAddMenu, setShowAddMenu] = useState(false)
   const [renamingId, setRenamingId] = useState<string | null>(null)
+  const [renamingType, setRenamingType] = useState<'note' | 'canvas'>('note')
   const [renameValue, setRenameValue] = useState('')
 
   useEffect(() => {
     if (channel.type !== 'dm') {
       fetchNotes(channel.id)
+      fetchCanvases(channel.id)
     }
-  }, [channel.id, channel.type, fetchNotes])
+  }, [channel.id, channel.type, fetchNotes, fetchCanvases])
 
   const addNotesTab = async () => {
     try {
@@ -901,6 +936,25 @@ function ChannelTabs({
       setShowAddMenu(false)
     } catch (err) {
       showError(err instanceof Error ? err.message : 'Erro ao criar anotação')
+    }
+  }
+
+  const addCanvasTab = async () => {
+    try {
+      const canvas = await createCanvas(channel.id, 'Canvas')
+      onTabChange(`canvas-${canvas.id}`)
+      setShowAddMenu(false)
+    } catch (err) {
+      showError(err instanceof Error ? err.message : 'Erro ao criar canvas')
+    }
+  }
+
+  const removeCanvasTab = async (canvasId: string) => {
+    try {
+      await deleteCanvas(channel.id, canvasId)
+      if (activeTab === `canvas-${canvasId}`) onTabChange('messages')
+    } catch (err) {
+      showError(err instanceof Error ? err.message : 'Erro ao remover canvas')
     }
   }
 
@@ -913,28 +967,33 @@ function ChannelTabs({
     }
   }
 
-  const startRename = (noteId: string, currentTitle: string) => {
-    setRenamingId(noteId)
+  const startRename = (id: string, currentTitle: string, type: 'note' | 'canvas' = 'note') => {
+    setRenamingId(id)
+    setRenamingType(type)
     setRenameValue(currentTitle)
   }
 
-  const finishRename = async (noteId: string) => {
+  const finishRename = async (id: string) => {
     try {
       if (renameValue.trim()) {
-        await updateNote(channel.id, noteId, renameValue.trim())
+        if (renamingType === 'canvas') {
+          await updateCanvas(channel.id, id, renameValue.trim())
+        } else {
+          await updateNote(channel.id, id, renameValue.trim())
+        }
       }
     } catch (err) {
-      showError(err instanceof Error ? err.message : 'Erro ao renomear anotação')
+      showError(err instanceof Error ? err.message : 'Erro ao renomear')
     }
     setRenamingId(null)
   }
 
   return (
-    <div className="flex items-center shrink-0" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)', background: 'rgba(17,17,17,0.8)', backdropFilter: 'blur(12px)' }}>
-      <div className="flex items-center gap-0.5 px-4 flex-1 min-w-0 overflow-x-auto">
+    <div className="flex items-center shrink-0 relative z-[50]" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)', background: 'rgba(17,17,17,0.8)', backdropFilter: 'blur(12px)' }}>
+      <div className="flex items-center px-4 flex-1 min-w-0 overflow-x-auto">
         {/* Messages tab */}
         <button
-          className={`px-3 py-2 text-[12px] font-medium border-b-2 transition-colors whitespace-nowrap ${
+          className={`px-2 py-2 text-[12px] font-medium border-b-2 transition-colors whitespace-nowrap ${
             activeTab === 'messages'
               ? 'border-[#ff6b2c] text-[#ff6b2c]'
               : 'border-transparent text-[#555555] hover:text-[#c0c0c0]'
@@ -965,7 +1024,7 @@ function ChannelTabs({
               </div>
             ) : (
               <button
-                className={`px-3 py-2 text-[12px] font-medium border-b-2 transition-colors whitespace-nowrap ${
+                className={`px-2 py-2 text-[12px] font-medium border-b-2 transition-colors whitespace-nowrap ${
                   activeTab === `note-${note.id}`
                     ? 'border-[#ff6b2c] text-[#ff6b2c]'
                     : 'border-transparent text-[#555555] hover:text-[#c0c0c0]'
@@ -982,7 +1041,45 @@ function ChannelTabs({
             )}
             <button
               onClick={() => removeTab(note.id)}
-              className="opacity-0 group-hover:opacity-100 text-[#555555] hover:text-red-400 p-0.5 -ml-1 transition-opacity"
+              className="hidden group-hover:flex items-center text-[#555555] hover:text-red-400 p-0.5 -ml-1"
+            >
+              <X size={10} />
+            </button>
+          </div>
+        ))}{canvases.map(canvas => (
+          <div key={canvas.id} className="flex items-center group">
+            {renamingId === canvas.id && renamingType === 'canvas' ? (
+              <div className="flex items-center px-1">
+                <input
+                  value={renameValue}
+                  onChange={e => setRenameValue(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') finishRename(canvas.id); if (e.key === 'Escape') setRenamingId(null) }}
+                  onBlur={() => finishRename(canvas.id)}
+                  autoFocus
+                  className="w-24 px-2 py-1 text-[12px] rounded focus:outline-none"
+                  style={{ fontFamily: mono, color: '#e2e0da', border: '1px solid #ff6b2c', background: 'rgba(17,17,17,0.8)' }}
+                />
+              </div>
+            ) : (
+              <button
+                className={`px-2 py-2 text-[12px] font-medium border-b-2 transition-colors whitespace-nowrap ${
+                  activeTab === `canvas-${canvas.id}`
+                    ? 'border-[#ff6b2c] text-[#ff6b2c]'
+                    : 'border-transparent text-[#555555] hover:text-[#c0c0c0]'
+                }`}
+                style={{
+                  fontFamily: mono,
+                  background: activeTab === `canvas-${canvas.id}` ? '#252525' : undefined,
+                }}
+                onClick={() => onTabChange(`canvas-${canvas.id}`)}
+                onDoubleClick={() => startRename(canvas.id, canvas.title, 'canvas')}
+              >
+                {canvas.title}
+              </button>
+            )}
+            <button
+              onClick={() => removeCanvasTab(canvas.id)}
+              className="hidden group-hover:flex items-center text-[#555555] hover:text-red-400 p-0.5 -ml-1"
             >
               <X size={10} />
             </button>
@@ -1004,8 +1101,8 @@ function ChannelTabs({
           </button>
           {showAddMenu && (
             <>
-              <div className="fixed inset-0 z-10" onClick={() => setShowAddMenu(false)} />
-              <div className="absolute right-0 top-full mt-1 z-20 w-44 rounded-lg shadow-xl overflow-hidden" style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)', backdropFilter: 'blur(20px)' }}>
+              <div className="fixed inset-0 z-[100]" onClick={() => setShowAddMenu(false)} />
+              <div className="absolute right-0 top-full mt-1 z-[101] w-44 rounded-lg shadow-xl overflow-hidden" style={{ background: '#1a1a1a', border: '1px solid rgba(255,255,255,0.08)' }}>
                 <button
                   className="w-full flex items-center gap-2 px-3 py-2.5 text-[12px] text-subtle hover:text-[#e2e0da] transition-colors text-left"
                   style={{ fontFamily: mono }}
@@ -1015,6 +1112,16 @@ function ChannelTabs({
                 >
                   <FileText size={13} />
                   Anotações
+                </button>
+                <button
+                  className="w-full flex items-center gap-2 px-3 py-2.5 text-[12px] text-subtle hover:text-[#e2e0da] transition-colors text-left"
+                  style={{ fontFamily: mono }}
+                  onMouseEnter={e => e.currentTarget.style.background = '#252525'}
+                  onMouseLeave={e => e.currentTarget.style.background = ''}
+                  onClick={addCanvasTab}
+                >
+                  <PenTool size={13} />
+                  Canvas
                 </button>
               </div>
             </>
@@ -1047,9 +1154,11 @@ function MessageArea() {
   // Auto-scroll to bottom only for new messages, not pagination
   useEffect(() => {
     if (!isLoadingOlderRef.current) {
-      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+      requestAnimationFrame(() => {
+        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+      })
     }
-  }, [messages.length])
+  }, [messages.length, activeChannel?.id])
 
   const { showError } = useErrorStore()
 
@@ -1100,8 +1209,10 @@ function MessageArea() {
 
   const displayMessages = [...messages].reverse()
   const isNoteTab = activeTab.startsWith('note-')
+  const isCanvasTab = activeTab.startsWith('canvas-')
   const activeNoteId = isNoteTab ? activeTab.replace('note-', '') : null
   const activeNote = activeNoteId ? notes.find(n => n.id === activeNoteId) : null
+  const activeCanvasId = isCanvasTab ? activeTab.replace('canvas-', '') : null
 
   return (
     <div className="flex-1 flex flex-col min-w-0">
@@ -1143,8 +1254,15 @@ function MessageArea() {
         <NotesEditor channelId={activeChannel.id} note={activeNote} />
       )}
 
+      {/* Canvas panel */}
+      {isCanvasTab && activeCanvasId && (
+        <div className="flex-1 min-h-0 overflow-hidden">
+          <ChannelCanvas channelId={activeChannel.id} canvasId={activeCanvasId} />
+        </div>
+      )}
+
       {/* Messages (only when messages tab is active) */}
-      {!isNoteTab && (
+      {!isNoteTab && !isCanvasTab && (
         <>
           <div
             ref={containerRef}
@@ -1192,16 +1310,8 @@ function MessageArea() {
                   onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
                 >
                   {!isOwn && (
-                    <div
-                      className="w-8 h-8 rounded-[10px] flex items-center justify-center text-[10px] font-semibold shrink-0 mt-0.5"
-                      style={{
-                        background: '#121212',
-                        boxShadow: '3px 3px 7px rgba(0,0,0,0.45), -1px -1px 5px rgba(255,255,255,0.03)',
-                        color: '#D4835A',
-                        fontFamily: mono,
-                      }}
-                    >
-                      {msg.sender_name.slice(0, 2).toUpperCase()}
+                    <div className="mt-0.5">
+                      <UserAvatar userId={msg.sender_id} name={msg.sender_name} size={32} />
                     </div>
                   )}
                   <div className={`${isOwn ? 'max-w-[75%]' : 'flex-1'} min-w-0 ${isOwn ? 'text-right' : ''}`}>
@@ -1306,9 +1416,10 @@ function MessageArea() {
 // ─── Main Page ───
 export default function ChatPage() {
   useChatSSE()
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   return (
     <div className="flex h-[calc(100vh-3.5rem)] -m-5 lg:-m-6 overflow-hidden" style={{ background: '#0a0a0a', borderLeft: '1px solid rgba(255,255,255,0.06)' }}>
-      <ChannelListPanel />
+      <ChannelListPanel collapsed={sidebarCollapsed} onToggle={() => setSidebarCollapsed(c => !c)} />
       <MessageArea />
     </div>
   )

@@ -12,9 +12,14 @@ pub mod health_check;
 pub mod llm;
 pub mod messaging;
 pub mod notification;
+pub mod okr;
+pub mod strategy_map;
+pub mod swot;
+
 pub mod openai_audio;
 pub mod card_payment;
 pub mod pix;
 pub mod rag;
+pub mod team;
 pub mod transcription;
 pub mod workspace;

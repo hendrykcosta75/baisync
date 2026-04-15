@@ -8,6 +8,7 @@ import { useWorkspaceStore } from '@/store/useWorkspaceStore'
 import { NotificationBell } from '@/components/notifications/NotificationBell'
 import { WorkspaceModal } from '@/components/workspace/workspace-modal'
 import { Users } from 'lucide-react'
+import { UserAvatar } from '@/components/user-avatar'
 
 export function Header({ onMenuClick }: { onMenuClick: () => void }) {
   const { user, logout } = useAuthStore()
@@ -72,14 +73,12 @@ export function Header({ onMenuClick }: { onMenuClick: () => void }) {
               <div
                 role="button"
                 tabIndex={0}
-                className="w-9 h-9 rounded-[10px] flex items-center justify-center text-[13px] font-semibold cursor-pointer transition-all focus-visible:ring-2 focus-visible:ring-[#ff6b2c]/40 focus-visible:outline-none"
+                className="cursor-pointer transition-all focus-visible:ring-2 focus-visible:ring-[#ff6b2c]/40 focus-visible:outline-none rounded-full"
                 style={{
-                  background: '#121212',
                   boxShadow: '3px 3px 7px rgba(0,0,0,0.45), -1px -1px 5px rgba(255,255,255,0.03)',
-                  color: '#D4835A',
                 }}
               >
-                {user?.name?.slice(0, 2).toUpperCase() || 'U'}
+                <UserAvatar userId={user?.id} name={user?.name} size={36} />
               </div>
             </Dropdown.Trigger>
             <Dropdown.Popover>

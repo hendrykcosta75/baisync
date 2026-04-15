@@ -6,8 +6,9 @@ use crate::db::DbSession;
 use crate::errors::AppError;
 use crate::middleware::auth::AuthUser;
 use crate::models::channel::{
-    CreateChannelRequest, CreateDmRequest, CreateNoteRequest, EditMessageRequest,
-    SendMessageRequest, UpdateChannelRequest, UpdateNoteRequest,
+    CreateCanvasRequest, CreateChannelRequest, CreateDmRequest, CreateNoteRequest,
+    EditMessageRequest, SendMessageRequest, UpdateCanvasRequest, UpdateChannelRequest,
+    UpdateNoteRequest,
 };
 use crate::services::channel as ch_service;
 use crate::services::events::{publish_global, SseEvent};
@@ -424,6 +425,86 @@ pub async fn delete_note(
 
     let event_data = serde_json::json!({ "channel_id": channel_id, "note_id": note_id }).to_string();
     publish_to_channel(&db, &channel_id, &auth_user.user_id, "channel_note_deleted", &event_data).await;
+
+    Ok(Json(serde_json::json!({ "success": true })))
+}
+
+// ─── Canvases ───
+
+pub async fn list_canvases(
+    Extension(db): Extension<DbSession>,
+    Extension(auth_user): Extension<AuthUser>,
+    Path(channel_id): Path<uuid::Uuid>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    if !ch_service::is_member(&db, &channel_id, &auth_user.user_id).await? {
+        return Err(AppError::Forbidden("Not a member of this channel".into()));
+    }
+    let canvases = ch_service::list_canvases(&db, &channel_id).await?;
+    Ok(Json(serde_json::json!({ "canvases": canvases })))
+}
+
+pub async fn create_canvas(
+    Extension(db): Extension<DbSession>,
+    Extension(auth_user): Extension<AuthUser>,
+    Path(channel_id): Path<uuid::Uuid>,
+    Json(body): Json<CreateCanvasRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    if !ch_service::is_member(&db, &channel_id, &auth_user.user_id).await? {
+        return Err(AppError::Forbidden("Not a member of this channel".into()));
+    }
+    let canvas = ch_service::create_canvas(&db, &channel_id, &body.title, &auth_user.user_id).await?;
+
+    let event_data = serde_json::to_string(&canvas).unwrap_or_default();
+    publish_to_channel(&db, &channel_id, &auth_user.user_id, "channel_canvas_created", &event_data).await;
+
+    Ok(Json(serde_json::json!({ "canvas": canvas })))
+}
+
+pub async fn get_canvas(
+    Extension(db): Extension<DbSession>,
+    Extension(auth_user): Extension<AuthUser>,
+    Path((channel_id, canvas_id)): Path<(uuid::Uuid, uuid::Uuid)>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    if !ch_service::is_member(&db, &channel_id, &auth_user.user_id).await? {
+        return Err(AppError::Forbidden("Not a member of this channel".into()));
+    }
+    let canvas = ch_service::get_canvas(&db, &channel_id, &canvas_id).await?;
+    Ok(Json(serde_json::json!({ "canvas": canvas })))
+}
+
+pub async fn update_canvas(
+    Extension(db): Extension<DbSession>,
+    Extension(auth_user): Extension<AuthUser>,
+    Path((channel_id, canvas_id)): Path<(uuid::Uuid, uuid::Uuid)>,
+    Json(body): Json<UpdateCanvasRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    if !ch_service::is_member(&db, &channel_id, &auth_user.user_id).await? {
+        return Err(AppError::Forbidden("Not a member of this channel".into()));
+    }
+    let canvas = ch_service::update_canvas(
+        &db, &channel_id, &canvas_id,
+        body.title.as_deref(), body.canvas_data.as_deref(),
+        &auth_user.user_id,
+    ).await?;
+
+    let event_data = serde_json::to_string(&canvas).unwrap_or_default();
+    publish_to_channel(&db, &channel_id, &auth_user.user_id, "channel_canvas_updated", &event_data).await;
+
+    Ok(Json(serde_json::json!({ "canvas": canvas })))
+}
+
+pub async fn delete_canvas(
+    Extension(db): Extension<DbSession>,
+    Extension(auth_user): Extension<AuthUser>,
+    Path((channel_id, canvas_id)): Path<(uuid::Uuid, uuid::Uuid)>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    if !ch_service::is_member(&db, &channel_id, &auth_user.user_id).await? {
+        return Err(AppError::Forbidden("Not a member of this channel".into()));
+    }
+    ch_service::delete_canvas(&db, &channel_id, &canvas_id).await?;
+
+    let event_data = serde_json::json!({ "channel_id": channel_id, "canvas_id": canvas_id }).to_string();
+    publish_to_channel(&db, &channel_id, &auth_user.user_id, "channel_canvas_deleted", &event_data).await;
 
     Ok(Json(serde_json::json!({ "success": true })))
 }

@@ -36,6 +36,10 @@ pub fn build_router(
             post(handlers::auth::reset_password),
         )
         .route(
+            "/api/users/{user_id}/avatar",
+            get(handlers::auth::get_avatar),
+        )
+        .route(
             "/api/webhooks/baileys/{phone}",
             post(handlers::messages::webhook_baileys),
         )
@@ -149,6 +153,11 @@ pub fn build_router(
         .route(
             "/api/user/profile",
             put(handlers::auth::update_profile),
+        )
+        .route(
+            "/api/user/avatar",
+            post(handlers::auth::upload_avatar)
+                .delete(handlers::auth::delete_avatar),
         )
         .route(
             "/api/user/change-password",
@@ -393,11 +402,171 @@ pub fn build_router(
                 .put(handlers::channels::update_note)
                 .delete(handlers::channels::delete_note),
         )
+        // Channel Canvases
+        .route(
+            "/api/channels/{id}/canvases",
+            get(handlers::channels::list_canvases)
+                .post(handlers::channels::create_canvas),
+        )
+        .route(
+            "/api/channels/{channel_id}/canvases/{canvas_id}",
+            get(handlers::channels::get_canvas)
+                .put(handlers::channels::update_canvas)
+                .delete(handlers::channels::delete_canvas),
+        )
         .route(
             "/api/workspaces/{id}/dms",
             get(handlers::channels::list_dms)
                 .post(handlers::channels::create_dm),
         )
+        // Teams
+        .route(
+            "/api/workspaces/{id}/teams",
+            get(handlers::teams::list).post(handlers::teams::create),
+        )
+        .route(
+            "/api/teams/{id}",
+            get(handlers::teams::get)
+                .put(handlers::teams::update)
+                .delete(handlers::teams::delete),
+        )
+        .route(
+            "/api/teams/{id}/members",
+            get(handlers::teams::list_members)
+                .post(handlers::teams::add_member),
+        )
+        .route(
+            "/api/teams/{id}/members/{user_id}",
+            delete(handlers::teams::remove_member),
+        )
+        .route(
+            "/api/teams/{id}/tasks",
+            get(handlers::teams::list_tasks)
+                .post(handlers::teams::create_task),
+        )
+        .route(
+            "/api/teams/{id}/tasks/{task_id}",
+            get(handlers::teams::get_task)
+                .put(handlers::teams::update_task)
+                .delete(handlers::teams::delete_task),
+        )
+        .route(
+            "/api/teams/{id}/tasks/{task_id}/move",
+            patch(handlers::teams::move_task),
+        )
+        .route(
+            "/api/teams/{id}/tasks/{task_id}/attachments",
+            get(handlers::teams::list_task_attachments)
+                .post(handlers::teams::upload_task_attachment),
+        )
+        .route(
+            "/api/teams/{id}/tasks/{task_id}/attachments/{attachment_id}",
+            get(handlers::teams::download_task_attachment)
+                .delete(handlers::teams::delete_task_attachment),
+        )
+        .route(
+            "/api/tasks/{id}/comments",
+            get(handlers::teams::list_comments)
+                .post(handlers::teams::create_comment),
+        )
+        .route(
+            "/api/teams/{id}/activity",
+            get(handlers::teams::list_activity),
+        )
+        // OKRs
+        .route(
+            "/api/workspaces/{id}/okrs",
+            get(handlers::okrs::list_objectives)
+                .post(handlers::okrs::create_objective),
+        )
+        .route(
+            "/api/okrs/{id}",
+            get(handlers::okrs::get_objective)
+                .put(handlers::okrs::update_objective)
+                .delete(handlers::okrs::delete_objective),
+        )
+        .route(
+            "/api/okrs/{id}/children",
+            get(handlers::okrs::list_children),
+        )
+        .route(
+            "/api/okrs/{id}/key-results",
+            get(handlers::okrs::list_key_results)
+                .post(handlers::okrs::create_key_result),
+        )
+        .route(
+            "/api/okrs/{id}/key-results/{kr_id}",
+            put(handlers::okrs::update_key_result)
+                .delete(handlers::okrs::delete_key_result),
+        )
+        .route(
+            "/api/key-results/{id}/check-ins",
+            get(handlers::okrs::list_check_ins)
+                .post(handlers::okrs::create_check_in),
+        )
+        // OKR Attachments
+        .route(
+            "/api/okr-attachments/upload/{entity_type}/{entity_id}",
+            get(handlers::okrs::list_attachments)
+                .post(handlers::okrs::upload_attachment),
+        )
+        .route(
+            "/api/okr-attachments/file/{entity_id}/{attachment_id}",
+            get(handlers::okrs::download_attachment)
+                .delete(handlers::okrs::delete_attachment),
+        )
+        // Strategy Map
+        .route(
+            "/api/workspaces/{id}/strategy-map",
+            get(handlers::strategy_map::get_map),
+        )
+        .route(
+            "/api/workspaces/{id}/strategy-map/sync",
+            post(handlers::strategy_map::sync_map),
+        )
+        .route(
+            "/api/workspaces/{id}/strategy-map/nodes",
+            post(handlers::strategy_map::create_node),
+        )
+        .route(
+            "/api/workspaces/{id}/strategy-map/nodes/{node_id}",
+            put(handlers::strategy_map::update_node)
+                .delete(handlers::strategy_map::delete_node),
+        )
+        .route(
+            "/api/workspaces/{id}/strategy-map/nodes/batch-positions",
+            patch(handlers::strategy_map::batch_update_positions),
+        )
+        .route(
+            "/api/workspaces/{id}/strategy-map/edges",
+            post(handlers::strategy_map::create_edge),
+        )
+        .route(
+            "/api/workspaces/{id}/strategy-map/edges/{edge_id}",
+            delete(handlers::strategy_map::delete_edge),
+        )
+        // SWOT
+        .route(
+            "/api/workspaces/{id}/swot",
+            get(handlers::swot::list_analyses)
+                .post(handlers::swot::create_analysis),
+        )
+        .route(
+            "/api/workspaces/{id}/swot/{analysis_id}",
+            get(handlers::swot::get_analysis)
+                .put(handlers::swot::update_analysis)
+                .delete(handlers::swot::delete_analysis),
+        )
+        .route(
+            "/api/swot/{id}/items",
+            post(handlers::swot::create_item),
+        )
+        .route(
+            "/api/swot/{id}/items/{item_id}",
+            put(handlers::swot::update_item)
+                .delete(handlers::swot::delete_item),
+        )
+
         // Playground chat
         .route(
             "/api/assistants/{id}/chat",

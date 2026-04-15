@@ -296,6 +296,12 @@ const ACTION_LABELS: Record<string, { running: string; done: string; error: stri
   get_channel_note: { running: 'Buscando nota...', done: 'Nota carregada', error: 'Falha ao buscar nota' },
   create_channel: { running: 'Criando canal...', done: 'Canal criado', error: 'Falha ao criar canal' },
   mark_channel_read: { running: 'Marcando como lido...', done: 'Canal marcado como lido', error: 'Falha ao marcar' },
+  // Planejamento Estratégico
+  list_okrs: { running: 'Buscando OKRs...', done: 'OKRs carregados', error: 'Falha ao buscar OKRs' },
+  list_swot: { running: 'Buscando análises SWOT...', done: 'SWOT carregado', error: 'Falha ao buscar SWOT' },
+
+  list_teams: { running: 'Buscando equipes...', done: 'Equipes carregadas', error: 'Falha ao buscar equipes' },
+  get_strategy_map: { running: 'Buscando mapa estratégico...', done: 'Mapa carregado', error: 'Falha ao buscar mapa' },
 }
 
 interface ActionResult {
@@ -1314,6 +1320,39 @@ function ActionSequence({ actions }: { actions: BaisyncAction[] }) {
         if (!data.channel_id) return { status: 'error' }
         await apiFetch(`/api/channels/${data.channel_id}/read`, { method: 'POST' })
         useBaisyncStore.getState().sendActionResult('Canal marcado como lido.')
+        return { status: 'done' }
+      }
+
+      // ─── Strategic Planning Actions ───
+      const strategicListActions: Record<string, { endpoint: string; resultKey: string; formatItem: (item: Record<string, unknown>) => string }> = {
+        list_okrs: { endpoint: 'okrs', resultKey: 'objectives', formatItem: (o) => `- **${o.title}** (${o.objective_type || 'committed'}) — progresso: ${o.progress ?? 0}%` },
+        list_swot: { endpoint: 'swot', resultKey: 'analyses', formatItem: (a) => `- **${a.title}** (id: ${a.id})` },
+
+        list_teams: { endpoint: 'teams', resultKey: 'teams', formatItem: (t) => `- **${t.name}** (id: ${t.id})${t.description ? ` — ${t.description}` : ''}` },
+      }
+
+      if (strategicListActions[action.action]) {
+        const data = action.data as { workspace_id: string }
+        const wsId = data.workspace_id || useWorkspaceStore.getState().activeWorkspace?.workspace_id
+        if (!wsId) { useBaisyncStore.getState().sendActionResult('Erro: workspace_id necessário.'); return { status: 'error' } }
+        const cfg = strategicListActions[action.action]
+        const res = await apiFetch<Record<string, unknown[]>>(`/api/workspaces/${wsId}/${cfg.endpoint}`)
+        const items = res[cfg.resultKey] || Object.values(res).find(Array.isArray) || []
+        if (items.length === 0) {
+          useBaisyncStore.getState().sendActionResult(`Nenhum item encontrado em ${cfg.endpoint}.`)
+        } else {
+          const formatted = items.map((item) => cfg.formatItem(item as Record<string, unknown>)).join('\n')
+          useBaisyncStore.getState().sendActionResult(`${items.length} item(ns) encontrado(s):\n${formatted}`)
+        }
+        return { status: 'done' }
+      }
+
+      if (action.action === 'get_strategy_map') {
+        const data = action.data as { workspace_id: string }
+        const wsId = data.workspace_id || useWorkspaceStore.getState().activeWorkspace?.workspace_id
+        if (!wsId) { useBaisyncStore.getState().sendActionResult('Erro: workspace_id necessário.'); return { status: 'error' } }
+        const res = await apiFetch<{ nodes: Record<string, unknown>[]; edges: Record<string, unknown>[] }>(`/api/workspaces/${wsId}/strategy-map`)
+        useBaisyncStore.getState().sendActionResult(`Mapa estratégico: ${res.nodes?.length || 0} nós, ${res.edges?.length || 0} conexões.${res.nodes?.length ? '\nNós:\n' + res.nodes.map((n) => `- [${n.node_type}] ${n.label}`).join('\n') : ''}`)
         return { status: 'done' }
       }
 

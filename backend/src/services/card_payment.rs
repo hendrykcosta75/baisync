@@ -22,8 +22,7 @@ pub async fn get_user_stripe_public_key(db: &DbSession, user_id: &Uuid) -> Resul
         (user_id,),
     ).await.map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
-    Ok(result.maybe_first_row_typed::<(Option<String>,)>()
-        .map_err(|_| AppError::NotFound("User not found".into()))?
+    Ok(result.into_rows_result()?.maybe_first_row::<(Option<String>,)>()?
         .and_then(|r| r.0))
 }
 
@@ -34,8 +33,7 @@ pub async fn get_user_mp_public_key(db: &DbSession, user_id: &Uuid) -> Result<Op
         (user_id,),
     ).await.map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
-    Ok(result.maybe_first_row_typed::<(Option<String>,)>()
-        .map_err(|_| AppError::NotFound("User not found".into()))?
+    Ok(result.into_rows_result()?.maybe_first_row::<(Option<String>,)>()?
         .and_then(|r| r.0))
 }
 
@@ -401,7 +399,7 @@ pub async fn check_charge_status(
     ).await.map_err(|e| AppError::DatabaseError(format!("Failed to query card charge: {e}")))?;
 
     let row = result
-        .single_row_typed::<ChargeStatusRow>()
+        .into_rows_result()?.single_row::<ChargeStatusRow>()
         .map_err(|_| AppError::NotFound("Cobrança não encontrada".into()))?;
 
     // Fetch payment options separately (to stay within 16-element tuple limit)
@@ -410,7 +408,8 @@ pub async fn check_charge_status(
         (user_id, charge_id),
     ).await.ok();
     let (pt, inst) = opts_result
-        .and_then(|r| r.maybe_first_row_typed::<(Option<String>, Option<i32>)>().ok().flatten())
+        .and_then(|r| r.into_rows_result().ok())
+        .and_then(|r| r.maybe_first_row::<(Option<String>, Option<i32>)>().ok().flatten())
         .unwrap_or((None, None));
 
     let charge = status_row_to_charge(row, pt.unwrap_or_else(|| "credit".to_string()), inst.unwrap_or(1));
@@ -563,7 +562,8 @@ pub fn spawn_card_payment_poller(
             ).await;
 
             let created_at = charge_result.ok()
-                .and_then(|r: scylla::LegacyQueryResult| r.maybe_first_row_typed::<(CqlTimestamp,)>().ok().flatten())
+                .and_then(|r| r.into_rows_result().ok())
+                .and_then(|r| r.maybe_first_row::<(CqlTimestamp,)>().ok().flatten())
                 .map(|r| DateTime::from_timestamp_millis(r.0.0).unwrap_or_default())
                 .unwrap_or_default();
 
@@ -643,7 +643,8 @@ pub async fn notify_card_payment_confirmed(
         ).await;
 
         let channel = conv_result.ok()
-            .and_then(|r| r.maybe_first_row_typed::<(String,)>().ok().flatten())
+            .and_then(|r| r.into_rows_result().ok())
+            .and_then(|r| r.maybe_first_row::<(String,)>().ok().flatten())
             .map(|r| r.0)
             .unwrap_or_default();
 
@@ -667,6 +668,7 @@ pub async fn notify_card_payment_confirmed(
 // ─── Webhook Processing ────────────────────────────────────────────────────
 
 /// Verify Stripe webhook signature.
+#[allow(dead_code)]
 pub fn verify_stripe_signature(payload: &[u8], sig_header: &str, secret: &str) -> Result<(), AppError> {
     if secret.is_empty() {
         tracing::warn!("Stripe webhook secret not configured, skipping signature verification");
@@ -745,7 +747,7 @@ pub async fn process_stripe_webhook(
     ).await.map_err(|e| AppError::DatabaseError(format!("Failed to lookup card charge: {e}")))?;
 
     let row = result
-        .single_row_typed::<(String, Uuid, Uuid, Uuid, Option<String>)>()
+        .into_rows_result()?.single_row::<(String, Uuid, Uuid, Uuid, Option<String>)>()
         .map_err(|_| AppError::NotFound(format!("Card charge not found for session: {session_id}")))?;
 
     let user_id = row.1;
@@ -761,7 +763,8 @@ pub async fn process_stripe_webhook(
         ).await.map_err(|e| AppError::DatabaseError(format!("Failed to get charge: {e}")))?;
 
         let created_at = charge_result
-            .single_row_typed::<(CqlTimestamp,)>()
+            .into_rows_result().ok()
+            .and_then(|r| r.single_row::<(CqlTimestamp,)>().ok())
             .map(|r| DateTime::from_timestamp_millis(r.0.0).unwrap_or_default())
             .unwrap_or_default();
 
@@ -837,9 +840,9 @@ pub async fn list_charges_by_assistant(
         (assistant_id, limit),
     ).await.map_err(|e| AppError::DatabaseError(format!("Failed to list card charges: {e}")))?;
 
-    let charges: Vec<CardChargeSummary> = result
-        .rows_typed::<(Uuid, Option<f64>, Option<String>, Option<String>, Option<String>, CqlTimestamp, Option<String>, Option<String>, Option<String>)>()
-        .map_err(|e| AppError::DatabaseError(format!("Failed to parse card charges: {e}")))?
+    let rows = result.into_rows_result()?;
+    let charges: Vec<CardChargeSummary> = rows
+        .rows::<(Uuid, Option<f64>, Option<String>, Option<String>, Option<String>, CqlTimestamp, Option<String>, Option<String>, Option<String>)>()?
         .filter_map(|r| r.ok())
         .map(|r| CardChargeSummary {
             id: r.0,

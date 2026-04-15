@@ -46,9 +46,9 @@ export function WorkspaceSwitcher({ collapsed }: { collapsed: boolean }) {
   // Collapsed: just show icon
   if (collapsed) {
     return (
-      <div className="hidden lg:flex items-center justify-center h-14 shrink-0" style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+      <div className="hidden lg:flex items-center justify-center h-11 shrink-0" style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
         <button
-          className="w-8 h-8 rounded-[10px] flex items-center justify-center hover:opacity-80 transition-opacity"
+          className="w-7 h-7 rounded-[10px] flex items-center justify-center hover:opacity-80 transition-opacity"
           style={{
             background: '#121212',
             boxShadow: '3px 3px 7px rgba(0,0,0,0.45), -1px -1px 5px rgba(255,255,255,0.03)',
@@ -69,12 +69,12 @@ export function WorkspaceSwitcher({ collapsed }: { collapsed: boolean }) {
     <div className="relative">
       {/* Workspace select box — primary sidebar element */}
       <button
-        className="w-full flex items-center gap-2.5 px-4 h-14 shrink-0 hover:bg-dim transition-colors"
+        className="w-full flex items-center gap-2.5 px-4 h-11 shrink-0 hover:bg-dim transition-colors"
         style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}
         onClick={() => setIsOpen(!isOpen)}
       >
         <div
-          className="w-8 h-8 rounded-[10px] flex items-center justify-center shrink-0"
+          className="w-7 h-7 rounded-[10px] flex items-center justify-center shrink-0"
           style={{
             background: '#121212',
             boxShadow: '3px 3px 7px rgba(0,0,0,0.45), -1px -1px 5px rgba(255,255,255,0.03)',
@@ -83,10 +83,10 @@ export function WorkspaceSwitcher({ collapsed }: { collapsed: boolean }) {
         >
           {activeWorkspace?.workspace_type === 'personal'
             ? <User size={14} />
-            : <span style={{ fontFamily: mono, fontSize: 11, fontWeight: 700 }}>{displayName.charAt(0).toUpperCase()}</span>}
+            : <span style={{ fontFamily: mono, fontSize: 10, fontWeight: 700 }}>{displayName.charAt(0).toUpperCase()}</span>}
         </div>
         <div className="flex-1 min-w-0 text-left">
-          <span className="text-[15px] font-semibold text-white truncate block" style={{ fontFamily: mono, letterSpacing: '-0.02em' }}>
+          <span className="text-[13px] font-semibold text-white truncate block" style={{ fontFamily: mono, letterSpacing: '-0.02em' }}>
             {displayName}
           </span>
         </div>
@@ -119,7 +119,7 @@ export function WorkspaceSwitcher({ collapsed }: { collapsed: boolean }) {
                     onClick={() => handleSwitch(ws)}
                   >
                     <div
-                      className="w-6 h-6 rounded-md flex items-center justify-center font-bold text-[10px] shrink-0"
+                      className="w-5 h-5 rounded-md flex items-center justify-center font-bold text-[10px] shrink-0"
                       style={{
                         background: ws.workspace_type === 'personal'
                           ? 'rgba(255,107,44,0.15)'
@@ -130,7 +130,7 @@ export function WorkspaceSwitcher({ collapsed }: { collapsed: boolean }) {
                     >
                       {ws.workspace_type === 'personal' ? <User size={13} /> : label.charAt(0).toUpperCase()}
                     </div>
-                    <span className={`flex-1 truncate text-[13px] ${isActive ? 'text-white font-semibold' : 'text-subtle'}`} style={{ fontFamily: mono }}>
+                    <span className={`flex-1 truncate text-[12px] ${isActive ? 'text-white font-semibold' : 'text-subtle'}`} style={{ fontFamily: mono }}>
                       {label}
                     </span>
                     {isActive && <Check size={14} className="text-[#ff6b2c] shrink-0" />}
@@ -166,7 +166,7 @@ export function WorkspaceSwitcher({ collapsed }: { collapsed: boolean }) {
                   onClick={() => setShowCreate(true)}
                 >
                   <Plus size={15} />
-                  <span className="text-[13px]" style={{ fontFamily: mono, fontWeight: 500 }}>
+                  <span className="text-[12px]" style={{ fontFamily: mono, fontWeight: 500 }}>
                     Criar novo workspace
                   </span>
                 </button>

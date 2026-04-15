@@ -74,8 +74,8 @@ pub async fn list_tokens(
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     let mut tokens = Vec::new();
-    for row in result
-        .rows_typed::<(
+    let rows = result.into_rows_result()?;
+    for row in rows.rows::<(
             Uuid,
             String,
             String,
@@ -84,11 +84,9 @@ pub async fn list_tokens(
             Option<chrono::DateTime<Utc>>,
             chrono::DateTime<Utc>,
             bool,
-        )>()
-        .map_err(|e| AppError::DatabaseError(e.to_string()))?
+        )>()?.flatten()
     {
-        let (id, name, token, permission_level, email, expires_at, created_at, is_revoked) =
-            row.map_err(|e| AppError::DatabaseError(e.to_string()))?;
+        let (id, name, token, permission_level, email, expires_at, created_at, is_revoked) = row;
         tokens.push(AccessToken {
             id: id.to_string(),
             name,

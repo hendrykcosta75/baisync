@@ -873,8 +873,7 @@ pub async fn find_any_integration_by_phone(db: &DbSession, phone: &str) -> Resul
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     let row = result
-        .maybe_first_row_typed::<IntegrationRow>()
-        .map_err(|e| AppError::DatabaseError(e.to_string()))?
+        .into_rows_result()?.maybe_first_row::<IntegrationRow>()?
         .ok_or_else(|| AppError::NotFound("No integration found for this phone number".into()))?;
 
     Ok(row_to_integration(row))
@@ -892,9 +891,9 @@ pub async fn find_integration_by_phone(db: &DbSession, phone: &str) -> Result<As
 
     // Collect ALL integrations with this phone number
     let mut all: Vec<AssistantIntegration> = Vec::new();
-    for row in result
-        .rows_typed::<IntegrationRow>()
-        .map_err(|e| AppError::DatabaseError(e.to_string()))?
+    let rows = result.into_rows_result()?;
+    for row in rows
+        .rows::<IntegrationRow>()?
     {
         let r = row.map_err(|e| AppError::DatabaseError(e.to_string()))?;
         all.push(row_to_integration(r));
@@ -952,9 +951,9 @@ pub async fn find_integration_by_token(db: &DbSession, token: &str) -> Result<As
 
     // Collect ALL integrations with this token
     let mut all: Vec<AssistantIntegration> = Vec::new();
-    for row in result
-        .rows_typed::<IntegrationRow>()
-        .map_err(|e| AppError::DatabaseError(e.to_string()))?
+    let rows = result.into_rows_result()?;
+    for row in rows
+        .rows::<IntegrationRow>()?
     {
         let r = row.map_err(|e| AppError::DatabaseError(e.to_string()))?;
         all.push(row_to_integration(r));
@@ -1015,8 +1014,7 @@ async fn is_rate_limited(db: &DbSession, integration: &AssistantIntegration, lim
             .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
         let (current_tokens, current_messages) = result
-            .maybe_first_row_typed::<(i64, i64)>()
-            .map_err(|e| AppError::DatabaseError(e.to_string()))?
+            .into_rows_result()?.maybe_first_row::<(i64, i64)>()?
             .unwrap_or((0, 0));
 
         if current_messages >= limit as i64 {
@@ -1041,7 +1039,7 @@ async fn is_rate_limited(db: &DbSession, integration: &AssistantIntegration, lim
         match cas_result {
             Ok(res) => {
                 // LWT returns [applied] as the first column
-                if let Ok(Some((applied,))) = res.maybe_first_row_typed::<(bool,)>() {
+                if let Some((applied,)) = res.into_rows_result().ok().and_then(|r| r.maybe_first_row::<(bool,)>().ok().flatten()) {
                     if applied {
                         return Ok(false); // Successfully reserved slot
                     }
@@ -1089,8 +1087,7 @@ async fn get_or_create_conversation(
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     if let Some(row) = result
-        .maybe_first_row_typed::<ConversationRow>()
-        .map_err(|e| AppError::DatabaseError(e.to_string()))?
+        .into_rows_result()?.maybe_first_row::<ConversationRow>()?
     {
         let mut conv = row_to_conversation(row);
         // Update contact_name if a new non-empty value is provided and different
@@ -1147,10 +1144,10 @@ pub async fn get_recent_messages(db: &DbSession, conversation_id: &Uuid, limit: 
         .await
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
+    let rows = result.into_rows_result()?;
     let mut messages = Vec::new();
-    for row in result
-        .rows_typed::<(Uuid, CqlTimeuuid, Option<String>, Option<String>, Option<String>, Option<String>, Option<i32>, Option<Uuid>, Option<DateTime<Utc>>)>()
-        .map_err(|e| AppError::DatabaseError(e.to_string()))?
+    for row in rows
+        .rows::<(Uuid, CqlTimeuuid, Option<String>, Option<String>, Option<String>, Option<String>, Option<i32>, Option<Uuid>, Option<DateTime<Utc>>)>()?
     {
         let r = row.map_err(|e| AppError::DatabaseError(e.to_string()))?;
         messages.push(Message {
@@ -1178,10 +1175,10 @@ pub async fn get_messages_paged(
     .await
     .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
+    let rows = result.into_rows_result()?;
     let mut messages = Vec::new();
-    for row in result
-        .rows_typed::<(Uuid, CqlTimeuuid, Option<String>, Option<String>, Option<String>, Option<String>, Option<i32>, Option<Uuid>, Option<DateTime<Utc>>)>()
-        .map_err(|e| AppError::DatabaseError(e.to_string()))?
+    for row in rows
+        .rows::<(Uuid, CqlTimeuuid, Option<String>, Option<String>, Option<String>, Option<String>, Option<i32>, Option<Uuid>, Option<DateTime<Utc>>)>()?
     {
         let r = row.map_err(|e| AppError::DatabaseError(e.to_string()))?;
         messages.push(Message {
@@ -1215,10 +1212,10 @@ pub async fn list_conversations(
     .await
     .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
+    let rows = result.into_rows_result()?;
     let mut conversations = Vec::new();
-    for row in result
-        .rows_typed::<ConversationRow>()
-        .map_err(|e| AppError::DatabaseError(e.to_string()))?
+    for row in rows
+        .rows::<ConversationRow>()?
     {
         let r = row.map_err(|e| AppError::DatabaseError(e.to_string()))?;
         let conv = row_to_conversation(r);
@@ -1254,8 +1251,7 @@ pub async fn count_messages(db: &DbSession, conversation_id: &Uuid) -> Result<i6
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     let count = result
-        .maybe_first_row_typed::<(i64,)>()
-        .map_err(|e| AppError::DatabaseError(e.to_string()))?
+        .into_rows_result()?.maybe_first_row::<(i64,)>()?
         .map(|r| r.0)
         .unwrap_or(0);
 
@@ -1271,10 +1267,10 @@ pub async fn sum_tokens(db: &DbSession, conversation_id: &Uuid) -> Result<i64, A
         .await
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
+    let rows = result.into_rows_result()?;
     let mut total: i64 = 0;
-    for row in result
-        .rows_typed::<(Option<i32>,)>()
-        .map_err(|e| AppError::DatabaseError(e.to_string()))?
+    for row in rows
+        .rows::<(Option<i32>,)>()?
     {
         if let Ok((Some(t),)) = row {
             total += t as i64;
@@ -1352,8 +1348,7 @@ pub async fn get_conversation(
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     let row = result
-        .maybe_first_row_typed::<ConversationRow>()
-        .map_err(|e| AppError::DatabaseError(e.to_string()))?
+        .into_rows_result()?.maybe_first_row::<ConversationRow>()?
         .ok_or_else(|| AppError::NotFound("Conversation not found".into()))?;
 
     Ok(row_to_conversation(row))
@@ -1370,10 +1365,10 @@ async fn find_integration_for_conversation(
         .await
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
+    let rows = result.into_rows_result()?;
     let mut fallback: Option<AssistantIntegration> = None;
-    for row in result
-        .rows_typed::<IntegrationRow>()
-        .map_err(|e| AppError::DatabaseError(e.to_string()))?
+    for row in rows
+        .rows::<IntegrationRow>()?
     {
         let r = row.map_err(|e| AppError::DatabaseError(e.to_string()))?;
         let integration = row_to_integration(r);
@@ -1651,7 +1646,7 @@ fn audio_filename_for_mime(mime: &str) -> String {
 async fn resolve_audio_bytes(
     webhook: &IncomingWebhook,
     integration: &AssistantIntegration,
-    encryption: &EncryptionService,
+    _encryption: &EncryptionService,
 ) -> Option<Vec<u8>> {
     // Already have pre-fetched base64 (Baileys, Telegram)
     if let Some(b64) = &webhook.media_base64 {
@@ -1967,8 +1962,7 @@ async fn update_usage_stats(db: &DbSession, user_id: &Uuid, assistant_id: &Uuid,
     ).await.map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     let (current_tokens, current_messages) = result
-        .maybe_first_row_typed::<(i64, i64)>()
-        .map_err(|e| AppError::DatabaseError(e.to_string()))?
+        .into_rows_result()?.maybe_first_row::<(i64, i64)>()?
         .unwrap_or((0, 0));
 
     // If rate limit was checked (rate_limited_path=true), messages were already incremented atomically in is_rate_limited.

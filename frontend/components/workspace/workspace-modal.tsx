@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from 'react'
 import { useWorkspaceStore } from '@/store/useWorkspaceStore'
 import { Users, Shield, Crown, Trash2, ChevronDown, Mail, UserPlus, AlertTriangle, X } from 'lucide-react'
+import { UserAvatar } from '@/components/user-avatar'
 
 const mono = "'JetBrains Mono', 'Fira Code', monospace"
 
@@ -92,7 +93,7 @@ export function WorkspaceModal({ isOpen, onClose }: { isOpen: boolean; onClose: 
   const canManage = isOwner || activeWorkspace?.role === 'admin'
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
       <div
         className="rounded-xl border border-dim-hover w-full max-w-lg max-h-[85vh] flex flex-col overflow-hidden"
         style={{ background: '#141414' }}
@@ -264,12 +265,7 @@ export function WorkspaceModal({ isOpen, onClose }: { isOpen: boolean; onClose: 
                             key={member.user_id}
                             className="flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-dim transition-colors group"
                           >
-                            <div
-                              className="w-8 h-8 rounded-[10px] flex items-center justify-center text-[10px] font-semibold shrink-0"
-                              style={{ background: '#121212', boxShadow: '3px 3px 7px rgba(0,0,0,0.45), -1px -1px 5px rgba(255,255,255,0.03)', color: '#D4835A', fontFamily: mono }}
-                            >
-                              {(member.user_name || member.user_email || '?').slice(0, 2).toUpperCase()}
-                            </div>
+                            <UserAvatar userId={member.user_id} name={member.user_name || member.user_email} size={32} />
                             <div className="flex-1 min-w-0">
                               <p className="text-white text-[13px] font-medium truncate" style={{ fontFamily: mono }}>
                                 {member.user_name || 'Sem nome'}

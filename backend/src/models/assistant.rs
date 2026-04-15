@@ -89,6 +89,7 @@ pub struct UpdateAssistantRequest {
     pub audio_settings: Option<AudioSettingsPayload>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AssistantFile {
     pub assistant_id: Uuid,
@@ -151,4 +152,108 @@ pub struct ToolCallLog {
     pub error: Option<String>,
     pub duration_ms: i32,
     pub called_at: DateTime<Utc>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn create_assistant_request_minimal() {
+        let json = r#"{"name":"Bot","llm_provider":"openai","model":"gpt-4o"}"#;
+        let req: CreateAssistantRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.name, "Bot");
+        assert_eq!(req.llm_provider, "openai");
+        assert_eq!(req.model, "gpt-4o");
+        assert!(req.temperature.is_none());
+        assert!(req.max_tokens.is_none());
+        assert!(req.system_prompt.is_none());
+        assert!(req.is_team_lead.is_none());
+    }
+
+    #[test]
+    fn create_assistant_request_full() {
+        let json = r#"{
+            "name":"Bot","llm_provider":"claude","model":"claude-3.5-sonnet",
+            "temperature":0.5,"max_tokens":2048,"system_prompt":"You help.",
+            "is_team_lead":true
+        }"#;
+        let req: CreateAssistantRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.temperature, Some(0.5));
+        assert_eq!(req.max_tokens, Some(2048));
+        assert_eq!(req.is_team_lead, Some(true));
+    }
+
+    #[test]
+    fn update_assistant_request_all_optional() {
+        let json = r#"{}"#;
+        let req: UpdateAssistantRequest = serde_json::from_str(json).unwrap();
+        assert!(req.name.is_none());
+        assert!(req.llm_provider.is_none());
+        assert!(req.integration_settings.is_none());
+        assert!(req.audio_settings.is_none());
+    }
+
+    #[test]
+    fn update_assistant_with_integration_settings() {
+        let json = r#"{
+            "integrationSettings": {
+                "splitOnDoubleNewline": true,
+                "typingIndicator": false,
+                "rateLimitPerDay": 100
+            }
+        }"#;
+        let req: UpdateAssistantRequest = serde_json::from_str(json).unwrap();
+        let settings = req.integration_settings.unwrap();
+        assert_eq!(settings.split_on_double_newline, Some(true));
+        assert_eq!(settings.typing_indicator, Some(false));
+        assert_eq!(settings.rate_limit_per_day, Some(100));
+    }
+
+    #[test]
+    fn update_assistant_with_audio_settings() {
+        let json = r#"{
+            "audioSettings": {
+                "provider": "elevenlabs",
+                "mode": "tts",
+                "transcribe": true,
+                "fallbackToText": false
+            }
+        }"#;
+        let req: UpdateAssistantRequest = serde_json::from_str(json).unwrap();
+        let audio = req.audio_settings.unwrap();
+        assert_eq!(audio.provider, Some("elevenlabs".into()));
+        assert_eq!(audio.mode, Some("tts".into()));
+        assert_eq!(audio.transcribe, Some(true));
+        assert_eq!(audio.fallback_to_text, Some(false));
+    }
+
+    #[test]
+    fn create_tool_request_minimal() {
+        let json = r#"{"name":"weather"}"#;
+        let req: CreateToolRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.name, "weather");
+        assert!(req.endpoint.is_none());
+        assert!(req.method.is_none());
+    }
+
+    #[test]
+    fn assistant_tool_serializes() {
+        let tool = AssistantTool {
+            assistant_id: Uuid::new_v4(),
+            id: Uuid::new_v4(),
+            name: "search".into(),
+            description: Some("Web search".into()),
+            endpoint: "https://api.example.com/search".into(),
+            method: "GET".into(),
+            schema_json: None,
+            headers_json: None,
+            is_enabled: true,
+            tool_type: Some("http".into()),
+        };
+        let json = serde_json::to_value(&tool).unwrap();
+        assert_eq!(json["name"], "search");
+        assert_eq!(json["is_enabled"], true);
+        assert_eq!(json["tool_type"], "http");
+    }
 }

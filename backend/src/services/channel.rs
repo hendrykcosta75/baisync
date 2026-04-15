@@ -4,7 +4,7 @@ use uuid::Uuid;
 
 use crate::db::DbSession;
 use crate::errors::AppError;
-use crate::models::channel::{Channel, ChannelMember, ChannelMessage, ChannelNote, UserChannel};
+use crate::models::channel::{Channel, ChannelCanvas, ChannelMember, ChannelMessage, ChannelNote, UserChannel};
 
 fn ts_now() -> CqlTimestamp {
     CqlTimestamp(Utc::now().timestamp_millis())
@@ -68,12 +68,10 @@ pub async fn list_channels(
         .await
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
-    let rows = result
-        .rows_typed::<(Uuid, Uuid, String, Option<String>, String, Uuid, DateTime<Utc>, DateTime<Utc>)>()
-        .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+    let rows = result.into_rows_result()?;
 
     let mut channels = Vec::new();
-    for row in rows.flatten() {
+    for row in rows.rows::<(Uuid, Uuid, String, Option<String>, String, Uuid, DateTime<Utc>, DateTime<Utc>)>()?.flatten() {
         channels.push(Channel {
             workspace_id: row.0,
             id: row.1,
@@ -103,8 +101,8 @@ pub async fn get_channel(
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     let row = result
-        .single_row_typed::<(Uuid, Uuid, String, Option<String>, String, Uuid, DateTime<Utc>, DateTime<Utc>)>()
-        .map_err(|_| AppError::NotFound("Channel not found".into()))?;
+        .into_rows_result()?
+        .single_row::<(Uuid, Uuid, String, Option<String>, String, Uuid, DateTime<Utc>, DateTime<Utc>)>()?;
 
     Ok(Channel {
         workspace_id: row.0,
@@ -187,7 +185,8 @@ pub async fn add_member(
         )
         .await
         .ok()
-        .and_then(|r| r.maybe_first_row_typed::<(String, String)>().ok().flatten());
+        .and_then(|r| r.into_rows_result().ok())
+        .and_then(|r| r.maybe_first_row::<(String, String)>().ok().flatten());
 
     if let Some((ch_name, ch_type)) = ch {
         db.query_unpaged(
@@ -238,8 +237,8 @@ async fn delete_user_channel(
         .ok();
 
     if let Some(result) = rows {
-        if let Ok(typed) = result.rows_typed::<(Uuid, Option<DateTime<Utc>>)>() {
-            for row in typed.flatten() {
+        if let Ok(typed) = result.into_rows_result() {
+            for row in typed.rows::<(Uuid, Option<DateTime<Utc>>)>().into_iter().flatten().flatten() {
                 if row.0 == *channel_id {
                     if let Some(ts) = row.1 {
                         let ts_cql = CqlTimestamp(ts.timestamp_millis());
@@ -266,12 +265,10 @@ pub async fn list_members(
         .await
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
-    let rows = result
-        .rows_typed::<(Uuid, Uuid, Uuid, String, Option<DateTime<Utc>>, DateTime<Utc>)>()
-        .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+    let rows = result.into_rows_result()?;
 
     let mut members = Vec::new();
-    for row in rows.flatten() {
+    for row in rows.rows::<(Uuid, Uuid, Uuid, String, Option<DateTime<Utc>>, DateTime<Utc>)>()?.flatten() {
         let user_info = db
             .query_unpaged(
                 "SELECT name, email FROM inertial_eclipse.users WHERE id = ?",
@@ -279,7 +276,8 @@ pub async fn list_members(
             )
             .await
             .ok()
-            .and_then(|r| r.maybe_first_row_typed::<(String, String)>().ok().flatten());
+            .and_then(|r| r.into_rows_result().ok())
+            .and_then(|r| r.maybe_first_row::<(String, String)>().ok().flatten());
 
         let (user_name, user_email) = match user_info {
             Some((n, e)) => (Some(n), Some(e)),
@@ -314,7 +312,7 @@ pub async fn is_member(
         .await
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
-    Ok(result.maybe_first_row_typed::<(Uuid,)>().map_err(|e| AppError::DatabaseError(e.to_string()))?.is_some())
+    Ok(result.into_rows_result()?.maybe_first_row::<(Uuid,)>()?.is_some())
 }
 
 // ─── Messages ───
@@ -350,7 +348,8 @@ pub async fn send_message(
                 )
                 .await
                 .ok()
-                .and_then(|r| r.maybe_first_row_typed::<(Option<i32>, Option<String>, Option<String>, Option<DateTime<Utc>>)>().ok().flatten());
+                .and_then(|r| r.into_rows_result().ok())
+                .and_then(|r| r.maybe_first_row::<(Option<i32>, Option<String>, Option<String>, Option<DateTime<Utc>>)>().ok().flatten());
 
             if let Some((count, ch_name, ch_type, old_ts)) = current {
                 let new_count = count.unwrap_or(0) + 1;
@@ -399,12 +398,10 @@ pub async fn list_messages(
     .await
     .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
-    let rows = result
-        .rows_typed::<(Uuid, CqlTimeuuid, Uuid, String, String, String, Option<DateTime<Utc>>, DateTime<Utc>)>()
-        .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+    let rows = result.into_rows_result()?;
 
     let mut messages = Vec::new();
-    for row in rows.flatten() {
+    for row in rows.rows::<(Uuid, CqlTimeuuid, Uuid, String, String, String, Option<DateTime<Utc>>, DateTime<Utc>)>()?.flatten() {
         messages.push(ChannelMessage {
             channel_id: row.0,
             id: row.1.into(),
@@ -475,7 +472,8 @@ pub async fn mark_read(
         )
         .await
         .ok()
-        .and_then(|r| r.maybe_first_row_typed::<(Uuid,)>().ok().flatten());
+        .and_then(|r| r.into_rows_result().ok())
+        .and_then(|r| r.maybe_first_row::<(Uuid,)>().ok().flatten());
 
     if let Some((workspace_id,)) = member_row {
         // Get channel info before deleting
@@ -486,7 +484,8 @@ pub async fn mark_read(
             )
             .await
             .ok()
-            .and_then(|r| r.maybe_first_row_typed::<(Option<String>, Option<String>)>().ok().flatten());
+            .and_then(|r| r.into_rows_result().ok())
+            .and_then(|r| r.maybe_first_row::<(Option<String>, Option<String>)>().ok().flatten());
 
         // Delete existing user_channels entry (handles NULL last_message_at)
         delete_user_channel(db, user_id, &workspace_id, channel_id).await;
@@ -566,12 +565,10 @@ pub async fn list_user_channels(
         .await
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
-    let rows = result
-        .rows_typed::<(Uuid, Uuid, Uuid, String, String, Option<i32>, Option<DateTime<Utc>>)>()
-        .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+    let rows = result.into_rows_result()?;
 
     let mut channels = Vec::new();
-    for row in rows.flatten() {
+    for row in rows.rows::<(Uuid, Uuid, Uuid, String, String, Option<i32>, Option<DateTime<Utc>>)>()?.flatten() {
         channels.push(UserChannel {
             user_id: row.0,
             workspace_id: row.1,
@@ -628,12 +625,10 @@ pub async fn list_notes(
         .await
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
-    let rows = result
-        .rows_typed::<(Uuid, Uuid, String, String, Uuid, Uuid, DateTime<Utc>, DateTime<Utc>)>()
-        .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+    let rows = result.into_rows_result()?;
 
     let mut notes = Vec::new();
-    for row in rows.flatten() {
+    for row in rows.rows::<(Uuid, Uuid, String, String, Uuid, Uuid, DateTime<Utc>, DateTime<Utc>)>()?.flatten() {
         notes.push(ChannelNote {
             channel_id: row.0,
             id: row.1,
@@ -663,8 +658,8 @@ pub async fn get_note(
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     let row = result
-        .single_row_typed::<(Uuid, Uuid, String, String, Uuid, Uuid, DateTime<Utc>, DateTime<Utc>)>()
-        .map_err(|_| AppError::NotFound("Note not found".into()))?;
+        .into_rows_result()?
+        .single_row::<(Uuid, Uuid, String, String, Uuid, Uuid, DateTime<Utc>, DateTime<Utc>)>()?;
 
     Ok(ChannelNote {
         channel_id: row.0,
@@ -714,6 +709,136 @@ pub async fn delete_note(
     db.query_unpaged(
         "DELETE FROM inertial_eclipse.channel_notes WHERE channel_id = ? AND id = ?",
         (channel_id, note_id),
+    )
+    .await
+    .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+    Ok(())
+}
+
+// ─── Canvases ───
+
+pub async fn create_canvas(
+    db: &DbSession,
+    channel_id: &Uuid,
+    title: &str,
+    created_by: &Uuid,
+) -> Result<ChannelCanvas, AppError> {
+    let id = Uuid::new_v4();
+    let now = ts_now();
+
+    db.query_unpaged(
+        "INSERT INTO inertial_eclipse.channel_canvases (channel_id, id, title, canvas_data, created_by, updated_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (channel_id, &id, title, "", created_by, created_by, now, now),
+    )
+    .await
+    .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+
+    Ok(ChannelCanvas {
+        channel_id: *channel_id,
+        id,
+        title: title.to_string(),
+        canvas_data: String::new(),
+        created_by: *created_by,
+        updated_by: *created_by,
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+    })
+}
+
+pub async fn list_canvases(
+    db: &DbSession,
+    channel_id: &Uuid,
+) -> Result<Vec<ChannelCanvas>, AppError> {
+    let result = db
+        .query_unpaged(
+            "SELECT channel_id, id, title, created_by, updated_by, created_at, updated_at FROM inertial_eclipse.channel_canvases WHERE channel_id = ?",
+            (channel_id,),
+        )
+        .await
+        .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+
+    let rows = result.into_rows_result()?;
+
+    let mut canvases = Vec::new();
+    for row in rows.rows::<(Uuid, Uuid, Option<String>, Option<Uuid>, Option<Uuid>, Option<DateTime<Utc>>, Option<DateTime<Utc>>)>()?.flatten() {
+        canvases.push(ChannelCanvas {
+            channel_id: row.0,
+            id: row.1,
+            title: row.2.unwrap_or_default(),
+            canvas_data: String::new(),
+            created_by: row.3.unwrap_or(Uuid::nil()),
+            updated_by: row.4.unwrap_or(Uuid::nil()),
+            created_at: row.5.unwrap_or(Utc::now()),
+            updated_at: row.6.unwrap_or(Utc::now()),
+        });
+    }
+
+    Ok(canvases)
+}
+
+pub async fn get_canvas(
+    db: &DbSession,
+    channel_id: &Uuid,
+    canvas_id: &Uuid,
+) -> Result<ChannelCanvas, AppError> {
+    let result = db
+        .query_unpaged(
+            "SELECT channel_id, id, title, canvas_data, created_by, updated_by, created_at, updated_at FROM inertial_eclipse.channel_canvases WHERE channel_id = ? AND id = ?",
+            (channel_id, canvas_id),
+        )
+        .await
+        .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+
+    let row = result
+        .into_rows_result()?
+        .single_row::<(Uuid, Uuid, Option<String>, Option<String>, Option<Uuid>, Option<Uuid>, Option<DateTime<Utc>>, Option<DateTime<Utc>>)>()?;
+
+    Ok(ChannelCanvas {
+        channel_id: row.0,
+        id: row.1,
+        title: row.2.unwrap_or_default(),
+        canvas_data: row.3.unwrap_or_default(),
+        created_by: row.4.unwrap_or(Uuid::nil()),
+        updated_by: row.5.unwrap_or(Uuid::nil()),
+        created_at: row.6.unwrap_or(Utc::now()),
+        updated_at: row.7.unwrap_or(Utc::now()),
+    })
+}
+
+pub async fn update_canvas(
+    db: &DbSession,
+    channel_id: &Uuid,
+    canvas_id: &Uuid,
+    title: Option<&str>,
+    canvas_data: Option<&str>,
+    updated_by: &Uuid,
+) -> Result<ChannelCanvas, AppError> {
+    let now = ts_now();
+
+    if let Some(t) = title {
+        db.query_unpaged(
+            "UPDATE inertial_eclipse.channel_canvases SET title = ?, updated_by = ?, updated_at = ? WHERE channel_id = ? AND id = ?",
+            (t, updated_by, now, channel_id, canvas_id),
+        ).await.map_err(|e| AppError::DatabaseError(e.to_string()))?;
+    }
+    if let Some(data) = canvas_data {
+        db.query_unpaged(
+            "UPDATE inertial_eclipse.channel_canvases SET canvas_data = ?, updated_by = ?, updated_at = ? WHERE channel_id = ? AND id = ?",
+            (data, updated_by, now, channel_id, canvas_id),
+        ).await.map_err(|e| AppError::DatabaseError(e.to_string()))?;
+    }
+
+    get_canvas(db, channel_id, canvas_id).await
+}
+
+pub async fn delete_canvas(
+    db: &DbSession,
+    channel_id: &Uuid,
+    canvas_id: &Uuid,
+) -> Result<(), AppError> {
+    db.query_unpaged(
+        "DELETE FROM inertial_eclipse.channel_canvases WHERE channel_id = ? AND id = ?",
+        (channel_id, canvas_id),
     )
     .await
     .map_err(|e| AppError::DatabaseError(e.to_string()))?;

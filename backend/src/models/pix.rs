@@ -47,6 +47,7 @@ pub struct FinancialSummary {
     pub pending_count: i64,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AssistantFinancialOverview {
     pub assistant_id: Uuid,
@@ -54,6 +55,7 @@ pub struct AssistantFinancialOverview {
     pub summary: FinancialSummary,
 }
 
+#[allow(dead_code)]
 pub fn validate_pix_key(key: &str, key_type: &str) -> Result<(), String> {
     let key = key.trim();
     if key.is_empty() {
@@ -97,4 +99,116 @@ pub fn validate_pix_key(key: &str, key_type: &str) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ─── CPF ───
+
+    #[test]
+    fn valid_cpf_key() {
+        assert!(validate_pix_key("123.456.789-00", "cpf").is_ok());
+    }
+
+    #[test]
+    fn valid_cpf_digits_only() {
+        assert!(validate_pix_key("12345678900", "cpf").is_ok());
+    }
+
+    #[test]
+    fn cpf_wrong_length() {
+        assert!(validate_pix_key("1234567890", "cpf").is_err());
+        assert!(validate_pix_key("123456789001", "cpf").is_err());
+    }
+
+    // ─── CNPJ ───
+
+    #[test]
+    fn valid_cnpj_key() {
+        assert!(validate_pix_key("12.345.678/0001-90", "cnpj").is_ok());
+    }
+
+    #[test]
+    fn cnpj_wrong_length() {
+        assert!(validate_pix_key("1234567890123", "cnpj").is_err());
+    }
+
+    // ─── Email ───
+
+    #[test]
+    fn valid_email_key() {
+        assert!(validate_pix_key("user@example.com", "email").is_ok());
+    }
+
+    #[test]
+    fn email_missing_at() {
+        assert!(validate_pix_key("userexample.com", "email").is_err());
+    }
+
+    #[test]
+    fn email_missing_dot() {
+        assert!(validate_pix_key("user@examplecom", "email").is_err());
+    }
+
+    // ─── Phone ───
+
+    #[test]
+    fn valid_phone_key() {
+        assert!(validate_pix_key("+5511999999999", "phone").is_ok());
+    }
+
+    #[test]
+    fn phone_too_short() {
+        assert!(validate_pix_key("123456789", "phone").is_err());
+    }
+
+    #[test]
+    fn phone_too_long() {
+        assert!(validate_pix_key("123456789012345", "phone").is_err());
+    }
+
+    // ─── Random (EVP) ───
+
+    #[test]
+    fn valid_random_key() {
+        assert!(validate_pix_key("a1b2c3d4-e5f6-7890-abcd-ef1234567890", "random").is_ok());
+    }
+
+    #[test]
+    fn random_key_too_short() {
+        assert!(validate_pix_key("short", "random").is_err());
+    }
+
+    // ─── Invalid type ───
+
+    #[test]
+    fn invalid_key_type() {
+        assert!(validate_pix_key("anything", "invalid_type").is_err());
+    }
+
+    // ─── Empty key ───
+
+    #[test]
+    fn empty_key_rejected() {
+        assert!(validate_pix_key("", "cpf").is_err());
+        assert!(validate_pix_key("   ", "cpf").is_err());
+    }
+
+    // ─── Serialization ───
+
+    #[test]
+    fn financial_summary_serializes_correctly() {
+        let summary = FinancialSummary {
+            total_revenue: 1500.50,
+            total_charges: 10,
+            paid_count: 7,
+            unpaid_count: 2,
+            pending_count: 1,
+        };
+        let json = serde_json::to_value(&summary).unwrap();
+        assert_eq!(json["total_revenue"], 1500.50);
+        assert_eq!(json["paid_count"], 7);
+    }
 }

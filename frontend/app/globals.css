@@ -769,3 +769,61 @@
 .table-row-hover:nth-child(even):hover {
   background: rgba(255, 107, 44, 0.03);
 }
+
+/* ============================================================
+   REACTFLOW DARK THEME OVERRIDES
+   ============================================================ */
+.react-flow__controls {
+  background: #141414 !important;
+  border: 1px solid #1e1e1e !important;
+  border-radius: 10px !important;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4) !important;
+}
+.react-flow__controls-button {
+  background: #141414 !important;
+  border-bottom: 1px solid #1e1e1e !important;
+  fill: #888 !important;
+}
+.react-flow__controls-button:hover {
+  background: #1a1a1a !important;
+  fill: #D4835A !important;
+}
+.react-flow__minimap {
+  background: #111111 !important;
+  border: 1px solid #1e1e1e !important;
+  border-radius: 10px !important;
+}
+.react-flow__attribution {
+  display: none !important;
+}
+.react-flow__panel {
+  margin: 8px !important;
+}
+.react-flow__edge-path {
+  transition: stroke-opacity 0.2s;
+}
+.react-flow__edge:hover .react-flow__edge-path {
+  stroke-opacity: 1 !important;
+  stroke-width: 2.5px !important;
+}
+.react-flow__handle {
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+.react-flow__handle:hover {
+  transform: scale(1.4);
+  box-shadow: 0 0 6px rgba(212, 131, 90, 0.5);
+}
+.react-flow__selection {
+  background: rgba(212, 131, 90, 0.06) !important;
+  border: 1px solid rgba(212, 131, 90, 0.3) !important;
+  border-radius: 8px;
+}
+.react-flow__node {
+  transition: box-shadow 0.2s;
+}
+.react-flow__node.selected {
+  z-index: 10 !important;
+}
+.react-flow__connectionline {
+  z-index: 1001;
+}

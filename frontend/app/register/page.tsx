@@ -26,6 +26,7 @@ type RegisterFormData = z.infer<typeof registerSchema>
 
 export default function RegisterPage() {
   const [isVisible, setIsVisible] = useState(false)
+  const [pwFocused, setPwFocused] = useState(false)
   const router = useRouter()
   const { register: registerUser, isLoading, error, clearError, isAuthenticated } = useAuthStore()
 
@@ -57,6 +58,8 @@ export default function RegisterPage() {
 
   return (
     <AuthLayout
+      passwordVisible={isVisible}
+      passwordFocused={pwFocused}
       footerContent={
         <p style={{ fontFamily: mono, fontSize: 12, color: '#666' }}>
           Já tem uma conta?{' '}
@@ -117,6 +120,8 @@ export default function RegisterPage() {
               type={isVisible ? "text" : "password"}
               className="border-[#222] hover:border-[#ff6b2c] focus-within:!border-[#ff6b2c] transition-colors shadow-sm w-full pr-10"
               {...register('password')}
+              onFocus={() => setPwFocused(true)}
+              onBlur={(e) => { setPwFocused(false); register('password').onBlur(e) }}
             />
             <button className="absolute right-3 top-1/2 -translate-y-1/2 focus:outline-none text-[#555] hover:text-[#ff6b2c]" type="button" onClick={toggleVisibility}>
               {isVisible ? (
@@ -143,6 +148,8 @@ export default function RegisterPage() {
             type={isVisible ? "text" : "password"}
             className="border-[#222] hover:border-[#ff6b2c] focus-within:!border-[#ff6b2c] transition-colors shadow-sm"
             {...register('confirmPassword')}
+            onFocus={() => setPwFocused(true)}
+            onBlur={(e) => { setPwFocused(false); register('confirmPassword').onBlur(e) }}
           />
           {errors.confirmPassword && (
             <p className="text-xs text-red-500">{errors.confirmPassword.message}</p>

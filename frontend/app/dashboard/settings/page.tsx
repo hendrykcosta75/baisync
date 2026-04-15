@@ -6,6 +6,7 @@ import { useForm, Controller } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { useAuthStore } from '@/store/useAuthStore'
+import { Trash2 } from 'lucide-react'
 
 const profileSchema = z.object({
   name: z.string().min(2, 'O nome deve ter pelo menos 2 caracteres'),
@@ -29,13 +30,17 @@ type PasswordFormData = z.infer<typeof passwordSchema>
 type DeleteFormData = z.infer<typeof deleteSchema>
 
 export default function SettingsPage() {
-  const { user, updateProfile, changePassword, deleteAccount, isLoading } = useAuthStore()
+  const { user, updateProfile, uploadAvatar, deleteAvatar, changePassword, deleteAccount, isLoading } = useAuthStore()
   const [profileSaved, setProfileSaved] = useState(false)
   const [passwordChanged, setPasswordChanged] = useState(false)
   const [profileError, setProfileError] = useState<string | null>(null)
   const [passwordError, setPasswordError] = useState<string | null>(null)
   const [deleteError, setDeleteError] = useState<string | null>(null)
   const [showDeleteModal, setShowDeleteModal] = useState(false)
+  const [avatarUploading, setAvatarUploading] = useState(false)
+  const [avatarKey, setAvatarKey] = useState(0)
+  const [showDeleteAvatarModal, setShowDeleteAvatarModal] = useState(false)
+  const [avatarDeleting, setAvatarDeleting] = useState(false)
 
   const profileForm = useForm<ProfileFormData>({
     resolver: zodResolver(profileSchema),
@@ -114,6 +119,65 @@ export default function SettingsPage() {
           <div>
             <p className="text-xs text-subtle uppercase tracking-wider font-medium mb-1">ID da Conta</p>
             <p className="text-sm text-foreground font-mono truncate">{user?.id || '—'}</p>
+          </div>
+        </div>
+      </Card>
+
+      {/* Avatar */}
+      <Card className="p-6">
+        <h2 className="text-lg font-semibold text-foreground mb-4">Foto de Perfil</h2>
+        <div className="flex items-center gap-6">
+          <div className="w-20 h-20 rounded-full overflow-hidden bg-raised border border-dim flex items-center justify-center shrink-0">
+            {user?.has_avatar ? (
+              <img
+                key={avatarKey}
+                src={`/api/users/${user.id}/avatar?v=${avatarKey}`}
+                alt="Avatar"
+                className="w-full h-full object-cover"
+              />
+            ) : (
+              <span className="text-2xl font-bold text-subtle">
+                {user?.name?.charAt(0)?.toUpperCase() || '?'}
+              </span>
+            )}
+          </div>
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center gap-2">
+              <label className={`btn-neu text-sm px-4 py-2 rounded-[10px] cursor-pointer inline-flex items-center gap-2 ${avatarUploading ? 'opacity-50 pointer-events-none' : ''}`}>
+                {avatarUploading ? 'Enviando...' : 'Alterar Foto'}
+                <input
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  disabled={avatarUploading}
+                  onChange={async (e) => {
+                    const file = e.target.files?.[0]
+                    if (!file) return
+                    setAvatarUploading(true)
+                    try {
+                      await uploadAvatar(file)
+                      setAvatarKey((k) => k + 1)
+                    } catch {
+                      setProfileError('Erro ao enviar foto')
+                    } finally {
+                      setAvatarUploading(false)
+                      e.target.value = ''
+                    }
+                  }}
+                />
+              </label>
+              {user?.has_avatar && (
+                <button
+                  type="button"
+                  className="btn-neu text-sm px-3 py-2 rounded-[10px] inline-flex items-center gap-1.5 !text-red-400 hover:!text-red-300"
+                  onClick={() => setShowDeleteAvatarModal(true)}
+                >
+                  <Trash2 size={14} />
+                  Remover
+                </button>
+              )}
+            </div>
+            <p className="text-xs text-subtle">JPG, PNG ou GIF. Máximo 2MB.</p>
           </div>
         </div>
       </Card>
@@ -264,6 +328,56 @@ export default function SettingsPage() {
                     </button>
                   </div>
                 </Form>
+              </Modal.Body>
+            </Modal.Dialog>
+          </Modal.Container>
+        </Modal.Backdrop>
+      </Modal>
+
+      {/* Delete Avatar Confirmation Modal */}
+      <Modal>
+        <Modal.Backdrop isOpen={showDeleteAvatarModal} onOpenChange={(open: boolean) => {
+          if (!open) setShowDeleteAvatarModal(false)
+        }}>
+          <Modal.Container>
+            <Modal.Dialog className="sm:max-w-[400px] w-full bg-overlay p-6 rounded-2xl shadow-xl">
+              <Modal.Header>
+                <Modal.Heading className="text-lg font-semibold text-foreground">
+                  Remover Foto de Perfil
+                </Modal.Heading>
+              </Modal.Header>
+              <Modal.Body>
+                <p className="text-sm text-muted mb-5">
+                  Tem certeza que deseja remover sua foto de perfil? Suas iniciais serão exibidas no lugar.
+                </p>
+                <div className="flex items-center gap-3 justify-end">
+                  <button
+                    type="button"
+                    className="btn-neu-ghost text-sm"
+                    onClick={() => setShowDeleteAvatarModal(false)}
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-neu text-sm !text-red-400 hover:!text-red-300"
+                    disabled={avatarDeleting}
+                    onClick={async () => {
+                      setAvatarDeleting(true)
+                      try {
+                        await deleteAvatar()
+                        setAvatarKey((k) => k + 1)
+                        setShowDeleteAvatarModal(false)
+                      } catch {
+                        setProfileError('Erro ao remover foto')
+                      } finally {
+                        setAvatarDeleting(false)
+                      }
+                    }}
+                  >
+                    {avatarDeleting ? 'Removendo...' : 'Remover Foto'}
+                  </button>
+                </div>
               </Modal.Body>
             </Modal.Dialog>
           </Modal.Container>

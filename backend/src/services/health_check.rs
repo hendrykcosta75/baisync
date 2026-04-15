@@ -47,7 +47,9 @@ async fn check_all_connections(db: &DbSession, config: &Config) -> Result<(), St
     );
 
     let rows: Vec<Row> = result
-        .rows_typed::<Row>()
+        .into_rows_result()
+        .map_err(|e| format!("Row parse failed: {e}"))?
+        .rows::<Row>()
         .map_err(|e| format!("Row parse failed: {e}"))?
         .filter_map(|r| r.ok())
         .collect();
@@ -243,7 +245,8 @@ async fn get_user_email(db: &DbSession, user_id: &Uuid) -> Option<String> {
         .await
         .ok()?;
     result
-        .single_row_typed::<(String,)>()
+        .into_rows_result().ok()?
+        .single_row::<(String,)>()
         .ok()
         .map(|(email,)| email)
 }
@@ -257,7 +260,8 @@ async fn get_assistant_name(db: &DbSession, user_id: &Uuid, assistant_id: &Uuid)
         .await
         .ok()?;
     result
-        .single_row_typed::<(String,)>()
+        .into_rows_result().ok()?
+        .single_row::<(String,)>()
         .ok()
         .map(|(name,)| name)
 }

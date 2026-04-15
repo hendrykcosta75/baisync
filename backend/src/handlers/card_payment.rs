@@ -100,8 +100,7 @@ pub async fn get_charge_info(
     ).await.map_err(|e| AppError::DatabaseError(format!("Failed to query charge: {e}")))?;
 
     let row = result
-        .maybe_first_row_typed::<(Uuid, Uuid, Option<f64>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<i32>)>()
-        .map_err(|e| AppError::DatabaseError(format!("Failed to parse charge: {e}")))?
+        .into_rows_result()?.maybe_first_row::<(Uuid, Uuid, Option<f64>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<i32>)>()?
         .ok_or_else(|| AppError::NotFound("Cobranca nao encontrada".into()))?;
 
     let user_id = row.0;
@@ -153,8 +152,7 @@ pub async fn process_mp_card_payment(
     ).await.map_err(|e| AppError::DatabaseError(format!("Failed to query charge: {e}")))?;
 
     let row = result
-        .maybe_first_row_typed::<(Uuid, Uuid, Option<f64>, Option<String>, Option<String>, Option<String>, Option<String>, Option<i32>)>()
-        .map_err(|e| AppError::DatabaseError(format!("Failed to parse charge: {e}")))?
+        .into_rows_result()?.maybe_first_row::<(Uuid, Uuid, Option<f64>, Option<String>, Option<String>, Option<String>, Option<String>, Option<i32>)>()?
         .ok_or_else(|| AppError::NotFound("Cobranca nao encontrada".into()))?;
 
     let user_id = row.0;

@@ -60,6 +60,7 @@ impl EventBus {
     }
 
     /// Cleanup channels with no active receivers (call periodically or on disconnect).
+    #[allow(dead_code)]
     pub async fn cleanup(&self, user_id: &Uuid) {
         let mut channels = self.channels.write().await;
         if let Some(sender) = channels.get(user_id) {

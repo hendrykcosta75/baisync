@@ -3,20 +3,20 @@ pub mod migrations;
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use scylla::query::Query;
 use scylla::serialize::row::SerializeRow;
-use scylla::statement::{PagingState, PagingStateResponse};
+use scylla::statement::PagingState;
 use scylla::transport::errors::QueryError;
-use scylla::transport::legacy_query_result::LegacyQueryResult;
-use scylla::{LegacySession, SessionBuilder};
+use scylla::transport::query_result::QueryResult;
+use scylla::{Session, SessionBuilder};
 use std::ops::ControlFlow;
 use std::sync::Arc;
 
-pub type DbSession = Arc<LegacySession>;
+pub type DbSession = Arc<Session>;
 
 pub async fn connect(database_url: &str) -> DbSession {
     // Phase 1: bare connection (no keyspace) to run migrations
     let bare = SessionBuilder::new()
         .known_node(database_url)
-        .build_legacy()
+        .build()
         .await
         .expect("Failed to connect to Cassandra");
 
@@ -30,7 +30,7 @@ pub async fn connect(database_url: &str) -> DbSession {
     let session = SessionBuilder::new()
         .known_node(database_url)
         .use_keyspace("inertial_eclipse", false)
-        .build_legacy()
+        .build()
         .await
         .expect("Failed to connect to Cassandra with keyspace");
 
@@ -40,12 +40,12 @@ pub async fn connect(database_url: &str) -> DbSession {
 /// Execute a single-page query with optional cursor-based pagination.
 /// Returns the query result and an optional base64-encoded cursor for the next page.
 pub async fn query_paged(
-    session: &LegacySession,
+    session: &Session,
     cql: &str,
     values: impl SerializeRow,
     page_size: i32,
     cursor: Option<&str>,
-) -> Result<(LegacyQueryResult, Option<String>), QueryError> {
+) -> Result<(QueryResult, Option<String>), QueryError> {
     let mut query = Query::new(cql);
     query.set_page_size(page_size);
 
