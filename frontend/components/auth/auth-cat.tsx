@@ -152,6 +152,7 @@ export function AuthCat({
   const isPeeking = passwordVisible && passwordFocused
   useEffect(() => {
     if (isPeeking && !prevPeeking.current) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       showThought(pick(PEEKING_THOUGHTS))
     }
     prevPeeking.current = isPeeking

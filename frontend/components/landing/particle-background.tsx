@@ -75,7 +75,7 @@ export function ParticleBackground() {
       dotsRef.current = dots;
     }
 
-    function draw(time: number) {
+    function draw() {
       if (!ctx || !canvas) return;
       ctx.clearRect(0, 0, width, height);
 

@@ -27,16 +27,6 @@ function formatDueDate(iso: string): string {
   }
 }
 
-function getInitials(name: string | null | undefined): string {
-  if (!name) return '?'
-  return name
-    .split(' ')
-    .slice(0, 2)
-    .map((w) => w[0])
-    .join('')
-    .toUpperCase()
-}
-
 interface TaskCardProps {
   task: Task
   onClick: () => void

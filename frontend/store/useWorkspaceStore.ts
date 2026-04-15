@@ -102,7 +102,7 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
 
   switchWorkspace: async (workspaceId: string) => {
     try {
-      const data = await apiFetch<{ token: string; workspace_id: string }>(
+      await apiFetch<{ token: string; workspace_id: string }>(
         `/api/workspaces/${workspaceId}/switch`,
         { method: 'POST' }
       )

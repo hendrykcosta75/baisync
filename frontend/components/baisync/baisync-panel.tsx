@@ -4,7 +4,7 @@ import React, { useEffect, useRef, useState } from 'react'
 import { X, Send, Trash2, Sparkles, Bot, BookOpen, MessageCircleQuestion, Paperclip, FileText, Image as ImageIcon } from 'lucide-react'
 import { useBaisyncStore, type BaisyncAttachment } from '@/store/useBaisyncStore'
 import { useAuthStore } from '@/store/useAuthStore'
-import { BaisyncMessageComponent, StreamingMessage, ThinkingAnimation, TypingIndicator } from './baisync-message'
+import { BaisyncMessageComponent, StreamingMessage, ThinkingAnimation } from './baisync-message'
 
 // ── Fairy Dust SVG particles ──
 
@@ -68,6 +68,7 @@ function FairyDust() {
     <svg viewBox="0 0 28 28" width={28} height={28}
       style={{ position: 'absolute', inset: 0, overflow: 'visible', pointerEvents: 'none' }}>
       {dusts.map((d, i) => {
+        // eslint-disable-next-line react-hooks/purity
         const mx = d.x1 * 0.55 + d.x2 * 0.45 + (Math.random() - 0.5) * 3
         const my = d.y1 * 0.55 + d.y2 * 0.45 - 2
         const color = DUST_COLORS[i % DUST_COLORS.length]
@@ -189,8 +190,9 @@ export function BaisyncPanel() {
       }
     }
 
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setPanelPos({ right, bottom })
-  }, [isOpen])
+  }, [isOpen, panelHeight])
 
   // Panel drag logic
   useEffect(() => {

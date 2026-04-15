@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect } from 'react'
 import { LLMProvider } from '@/types/assistant'
 import { apiFetch } from '@/lib/api'
 import { useApiKeysStore } from '@/store/useApiKeysStore'
@@ -26,11 +26,10 @@ export function useModels(provider: LLMProvider, opts?: { assistantId?: string; 
   const [hasApiKey, setHasApiKey] = useState(true)
   const keys = useApiKeysStore(s => s.keys)
   const configured = useApiKeysStore(s => s.configured)
-  const prevProvider = useRef(provider)
-
   useEffect(() => {
     const isShared = !!(opts?.assistantId && opts?.shareToken)
     const keyConfigured = isShared || configured[provider] || !!keys?.[provider]
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setHasApiKey(keyConfigured)
 
     if (!isShared && cache.has(provider)) {

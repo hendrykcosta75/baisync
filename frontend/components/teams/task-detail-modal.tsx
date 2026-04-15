@@ -42,16 +42,6 @@ function relativeTime(iso: string): string {
   }
 }
 
-function getInitials(name: string | null | undefined): string {
-  if (!name) return '?'
-  return name
-    .split(' ')
-    .slice(0, 2)
-    .map((w) => w[0])
-    .join('')
-    .toUpperCase()
-}
-
 interface TaskDetailModalProps {
   isOpen: boolean
   onClose: () => void
@@ -136,7 +126,7 @@ export function TaskDetailModal({
     } finally {
       setSaving(false)
     }
-  }, [task, teamId, title, description, status, priority, assigneeId, dueDate, tags, updateTask, onClose])
+  }, [task, teamId, title, description, status, priority, assigneeId, dueDate, tags, updateTask, onClose, addToast])
 
   const handleDelete = useCallback(async () => {
     if (!task) return
@@ -150,7 +140,7 @@ export function TaskDetailModal({
     } finally {
       setDeleting(false)
     }
-  }, [task, teamId, deleteTask, onClose])
+  }, [task, teamId, deleteTask, onClose, addToast])
 
   const handleAddTag = useCallback(() => {
     const trimmed = newTag.trim()
@@ -173,7 +163,7 @@ export function TaskDetailModal({
       const msg = e instanceof ApiError ? e.message : 'Falha ao adicionar comentário'
       addToast('error', msg)
     }
-  }, [task, commentText, createComment])
+  }, [task, commentText, createComment, addToast])
 
   if (!task) return null
 

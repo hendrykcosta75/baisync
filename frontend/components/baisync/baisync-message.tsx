@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useEffect, useRef, useCallback } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import type { BaisyncMessage, BaisyncUIBlock, BaisyncAction, BaisyncAttachment } from '@/store/useBaisyncStore'
 import { BaisyncUIBlockRenderer } from './baisync-ui-blocks'
 import { useAssistantStore } from '@/store/useAssistantStore'
@@ -56,12 +56,14 @@ function getStageColor(elapsedSec: number): number[] {
 }
 
 export function ThinkingAnimation() {
+  // eslint-disable-next-line react-hooks/purity
   const initialIdx = useRef(Math.floor(Math.random() * PHRASES.length))
   const [phrase, setPhrase] = useState(PHRASES[initialIdx.current])
   const [spinnerIdx, setSpinnerIdx] = useState(0)
   const [fade, setFade] = useState(true)
   const [elapsed, setElapsed] = useState(0)
   const [sweepPos, setSweepPos] = useState(0)
+  // eslint-disable-next-line react-hooks/purity
   const startRef = useRef(Date.now())
 
   useEffect(() => {
@@ -1411,6 +1413,7 @@ function ActionSequence({ actions }: { actions: BaisyncAction[] }) {
       })}
       {qrCode && (
         <div className="rounded-xl p-4 flex flex-col items-center gap-3" style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)', backdropFilter: 'blur(8px)' }}>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src={qrCode} alt="QR Code WhatsApp" className="w-48 h-48 rounded-lg" />
           <p className="text-xs text-subtle text-center">Escaneie com o WhatsApp do número informado</p>
         </div>
@@ -1452,6 +1455,7 @@ export function BaisyncMessageComponent({ message }: MessageProps) {
             <div className="flex flex-wrap gap-1.5">
               {message.attachments!.map((att: BaisyncAttachment, i: number) =>
                 att.mime_type.startsWith('image/') && att.data_base64 ? (
+                  /* eslint-disable-next-line @next/next/no-img-element */
                   <img
                     key={i}
                     src={`data:${att.mime_type};base64,${att.data_base64}`}

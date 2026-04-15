@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useRef, useEffect, useCallback } from 'react'
+import React, { useState, useRef, useEffect } from 'react'
 import { Assistant, LLMProvider } from '@/types/assistant'
 import { Card, Button, Select, ListBox, Label, TextArea, TextField, Input, Spinner } from '@heroui/react'
 import { apiFetch } from '@/lib/api'

@@ -8,7 +8,6 @@ const mono = "'JetBrains Mono', 'Fira Code', monospace"
 
 export function TeamCard({ team }: { team: TeamWithStats }) {
   const { task_counts } = team
-  const total = task_counts.open + task_counts.in_progress + task_counts.done
   const healthColor =
     task_counts.done > task_counts.open
       ? '#22c55e'

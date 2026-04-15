@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useState, useEffect } from 'react'
-import { Card, Button, Input, Form, Modal, TextField, Label, FieldError } from '@heroui/react'
+import { Card, Input, Form, Modal, TextField, Label, FieldError } from '@heroui/react'
 import { useForm, Controller } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
@@ -61,6 +61,7 @@ export default function SettingsPage() {
     if (user?.name) {
       profileForm.reset({ name: user.name })
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.name])
 
   const profileErrors = profileForm.formState.errors
@@ -129,6 +130,7 @@ export default function SettingsPage() {
         <div className="flex items-center gap-6">
           <div className="w-20 h-20 rounded-full overflow-hidden bg-raised border border-dim flex items-center justify-center shrink-0">
             {user?.has_avatar ? (
+              /* eslint-disable-next-line @next/next/no-img-element */
               <img
                 key={avatarKey}
                 src={`/api/users/${user.id}/avatar?v=${avatarKey}`}

@@ -40,6 +40,14 @@ const STATUS_LABELS: Record<string, string> = {
   no_show: 'Ausente',
 }
 
+const TASK_STATUS_COLORS: Record<string, { bg: string; border: string; text: string }> = {
+  backlog: { bg: '#1e1e2e', border: '#6b7280', text: '#9ca3af' },
+  todo: { bg: '#1e1e2e', border: '#3b82f6', text: '#60a5fa' },
+  in_progress: { bg: '#1a1a2e', border: '#f59e0b', text: '#fbbf24' },
+  in_review: { bg: '#1a1a2e', border: '#a855f7', text: '#c084fc' },
+  done: { bg: '#1a2e1a', border: '#22c55e', text: '#4ade80' },
+}
+
 export default function CalendarPage() {
   const { appointments, isLoading, fetch, selectedAssistantId, setFilter } = useCalendarStore()
   const { assistants, fetchAssistants, hasFetched } = useAssistantStore()
@@ -93,14 +101,6 @@ export default function CalendarPage() {
     if (!selectedAssistantId) return appointments
     return appointments.filter(a => a.assistantId === selectedAssistantId)
   }, [appointments, selectedAssistantId])
-
-  const TASK_STATUS_COLORS: Record<string, { bg: string; border: string; text: string }> = {
-    backlog: { bg: '#1e1e2e', border: '#6b7280', text: '#9ca3af' },
-    todo: { bg: '#1e1e2e', border: '#3b82f6', text: '#60a5fa' },
-    in_progress: { bg: '#1a1a2e', border: '#f59e0b', text: '#fbbf24' },
-    in_review: { bg: '#1a1a2e', border: '#a855f7', text: '#c084fc' },
-    done: { bg: '#1a2e1a', border: '#22c55e', text: '#4ade80' },
-  }
 
   const calendarEvents = useMemo(() => {
     const appointmentEvents = filteredAppointments.map(a => {

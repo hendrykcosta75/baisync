@@ -11,7 +11,7 @@ import { GoalsTab } from '@/components/teams/goals-tab'
 import { TaskDetailModal } from '@/components/teams/task-detail-modal'
 import { PageTransition } from '@/lib/motion'
 import { ArrowLeft, LayoutGrid, Users, Target, Activity } from 'lucide-react'
-import type { Task, TaskStatus } from '@/types/team'
+import type { Task } from '@/types/team'
 
 const mono = "'JetBrains Mono', 'Fira Code', monospace"
 
@@ -29,7 +29,7 @@ export default function TeamDetailPage() {
   const router = useRouter()
   const teamId = params.id as string
 
-  const { activeTeam, setActiveTeam, fetchTasks, fetchMembers, tasks, members, createTask } = useTeamStore()
+  const { activeTeam, setActiveTeam, fetchTasks, fetchMembers, members, createTask } = useTeamStore()
   const { activeWorkspace } = useWorkspaceStore()
   const { teams, fetchTeams } = useTeamStore()
 

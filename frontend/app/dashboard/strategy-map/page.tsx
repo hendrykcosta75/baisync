@@ -26,7 +26,7 @@ import { StrategyNode } from '@/components/strategy-map/strategy-node'
 import {
   Target, BarChart3, RefreshCw, Building2,
   ZoomIn, ZoomOut, Maximize2, UsersRound, MessageSquare,
-  Bot, ListTodo, Crosshair, Users, StickyNote, Plus,
+  Bot, ListTodo, Crosshair, Users, StickyNote,
 } from 'lucide-react'
 
 const mono = "'JetBrains Mono', 'Fira Code', monospace"

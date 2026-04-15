@@ -48,7 +48,7 @@ interface OkrState {
   }) => Promise<OkrInitiative>
 }
 
-export const useOkrStore = create<OkrState>((set, get) => ({
+export const useOkrStore = create<OkrState>((set) => ({
   objectives: [],
   activeObjective: null,
   checkIns: [],

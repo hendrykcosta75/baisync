@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useEffect, useState, useCallback } from 'react'
-import { useSwotStore, type SwotItem } from '@/store/useSwotStore'
+import { useSwotStore } from '@/store/useSwotStore'
 import { useWorkspaceStore } from '@/store/useWorkspaceStore'
 import { PageTransition, StaggerContainer, StaggerItem } from '@/lib/motion'
 import { Plus, Crosshair, Trash2, X, Sparkles } from 'lucide-react'

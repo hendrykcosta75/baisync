@@ -71,7 +71,7 @@ export function CheckInModal({
     e.preventDefault()
     setSaving(true)
     try {
-      const checkIn = await createCheckIn(krId, {
+      await createCheckIn(krId, {
         new_value: newValue,
         confidence: confidence / 10,
         note: note || undefined,

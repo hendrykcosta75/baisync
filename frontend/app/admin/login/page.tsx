@@ -43,7 +43,7 @@ export default function AdminLoginPage() {
     clearError()
     try {
       await adminLogin(data.username, data.password)
-      window.location.href = '/admin'
+      router.push('/admin')
     } catch {
       // error is set in store
     }

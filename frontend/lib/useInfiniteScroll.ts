@@ -17,7 +17,6 @@ interface UseInfiniteScrollOptions<T> {
 export function useInfiniteScroll<T>({
   fetchFn,
   enabled = true,
-  pageSize = 30,
   resetKey,
 }: UseInfiniteScrollOptions<T>) {
   const [items, setItems] = useState<T[]>([])
@@ -73,7 +72,6 @@ export function useInfiniteScroll<T>({
       setHasMore(true)
       loadPage(true)
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enabled, loadPage, resetKey])
 
   // IntersectionObserver for sentinel

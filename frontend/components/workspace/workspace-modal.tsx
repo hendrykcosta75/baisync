@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState } from 'react'
 import { useWorkspaceStore } from '@/store/useWorkspaceStore'
-import { Users, Shield, Crown, Trash2, ChevronDown, Mail, UserPlus, AlertTriangle, X } from 'lucide-react'
+import { Users, Shield, Crown, Trash2, Mail, UserPlus, AlertTriangle, X } from 'lucide-react'
 import { UserAvatar } from '@/components/user-avatar'
 
 const mono = "'JetBrains Mono', 'Fira Code', monospace"

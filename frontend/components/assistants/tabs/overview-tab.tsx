@@ -81,7 +81,6 @@ function AudioConfigSection({ assistant, shareToken }: { assistant: Assistant; s
 
   const mode = watch('mode')
   const provider = watch('provider')
-  const voiceId = watch('voiceId')
   const transcribe = watch('transcribe')
   const audioEnabled = mode !== 'disabled'
 

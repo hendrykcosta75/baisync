@@ -12,7 +12,7 @@ import { UserAvatar } from '@/components/user-avatar'
 
 export function Header({ onMenuClick }: { onMenuClick: () => void }) {
   const { user, logout } = useAuthStore()
-  const { activeWorkspace } = useWorkspaceStore()
+  useWorkspaceStore()
   const router = useRouter()
   const [wsModalOpen, setWsModalOpen] = useState(false)
 

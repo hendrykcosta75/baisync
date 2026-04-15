@@ -319,12 +319,13 @@ export function LogsTab({ assistant, shareToken }: LogsTabProps) {
   })
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setStatsLoading(true)
     apiFetch<AssistantStats>(`/api/assistants/${assistant.id}/stats?days=14&dates=${generateLocalDates(14)}${stqs}`)
       .then(data => setStats(data))
       .catch(() => setStats(null))
       .finally(() => setStatsLoading(false))
-  }, [assistant.id, refreshKey])
+  }, [assistant.id, refreshKey, stqs])
 
   // Poll every 30s — refresh stats and logs
   useEffect(() => {
@@ -343,9 +344,6 @@ export function LogsTab({ assistant, shareToken }: LogsTabProps) {
 
   const totalCalls = logs.length
   const errorCount = logs.filter(l => !!l.error || (l.status_code !== null && l.status_code >= 400)).length
-  const avgDuration = totalCalls > 0
-    ? Math.round(logs.reduce((a, l) => a + l.duration_ms, 0) / totalCalls)
-    : 0
   const toolSet = [...new Set(logs.map(l => l.tool_name))]
   const hasKnowledge = (assistant.files?.length ?? 0) > 0
 

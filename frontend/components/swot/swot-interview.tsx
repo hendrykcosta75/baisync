@@ -9,7 +9,6 @@ import * as THREE from 'three'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 interface SpeechRecognitionType {
-  new (): SpeechRecognitionType
   lang: string
   continuous: boolean
   interimResults: boolean

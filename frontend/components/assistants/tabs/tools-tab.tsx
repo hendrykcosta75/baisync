@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useState, useEffect, useCallback, useRef } from 'react'
-import { Assistant, AssistantTool, AuthType, AuthConfig, BodyContentType, KeyValuePair as KVPair, ToolSettings, ToolCallLog, ToolType } from '@/types/assistant'
+import { Assistant, AssistantTool, AuthType, AuthConfig, BodyContentType, ToolSettings, ToolCallLog, ToolType } from '@/types/assistant'
 import { Card, Button, Switch, Modal, Input, TextArea, Form, FieldError, Label, TextField, Select, ListBox, Tabs } from '@heroui/react'
 import { useAssistantStore } from '@/store/useAssistantStore'
 import { useApiKeysStore } from '@/store/useApiKeysStore'
@@ -501,7 +501,6 @@ export function ToolsTab({ assistant, shareToken, isReadOnly }: ToolsTabProps) {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 w-full">
           {tools.map((tool) => {
             const toolType = tool.toolType || 'http_request'
-            const isBuiltin = toolType === 'send_document' || toolType === 'notify_human' || toolType === 'schedule_appointment' || toolType === 'pix_payment' || toolType === 'card_payment'
 
             // Icon and badge config per type
             const iconConfig = toolType === 'send_document'
@@ -511,6 +510,7 @@ export function ToolsTab({ assistant, shareToken, isReadOnly }: ToolsTabProps) {
               : toolType === 'schedule_appointment'
               ? { bg: 'bg-emerald-100 dark:bg-emerald-900/30', text: 'text-emerald-600 dark:text-emerald-400', icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><rect x="3" y="4" width="18" height="18" rx="2" stroke="currentColor" strokeWidth="1.5" /><path d="M16 2v4M8 2v4M3 10h18M9 16l2 2 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg> }
               : toolType === 'pix_payment'
+              // eslint-disable-next-line @next/next/no-img-element
               ? { bg: 'bg-[#ff6b2c]/10 dark:bg-[#ff6b2c]/10', text: '', icon: <img src="/logo-pix-520x520.png" alt="PIX" width={24} height={24} className="brightness-0 invert-0" style={{ filter: 'brightness(0) saturate(100%) invert(45%) sepia(96%) saturate(1500%) hue-rotate(360deg) brightness(100%) contrast(100%)' }} /> }
               : toolType === 'card_payment'
               ? { bg: 'bg-[#635BFF]/10 dark:bg-[#635BFF]/10', text: 'text-[#635BFF] dark:text-[#635BFF]', icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><rect x="2" y="5" width="20" height="14" rx="2" stroke="currentColor" strokeWidth="1.5" /><path d="M2 10h20" stroke="currentColor" strokeWidth="1.5" /><path d="M6 15h4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" /></svg> }
@@ -732,6 +732,7 @@ export function ToolsTab({ assistant, shareToken, isReadOnly }: ToolsTabProps) {
                       disabled={exists}
                     >
                       <div className="w-12 h-12 bg-[#ff6b2c]/10 dark:bg-[#ff6b2c]/10 rounded-lg flex items-center justify-center">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img src="/logo-pix-520x520.png" alt="PIX" width={28} height={28} style={{ filter: 'brightness(0) saturate(100%) invert(45%) sepia(96%) saturate(1500%) hue-rotate(360deg) brightness(100%) contrast(100%)' }} />
                       </div>
                       <div>
@@ -804,6 +805,7 @@ export function ToolsTab({ assistant, shareToken, isReadOnly }: ToolsTabProps) {
                   </div>
                 ) : builtinToolType === 'pix_payment' ? (
                   <div className="w-10 h-10 bg-[#ff6b2c]/10 dark:bg-[#ff6b2c]/10 rounded-lg flex items-center justify-center shrink-0">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img src="/logo-pix-520x520.png" alt="PIX" width={24} height={24} style={{ filter: 'brightness(0) saturate(100%) invert(45%) sepia(96%) saturate(1500%) hue-rotate(360deg) brightness(100%) contrast(100%)' }} />
                   </div>
                 ) : builtinToolType === 'card_payment' ? (

@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useEffect, useState, useCallback, useImperativeHandle, forwardRef } from 'react'
-import { Input, Switch, TextField, Label, Select, ListBox, Button } from '@heroui/react'
+import { Input, Switch, TextField, Label, Select, ListBox } from '@heroui/react'
 import { Plus, X } from 'lucide-react'
 import { apiFetch } from '@/lib/api'
 import type { AvailabilityConfig, TimeSlot } from '@/types/appointment'
@@ -251,7 +251,7 @@ export const AvailabilityConfigPanel = forwardRef<AvailabilityConfigRef, Props>(
                 <div className="flex items-center gap-2">
                   <Switch
                     isSelected={isActive}
-                    onChange={(isChecked: React.ChangeEvent<HTMLInputElement> | boolean) => {
+                    onChange={() => {
                       toggleDay(day.key)
                     }}
                   >

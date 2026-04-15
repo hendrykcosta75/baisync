@@ -87,7 +87,7 @@ function BaileysForm({ assistant, shareToken, isReadOnly }: { assistant: Assista
         // Ignore polling errors
       }
     }, 4000)
-  }, [assistant.id, stopPolling, updateIntegrationForAssistant])
+  }, [assistant.id, qs, stopPolling, updateIntegrationForAssistant])
 
   useEffect(() => {
     return () => stopPolling()
@@ -291,6 +291,7 @@ function BaileysForm({ assistant, shareToken, isReadOnly }: { assistant: Assista
                         Escaneie o QR Code abaixo com o WhatsApp no seu celular.
                       </p>
                       <div className="p-4 bg-white rounded-xl">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img
                           src={qrCode.startsWith('data:') ? qrCode : `data:image/png;base64,${qrCode}`}
                           alt="WhatsApp QR Code"
@@ -418,7 +419,7 @@ function MetaOfficialForm({ assistant, shareToken, isReadOnly }: { assistant: As
           webhookVerifyToken: data.webhookVerifyToken,
           status: res.status === 'connected' ? 'connected' : 'disconnected',
         })
-      } catch (err) {
+      } catch {
         setError('Access Token ou Phone Number ID inválido. Verifique as credenciais no Meta Dashboard.')
         updateIntegrationForAssistant(assistant.id, {
           id: integrationId,
@@ -517,100 +518,6 @@ function MetaOfficialForm({ assistant, shareToken, isReadOnly }: { assistant: As
         </div>
       )}
     </Form>
-  )
-}
-
-// --- Telegram Section ---
-
-const telegramSchema = z.object({
-  token: z.string().min(1, 'Token do Bot é obrigatório'),
-})
-type TelegramFormData = z.infer<typeof telegramSchema>
-
-function TelegramSection({ assistant, shareToken, isReadOnly }: { assistant: Assistant; shareToken?: string; isReadOnly?: boolean }) {
-  const qs = shareToken ? `?share_token=${encodeURIComponent(shareToken)}` : ''
-  const { updateIntegrationForAssistant } = useAssistantStore()
-  const telegram = assistant.integrations?.find(i => i.provider === 'telegram')
-  const isConnected = telegram?.status === 'connected'
-  const [saving, setSaving] = useState(false)
-
-  const { control, handleSubmit, formState: { errors } } = useForm<TelegramFormData>({
-    resolver: zodResolver(telegramSchema),
-    defaultValues: { token: telegram?.token || '' },
-  })
-
-  const onSave = async (data: TelegramFormData) => {
-    setSaving(true)
-    try {
-      await apiFetch(`/api/assistants/${assistant.id}/integrations${qs}`, {
-        method: 'POST',
-        body: JSON.stringify({ provider: 'telegram', token: data.token }),
-      })
-      updateIntegrationForAssistant(assistant.id, {
-        provider: 'telegram',
-        status: 'connected',
-        token: data.token,
-      })
-    } catch (err) {
-      console.error('Telegram save failed:', err)
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  const onDisconnect = async () => {
-    try {
-      const integrationId = telegram?.id || 'telegram'
-      await apiFetch(`/api/assistants/${assistant.id}/integrations/${integrationId}${qs}`, { method: 'DELETE' })
-    } catch (err) {
-      console.error('Telegram disconnect failed:', err)
-    }
-    updateIntegrationForAssistant(assistant.id, {
-      provider: 'telegram',
-      status: 'disconnected',
-      token: '',
-    })
-  }
-
-  return (
-    <Card className="p-6">
-      <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 bg-[#0088cc]/10 text-[#0088cc] rounded-xl flex items-center justify-center text-lg font-bold">
-            TG
-          </div>
-          <div>
-            <h4 className="font-semibold text-foreground">Bot do Telegram</h4>
-            <p className="text-xs text-muted">Conectar via Bot API (@BotFather)</p>
-          </div>
-        </div>
-        <StatusBadge connected={isConnected} />
-      </div>
-
-      <Form onSubmit={handleSubmit(onSave)} className="flex flex-col gap-4">
-        <Controller
-          name="token"
-          control={control}
-          render={({ field }) => (
-            <TextField className="w-full" isInvalid={!!errors.token}>
-              <Label>Token do Bot</Label>
-              <Input {...field} type="password" placeholder="123456789:ABCDEF..." />
-              {errors.token && <FieldError>{errors.token.message}</FieldError>}
-            </TextField>
-          )}
-        />
-        {!isReadOnly && (
-          <div className="flex justify-end gap-2 mt-2">
-            {isConnected && (
-              <Button variant="danger" onPress={onDisconnect}>Desconectar</Button>
-            )}
-            <button type="submit" className="btn-neu text-sm" disabled={saving}>
-              {saving ? 'Salvando...' : isConnected ? 'Atualizar' : 'Salvar e Conectar'}
-            </button>
-          </div>
-        )}
-      </Form>
-    </Card>
   )
 }
 

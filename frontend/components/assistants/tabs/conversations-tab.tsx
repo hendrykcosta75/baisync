@@ -49,6 +49,7 @@ function SummaryProviderPicker({ onGenerate, isGenerating }: { onGenerate: (prov
 
   useEffect(() => {
     if (models.length > 0 && !models.includes(model)) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setModel(models[0])
     }
   }, [models, model])
@@ -131,7 +132,7 @@ function SummaryProviderPicker({ onGenerate, isGenerating }: { onGenerate: (prov
   )
 }
 
-export function ConversationsTab({ assistant, shareToken, isReadOnly }: ConversationsTabProps) {
+export function ConversationsTab({ assistant, shareToken }: ConversationsTabProps) {
   const qs = shareToken ? `?share_token=${encodeURIComponent(shareToken)}` : ''
   const qsPrefix = shareToken ? `share_token=${encodeURIComponent(shareToken)}&` : ''
   const [search, setSearch] = useState('')
@@ -162,7 +163,7 @@ export function ConversationsTab({ assistant, shareToken, isReadOnly }: Conversa
     return { items: res.items || [], cursor: res.cursor }
   }, [assistant.id, shareToken])
 
-  const { items: conversations, setItems: setConversations, isLoading: isLoadingConversations, isLoadingMore, hasMore, sentinelRef, reset: resetConversations } = useInfiniteScroll<Conversation>({
+  const { items: conversations, setItems: setConversations, isLoading: isLoadingConversations, isLoadingMore, hasMore, sentinelRef } = useInfiniteScroll<Conversation>({
     fetchFn: fetchConversations,
   })
 

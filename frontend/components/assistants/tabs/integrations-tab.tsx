@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useEffect } from 'react'
+import React, { useState } from 'react'
 import { Assistant } from '@/types/assistant'
 import { Button, Input, Form } from '@heroui/react'
 import { Send, MessageSquare, Settings, MoreVertical, ChevronDown, ChevronUp } from 'lucide-react'
@@ -38,12 +38,8 @@ export function IntegrationsTab({ assistant }: IntegrationsTabProps) {
   const [tToken, setTToken] = useState(telegramIntegration?.token || '')
   const [cUrl, setCUrl] = useState(whatsappIntegration?.chatwootUrl || '')
   const [cToken, setCToken] = useState(whatsappIntegration?.token || '')
-  const [origin, setOrigin] = useState('')
+  const origin = typeof window !== 'undefined' ? window.location.origin : ''
   const [expandedCard, setExpandedCard] = useState<'telegram' | 'whatsapp' | null>(null)
-
-  useEffect(() => {
-    setOrigin(window.location.origin)
-  }, [])
 
   const handleSaveTelegram = (e: React.FormEvent) => {
     e.preventDefault()

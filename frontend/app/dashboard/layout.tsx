@@ -74,6 +74,7 @@ export default function DashboardLayout({
   }, [])
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setMounted(true)
     const saved = localStorage.getItem('sidebar-width')
     if (saved) {

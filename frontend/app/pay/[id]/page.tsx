@@ -19,6 +19,53 @@ interface ChargeInfo {
   installments: number  // 1-12
 }
 
+// Stripe SDK types (loaded via <Script> tag, not an npm package)
+interface StripeInstance {
+  elements(options: { clientSecret: string; appearance: Record<string, unknown> }): StripeElements
+  confirmPayment(options: {
+    elements: StripeElements
+    confirmParams: { return_url: string }
+    redirect: string
+  }): Promise<{ error?: { decline_code?: string; code?: string; message?: string } }>
+}
+
+interface StripeElements {
+  create(type: string): { mount(selector: string): void }
+}
+
+// MercadoPago SDK types (loaded via <Script> tag)
+interface MpBrickInstance {
+  unmount?: () => void
+}
+
+interface MpCardFormData {
+  token: string
+  issuer_id: string
+  payment_method_id: string
+  transaction_amount: number
+  installments: number
+  payer: { email: string; identification: { type: string; number: string } }
+}
+
+interface MpBrickError {
+  message?: string
+  cause?: string
+}
+
+interface MpBricksBuilder {
+  create(type: string, id: string, opts: Record<string, unknown>): Promise<MpBrickInstance>
+}
+
+interface MpSdk {
+  bricks(): MpBricksBuilder
+}
+
+// Window augmentation for externally loaded SDKs
+interface WindowWithPaymentSdks {
+  Stripe?: (key: string) => StripeInstance
+  MercadoPago?: new (key: string, opts: { locale: string }) => MpSdk
+}
+
 export default function PayPage() {
   const params = useParams()
   const chargeId = params?.id as string
@@ -56,9 +103,9 @@ export default function PayPage() {
   }
 
   // Refs for SDK instances
-  const stripeRef = useRef<any>(null)
-  const stripeElementsRef = useRef<any>(null)
-  const mpBrickRef = useRef<any>(null)
+  const stripeRef = useRef<StripeInstance | null>(null)
+  const stripeElementsRef = useRef<StripeElements | null>(null)
+  const mpBrickRef = useRef<MpBrickInstance | null>(null)
   const mpContainerRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -77,9 +124,10 @@ export default function PayPage() {
   const initStripe = () => {
     if (!charge || charge.cardMode !== 'stripe' || !charge.clientSecret || !charge.publicKey) return
     if (stripeRef.current) return // already initialized
-    if (!(window as any).Stripe) return
+    const w = window as unknown as WindowWithPaymentSdks
+    if (!w.Stripe) return
 
-    const stripe = (window as any).Stripe(charge.publicKey)
+    const stripe = w.Stripe(charge.publicKey)
     stripeRef.current = stripe
 
     const elements = stripe.elements({
@@ -99,9 +147,10 @@ export default function PayPage() {
   const initMercadoPago = () => {
     if (!charge || charge.cardMode !== 'mercadopago' || !charge.publicKey) return
     if (mpBrickRef.current) return
-    if (!(window as any).MercadoPago) return
+    const w = window as unknown as WindowWithPaymentSdks
+    if (!w.MercadoPago) return
 
-    const mp = new (window as any).MercadoPago(charge.publicKey, { locale: 'pt-BR' })
+    const mp = new w.MercadoPago(charge.publicKey, { locale: 'pt-BR' })
     const bricksBuilder = mp.bricks()
 
     const isDebit = charge.paymentType === 'debit'
@@ -123,7 +172,7 @@ export default function PayPage() {
       },
       callbacks: {
         onReady: () => {},
-        onSubmit: async (cardFormData: any) => {
+        onSubmit: async (cardFormData: MpCardFormData) => {
           setPaymentStatus('processing')
           try {
             const apiUrl = process.env.NEXT_PUBLIC_API_URL || ''
@@ -151,7 +200,7 @@ export default function PayPage() {
             setPaymentError('Falha na conexao. Verifique sua internet e tente novamente.')
           }
         },
-        onError: (err: any) => {
+        onError: (err: MpBrickError) => {
           console.error('MP Brick error:', JSON.stringify(err, null, 2))
           // Don't show error for non-critical brick errors (tracking, etc.)
           if (err?.message || err?.cause) {
@@ -160,7 +209,7 @@ export default function PayPage() {
           }
         },
       },
-    }).then((brick: any) => {
+    }).then((brick: MpBrickInstance) => {
       mpBrickRef.current = brick
     })
   }

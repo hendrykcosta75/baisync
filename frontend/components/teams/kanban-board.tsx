@@ -10,7 +10,6 @@ import {
   useSensors,
   type DragStartEvent,
   type DragEndEvent,
-  type DragOverEvent,
 } from '@dnd-kit/core'
 import { arrayMove } from '@dnd-kit/sortable'
 import { Filter, CalendarDays } from 'lucide-react'
@@ -124,7 +123,7 @@ export function KanbanBoard({ teamId, onCreateTask, onTaskClick }: KanbanBoardPr
     [filteredTasks]
   )
 
-  const handleDragOver = useCallback((_event: DragOverEvent) => {
+  const handleDragOver = useCallback(() => {
     // Visual feedback is handled by useDroppable isOver state in KanbanColumn
   }, [])
 

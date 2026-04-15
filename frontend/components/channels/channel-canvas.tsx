@@ -21,12 +21,16 @@ export function ChannelCanvas({ channelId, canvasId }: { channelId: string; canv
   const currentDataRef = useRef('')
   const channelIdRef = useRef(channelId)
   const canvasIdRef = useRef(canvasId)
-  channelIdRef.current = channelId
-  canvasIdRef.current = canvasId
+
+  useEffect(() => {
+    channelIdRef.current = channelId
+    canvasIdRef.current = canvasId
+  }, [channelId, canvasId])
 
   // Load canvas data
   useEffect(() => {
     let cancelled = false
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true)
     currentDataRef.current = ''
     lastSavedRef.current = ''

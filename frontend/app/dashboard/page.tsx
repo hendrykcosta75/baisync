@@ -1,7 +1,7 @@
 'use client'
 
-import React, { useEffect, useRef, useState } from 'react'
-import { Card, Button } from '@heroui/react'
+import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react'
+import { Button } from '@heroui/react'
 import { AlertTriangle, InboxIcon, Bot, Link2, FileText, Wrench, MessageSquare, Hash, Clock, BarChart3, Settings, Check, X } from 'lucide-react'
 import Link from 'next/link'
 import { useAssistantStore } from '@/store/useAssistantStore'
@@ -298,6 +298,23 @@ function UsageChart({ data, loading, error }: { data: DailyUsage[]; loading: boo
 
 function PieChart({ data }: { data: { label: string; value: number; color: string }[] }) {
   const total = data.reduce((acc, d) => acc + d.value, 0)
+
+  const r = 70
+  const cx = 90
+  const cy = 90
+  const circumference = 2 * Math.PI * r
+
+  const positiveData = data.filter(d => d.value > 0)
+  const cumulativeOffsets = useMemo(() => {
+    const offsets: number[] = []
+    let cum = 0
+    for (const d of positiveData) {
+      offsets.push(cum)
+      cum += (d.value / total) * circumference
+    }
+    return offsets
+  }, [positiveData, total, circumference])
+
   if (total === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-10 text-center">
@@ -307,22 +324,15 @@ function PieChart({ data }: { data: { label: string; value: number; color: strin
     )
   }
 
-  const r = 70
-  const cx = 90
-  const cy = 90
-  const circumference = 2 * Math.PI * r
-  let cumulativeOffset = 0
-
   return (
     <div className="flex flex-col items-center gap-5">
       <svg width={180} height={180} viewBox="0 0 180 180">
         <circle cx={cx} cy={cy} r={r} fill="none" stroke="rgba(255,255,255,0.04)" strokeWidth={14} />
-        {data.filter(d => d.value > 0).map((d, i) => {
+        {positiveData.map((d, i) => {
           const pct = d.value / total
           const dashLen = pct * circumference
           const dashGap = circumference - dashLen
-          const offset = -cumulativeOffset
-          cumulativeOffset += dashLen
+          const offset = -cumulativeOffsets[i]
           return (
             <circle
               key={i}
@@ -628,7 +638,7 @@ export default function DashboardPage() {
     if (!hasFetched) fetchAssistants()
   }, [hasFetched, fetchAssistants])
 
-  const loadStats = useRef(async () => {
+  const loadStats = useCallback(async () => {
     const currentAssistants = useAssistantStore.getState().assistants
     const [usageRes, activityRes] = await Promise.allSettled([
       apiFetch<DailyUsage[]>(`/api/user/usage?days=14&dates=${generateLocalDates(14)}`),
@@ -669,10 +679,11 @@ export default function DashboardPage() {
       }
     }
     setStatsLoading(false)
-  }).current
+  }, [])
 
   useEffect(() => {
     if (!hasFetched) return
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     loadStats()
   }, [hasFetched, loadStats])
 

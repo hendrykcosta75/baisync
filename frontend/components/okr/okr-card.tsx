@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useState, useEffect, useRef } from 'react'
-import { Target, ChevronDown, ChevronRight, Plus, GitBranch, Trash2, Paperclip, Download, X as XIcon } from 'lucide-react'
+import { Target, ChevronDown, ChevronRight, Plus, GitBranch, Trash2, Paperclip, X as XIcon } from 'lucide-react'
 import { OKR_TYPE_CONFIG, getConfidenceColor, getProgressPercent } from '@/types/okr'
 import type { OkrObjective, OkrObjectiveByCycle, OkrKeyResult, OkrObjectiveType, OkrStatus, OkrAttachment } from '@/types/okr'
 import { useOkrStore } from '@/store/useOkrStore'

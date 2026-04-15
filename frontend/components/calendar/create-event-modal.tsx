@@ -1,7 +1,7 @@
 'use client'
 
 import React from 'react'
-import { Modal, Button, Input, TextArea, Select, ListBox, TextField, Label } from '@heroui/react'
+import { Modal, Input, TextArea, Select, ListBox, TextField, Label } from '@heroui/react'
 import { useForm, Controller } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'

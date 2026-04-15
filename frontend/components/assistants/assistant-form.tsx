@@ -4,7 +4,7 @@ import React, { useEffect, useState } from 'react'
 import { useForm, Controller } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
-import { Button, Form, Input, Label, TextArea, Select, ListBox, Slider, TextField, FieldError, Spinner, Modal } from '@heroui/react'
+import { Form, Input, Label, TextArea, Select, ListBox, Slider, TextField, FieldError, Spinner, Modal } from '@heroui/react'
 import { Maximize2 } from 'lucide-react'
 import { Assistant, LLMProvider } from '@/types/assistant'
 import { useModels } from '@/lib/useModels'
@@ -55,6 +55,7 @@ export function AssistantForm({ initialData, onSubmit, onCancel, assistantId, sh
     }
   })
 
+  // eslint-disable-next-line react-hooks/incompatible-library
   const selectedProvider = watch('llmProvider') as LLMProvider
   const selectedModel = watch('model')
   const { models: availableModels, isLoading: modelsLoading, hasApiKey } = useModels(

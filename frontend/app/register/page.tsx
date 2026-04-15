@@ -50,7 +50,7 @@ export default function RegisterPage() {
     clearError()
     try {
       await registerUser(data.email, data.password, data.name)
-      window.location.href = '/dashboard'
+      router.push('/dashboard')
     } catch {
       // error is set in store
     }

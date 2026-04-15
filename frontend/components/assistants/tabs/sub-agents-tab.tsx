@@ -52,13 +52,14 @@ export function SubAgentsTab({ assistant }: SubAgentsTabProps) {
     defaultValues,
   })
 
+  // eslint-disable-next-line react-hooks/incompatible-library
   const watchInheritPrompt = watch('inheritPrompt')
   const watchLlmProvider = watch('llmProvider')
 
   const selectedProvider = watchLlmProvider && watchLlmProvider !== 'inherit'
     ? watchLlmProvider as LLMProvider
     : 'openai'
-  const { models: fetchedModels, isLoading: modelsLoading } = useModels(selectedProvider)
+  const { models: fetchedModels } = useModels(selectedProvider)
   const availableModels = watchLlmProvider && watchLlmProvider !== 'inherit'
     ? fetchedModels
     : []
@@ -120,7 +121,7 @@ export function SubAgentsTab({ assistant }: SubAgentsTabProps) {
           </div>
           <Switch
             isSelected={isTeamLead}
-            onChange={(isChecked: any) => {
+            onChange={(isChecked: React.ChangeEvent<HTMLInputElement> | boolean) => {
               const val = typeof isChecked === 'boolean' ? isChecked : isChecked.target.checked
               handleToggleTeamLead(val)
             }}
@@ -246,7 +247,7 @@ export function SubAgentsTab({ assistant }: SubAgentsTabProps) {
                           <Label>Herdar prompt do principal</Label>
                           <Switch
                             isSelected={field.value}
-                            onChange={(isChecked: any) => {
+                            onChange={(isChecked: React.ChangeEvent<HTMLInputElement> | boolean) => {
                               const val = typeof isChecked === 'boolean' ? isChecked : isChecked.target.checked
                               field.onChange(val)
                             }}
@@ -276,7 +277,7 @@ export function SubAgentsTab({ assistant }: SubAgentsTabProps) {
                           <Label>Herdar conhecimento do principal</Label>
                           <Switch
                             isSelected={field.value}
-                            onChange={(isChecked: any) => {
+                            onChange={(isChecked: React.ChangeEvent<HTMLInputElement> | boolean) => {
                               const val = typeof isChecked === 'boolean' ? isChecked : isChecked.target.checked
                               field.onChange(val)
                             }}
@@ -293,7 +294,7 @@ export function SubAgentsTab({ assistant }: SubAgentsTabProps) {
                           <Label>Herdar ferramentas do principal</Label>
                           <Switch
                             isSelected={field.value}
-                            onChange={(isChecked: any) => {
+                            onChange={(isChecked: React.ChangeEvent<HTMLInputElement> | boolean) => {
                               const val = typeof isChecked === 'boolean' ? isChecked : isChecked.target.checked
                               field.onChange(val)
                             }}

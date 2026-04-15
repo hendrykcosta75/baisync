@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useState, useEffect } from 'react'
-import { Modal, Button } from '@heroui/react'
+import { Modal } from '@heroui/react'
 import { useApiKeysStore } from '@/store/useApiKeysStore'
 import { Settings, MoreVertical, Eye, EyeOff, Trash2, TestTube, Save, ChevronDown } from 'lucide-react'
 import { PageTransition, StaggerContainer, StaggerItem } from '@/lib/motion'
@@ -45,6 +45,7 @@ function ElevenLabsLogo() {
 
 function MercadoPagoLogo() {
   return (
+    // eslint-disable-next-line @next/next/no-img-element
     <img
       src="/Logo-MercadoPago.png"
       alt="Mercado Pago"

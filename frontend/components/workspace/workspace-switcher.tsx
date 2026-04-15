@@ -9,7 +9,7 @@ const mono = "'JetBrains Mono', 'Fira Code', monospace"
 
 export function WorkspaceSwitcher({ collapsed }: { collapsed: boolean }) {
   const { workspaces, activeWorkspace, fetchWorkspaces, switchWorkspace, createWorkspace } = useWorkspaceStore()
-  const { user } = useAuthStore()
+  useAuthStore()
   const [isOpen, setIsOpen] = useState(false)
   const [showCreate, setShowCreate] = useState(false)
   const [newName, setNewName] = useState('')

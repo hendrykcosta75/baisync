@@ -1,6 +1,6 @@
 'use client'
 
-import { Modal, Button } from '@heroui/react'
+import { Modal } from '@heroui/react'
 import { AlertTriangle } from 'lucide-react'
 import { useErrorStore } from '@/store/useErrorStore'
 

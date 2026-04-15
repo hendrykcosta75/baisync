@@ -1,6 +1,6 @@
 'use client'
 
-import React, { Suspense, useEffect, useState } from 'react'
+import React, { Suspense, useCallback, useEffect, useState } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import { Button } from '@heroui/react'
 import { apiFetch } from '@/lib/api'
@@ -19,22 +19,7 @@ function WorkspaceInviteContent() {
   const [workspaceName, setWorkspaceName] = useState('')
   const [error, setError] = useState('')
 
-  useEffect(() => {
-    if (!token) {
-      setStatus('error')
-      setError('Token de convite não encontrado')
-      return
-    }
-
-    if (!isAuthenticated) {
-      router.replace(`/login?redirect=/workspace-invite?token=${token}`)
-      return
-    }
-
-    acceptInvite()
-  }, [token, isAuthenticated])
-
-  const acceptInvite = async () => {
+  const acceptInvite = useCallback(async () => {
     try {
       const data = await apiFetch<{ workspace: { name: string; id: string }; workspace_id: string }>(
         `/api/workspace-invites/${token}/accept`,
@@ -53,7 +38,23 @@ function WorkspaceInviteContent() {
       setStatus('error')
       setError(err instanceof Error ? err.message : 'Falha ao aceitar convite')
     }
-  }
+  }, [token])
+
+  useEffect(() => {
+    if (!token) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setStatus('error')
+      setError('Token de convite não encontrado')
+      return
+    }
+
+    if (!isAuthenticated) {
+      router.replace(`/login?redirect=/workspace-invite?token=${token}`)
+      return
+    }
+
+    acceptInvite()
+  }, [token, isAuthenticated, acceptInvite, router])
 
   return (
     <div

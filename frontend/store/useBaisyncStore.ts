@@ -535,6 +535,7 @@ export const useBaisyncStore = create<BaisyncState>()(
     partialize: (state) => ({
       messages: state.messages
         .filter((m) => m.role !== 'status')
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
         .map(({ actions, attachments, ...rest }) => ({
           ...rest,
           attachments: attachments?.map(({ name, mime_type }) => ({ name, mime_type, data_base64: '' })),

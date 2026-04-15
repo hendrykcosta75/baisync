@@ -94,7 +94,7 @@ export function ChatTab({ assistant, shareToken }: ChatTabProps) {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
-  const sendMessageToPlayground = async (text: string): Promise<ChatResponse> => {
+  const sendMessageToPlayground = useCallback(async (text: string): Promise<ChatResponse> => {
     const url = shareToken
       ? `/api/assistants/${assistant.id}/chat?share_token=${encodeURIComponent(shareToken)}`
       : `/api/assistants/${assistant.id}/chat`
@@ -106,7 +106,7 @@ export function ChatTab({ assistant, shareToken }: ChatTabProps) {
       setConversationId(res.conversation_id)
     }
     return res
-  }
+  }, [assistant.id, shareToken])
 
   const handleSend = async () => {
     const text = input.trim()
@@ -149,7 +149,7 @@ export function ChatTab({ assistant, shareToken }: ChatTabProps) {
     }
   }
 
-  const clearConversation = async () => {
+  const clearConversation = useCallback(async () => {
     const convId = conversationIdRef.current
     if (convId) {
       try {
@@ -163,7 +163,7 @@ export function ChatTab({ assistant, shareToken }: ChatTabProps) {
     setMessages([])
     setConversationId(null)
     setError(null)
-  }
+  }, [assistant.id])
 
   // Callback for TestPanel: sends a message to the official assistant and returns the reply
   const handleTestSendToPlayground = useCallback(async (message: string): Promise<string | null> => {
@@ -187,12 +187,12 @@ export function ChatTab({ assistant, shareToken }: ChatTabProps) {
     } catch {
       return null
     }
-  }, [assistant.id])
+  }, [sendMessageToPlayground])
 
   // Callback for TestPanel: clears playground conversation
   const handleTestClearPlayground = useCallback(async () => {
     await clearConversation()
-  }, [assistant.id])
+  }, [clearConversation])
 
   return (
     <div className="flex flex-col gap-4 w-full">

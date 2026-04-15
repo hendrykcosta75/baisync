@@ -38,6 +38,7 @@ export function UserAvatar({
       }}
     >
       {canLoadAvatar ? (
+        /* eslint-disable-next-line @next/next/no-img-element */
         <img
           src={`/api/users/${userId}/avatar`}
           alt=""

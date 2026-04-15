@@ -45,7 +45,7 @@ export default function LoginPage() {
     clearError()
     try {
       await login(data.email, data.password)
-      window.location.href = '/dashboard'
+      router.push('/dashboard')
     } catch {
       // error is set in store
     }

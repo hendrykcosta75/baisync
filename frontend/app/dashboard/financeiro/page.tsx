@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useEffect, useState, useCallback } from 'react'
-import { Button, Modal, Spinner } from '@heroui/react'
+import { Modal, Spinner } from '@heroui/react'
 import { Banknote, TrendingUp, Clock, XCircle, CheckCircle2, AlertCircle, ChevronDown, RefreshCw } from 'lucide-react'
 import { useAssistantStore } from '@/store/useAssistantStore'
 import { apiFetch } from '@/lib/api'
@@ -71,7 +71,7 @@ export default function FinanceiroPage() {
   const [chargesResetKey, setChargesResetKey] = useState(0)
   const [refreshing, setRefreshing] = useState(false)
 
-  const { items: charges, setItems: setCharges, isLoading: chargesLoading, isLoadingMore: chargesLoadingMore, hasMore: chargesHasMore, sentinelRef: chargesSentinelRef, reset: resetCharges } = useInfiniteScroll<PixChargeSummary>({
+  const { items: charges, setItems: setCharges, isLoading: chargesLoading, isLoadingMore: chargesLoadingMore, hasMore: chargesHasMore, sentinelRef: chargesSentinelRef } = useInfiniteScroll<PixChargeSummary>({
     fetchFn: fetchCharges,
     enabled: !!chargesAssistantId,
     resetKey: `${chargesAssistantId}-${statusFilter}-${chargesResetKey}`,

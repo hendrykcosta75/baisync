@@ -119,6 +119,7 @@ export function Sidebar({
   const pathname = usePathname()
   const { logout } = useAuthStore()
   const dragRef = useRef<{ startX: number; startWidth: number } | null>(null)
+  const [isDragging, setIsDragging] = useState(false)
 
   const collapsed = width <= COLLAPSE_THRESHOLD
 
@@ -160,6 +161,7 @@ export function Sidebar({
         for (const group of section.groups) {
           if (group.links.some((l) => pathname === l.href)) {
             const key = `${section.label}/${group.label}`
+            // eslint-disable-next-line react-hooks/set-state-in-effect
             setExpandedGroups((prev) => ({ ...prev, [key]: true }))
           }
         }
@@ -174,6 +176,7 @@ export function Sidebar({
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault()
     dragRef.current = { startX: e.clientX, startWidth: width }
+    setIsDragging(true)
     document.body.style.cursor = 'col-resize'
     document.body.style.userSelect = 'none'
   }, [width])
@@ -189,6 +192,7 @@ export function Sidebar({
       if (!dragRef.current) return
       const movedDelta = Math.abs(e.clientX - dragRef.current.startX)
       dragRef.current = null
+      setIsDragging(false)
       document.body.style.cursor = ''
       document.body.style.userSelect = ''
       if (movedDelta < 5) {
@@ -236,7 +240,7 @@ export function Sidebar({
           WebkitBackdropFilter: 'blur(40px)',
           boxShadow: '4px 0 24px rgba(0,0,0,0.4), 1px 0 0 rgba(255,255,255,0.02)',
           width: typeof window !== 'undefined' && window.innerWidth >= 1024 ? width : 240,
-          transition: dragRef.current ? 'none' : 'width 0.2s ease',
+          transition: isDragging ? 'none' : 'width 0.2s ease',
         }}
       >
         {/* Workspace Switcher (primary element) */}

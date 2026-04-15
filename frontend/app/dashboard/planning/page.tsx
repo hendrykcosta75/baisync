@@ -10,7 +10,6 @@ import { ObjectiveFormModal } from '@/components/okr/objective-form-modal'
 import { KrFormModal } from '@/components/okr/kr-form-modal'
 import { PageTransition, StaggerContainer, StaggerItem } from '@/lib/motion'
 import { Target, Plus, TrendingUp, AlertTriangle, XCircle } from 'lucide-react'
-import type { OkrObjective, OkrObjectiveByCycle } from '@/types/okr'
 
 const mono = "'JetBrains Mono', 'Fira Code', monospace"
 

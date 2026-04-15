@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useEffect, useState, useRef, useCallback } from 'react'
+import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react'
 import { useChannelStore, type Channel, type ChannelNote } from '@/store/useChannelStore'
 import { useWorkspaceStore } from '@/store/useWorkspaceStore'
 import { useAuthStore } from '@/store/useAuthStore'
@@ -131,7 +131,7 @@ function Section({
 
 // ─── Channel Settings Modal ───
 function ChannelSettingsModal({ channel, onClose }: { channel: Channel; onClose: () => void }) {
-  const { updateChannel, deleteChannel, fetchMembers, members, addChannelMember, removeChannelMember, setActiveChannel } = useChannelStore()
+  const { updateChannel, deleteChannel, fetchMembers, members, addChannelMember, removeChannelMember } = useChannelStore()
   const { members: wsMembers } = useWorkspaceStore()
   const { user } = useAuthStore()
   const { showError } = useErrorStore()
@@ -623,16 +623,11 @@ function MarkdownContextMenu({
   const menuRef = useRef<HTMLDivElement>(null)
 
   // Reposition if near edge
-  const [adjustedPos, setAdjustedPos] = useState(pos)
-  useEffect(() => {
-    if (!menuRef.current) return
-    const rect = menuRef.current.getBoundingClientRect()
+  const adjustedPos = useMemo(() => {
     let x = pos.x, y = pos.y
-    if (x + rect.width > window.innerWidth - 10) x = window.innerWidth - rect.width - 10
-    if (y + rect.height > window.innerHeight - 10) y = window.innerHeight - rect.height - 10
     if (x < 10) x = 10
     if (y < 10) y = 10
-    setAdjustedPos({ x, y })
+    return { x, y }
   }, [pos])
 
   return (
@@ -704,6 +699,7 @@ function NotesEditor({
 
   // Sync from prop when note changes
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setContent(note.content)
   }, [note.id, note.content])
 
@@ -1136,7 +1132,7 @@ function ChannelTabs({
 function MessageArea() {
   const {
     activeChannel, messages, nextCursor, isLoading,
-    sendMessage, fetchMessages, markRead, notes,
+    sendMessage, fetchMessages, notes,
   } = useChannelStore()
   const { user } = useAuthStore()
   const [input, setInput] = useState('')
@@ -1148,6 +1144,7 @@ function MessageArea() {
 
   // Reset tab when switching channels
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setActiveTab('messages')
   }, [activeChannel?.id])
 

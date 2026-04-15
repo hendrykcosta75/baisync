@@ -113,18 +113,14 @@ function AssistantCard({ block }: UIBlockProps) {
 
 export function BaisyncUIBlockRenderer({ block }: UIBlockProps) {
   if (!block || !block.type) return null
-  try {
-    switch (block.type) {
-      case 'question_box':
-        return <QuestionBox block={block} />
-      case 'qr_code':
-        return <QRCodeDisplay block={block} />
-      case 'assistant_card':
-        return <AssistantCard block={block} />
-      default:
-        return null
-    }
-  } catch {
-    return null
+  switch (block.type) {
+    case 'question_box':
+      return <QuestionBox block={block} />
+    case 'qr_code':
+      return <QRCodeDisplay block={block} />
+    case 'assistant_card':
+      return <AssistantCard block={block} />
+    default:
+      return null
   }
 }
