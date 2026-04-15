@@ -18,6 +18,7 @@ pub mod okrs;
 pub mod openai_audio;
 pub mod strategy_map;
 pub mod swot;
+pub mod swot_interview;
 
 pub mod card_payment;
 pub mod pix;

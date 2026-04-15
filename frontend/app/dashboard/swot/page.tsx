@@ -1,10 +1,13 @@
 'use client'
 
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useState, useCallback } from 'react'
 import { useSwotStore, type SwotItem } from '@/store/useSwotStore'
 import { useWorkspaceStore } from '@/store/useWorkspaceStore'
 import { PageTransition, StaggerContainer, StaggerItem } from '@/lib/motion'
-import { Plus, Crosshair, Trash2, X } from 'lucide-react'
+import { Plus, Crosshair, Trash2, X, Sparkles } from 'lucide-react'
+import dynamic from 'next/dynamic'
+
+const SwotInterview = dynamic(() => import('@/components/swot/swot-interview'), { ssr: false })
 
 const mono = "'JetBrains Mono', 'Fira Code', monospace"
 
@@ -24,6 +27,21 @@ export default function SwotPage() {
   const [newTitle, setNewTitle] = useState('')
   const [newItemContent, setNewItemContent] = useState('')
   const [addingTo, setAddingTo] = useState<string | null>(null)
+  const [interviewActive, setInterviewActive] = useState(false)
+
+  const handleSwotCreated = useCallback(async (data: { title: string; items: { quadrant: string; content: string }[] }) => {
+    if (!wsId) return
+    try {
+      const analysis = await createAnalysis(wsId, { title: data.title })
+      for (const item of data.items) {
+        await createItem(analysis.id, { quadrant: item.quadrant, content: item.content })
+      }
+      await getAnalysis(wsId, analysis.id)
+      setInterviewActive(false)
+    } catch (err) {
+      console.error('Error creating SWOT from interview:', err)
+    }
+  }, [wsId, createAnalysis, createItem, getAnalysis])
 
   useEffect(() => {
     if (wsId) {
@@ -68,14 +86,48 @@ export default function SwotPage() {
                 </h1>
                 <p className="text-subtle text-sm mt-1">Análise de forças, fraquezas, oportunidades e ameaças</p>
               </div>
-              <button className="btn-neu btn-neu-lg px-5 py-2.5 rounded-xl font-medium flex items-center gap-2" onClick={() => setShowCreateModal(true)}>
-                <Plus size={16} />
-                Nova Análise
-              </button>
+              <div className="flex items-center gap-2.5">
+                <button
+                  className="relative overflow-hidden px-5 py-2.5 rounded-xl font-semibold flex items-center gap-2 text-sm transition-all duration-200"
+                  style={{
+                    color: interviewActive ? 'var(--text-subtle)' : '#ff6b2c',
+                    background: '#161616',
+                    boxShadow: interviewActive
+                      ? 'inset 2px 2px 6px rgba(0,0,0,0.5), inset -2px -2px 4px rgba(255,255,255,0.035)'
+                      : '3px 3px 8px rgba(0,0,0,0.5), -2px -2px 6px rgba(255,255,255,0.035)',
+                  }}
+                  onClick={() => setInterviewActive(!interviewActive)}
+                >
+                  {!interviewActive && (
+                    <span
+                      className="absolute inset-0"
+                      style={{
+                        background: 'linear-gradient(90deg, transparent, rgba(255,107,44,0.06), transparent)',
+                        animation: 'shimmer 4s infinite',
+                      }}
+                    />
+                  )}
+                  {interviewActive ? <X size={15} /> : <Sparkles size={15} />}
+                  {interviewActive ? 'Cancelar' : 'Entrevista com IA'}
+                </button>
+                <button className="btn-neu btn-neu-lg px-5 py-2.5 rounded-xl font-medium flex items-center gap-2" onClick={() => setShowCreateModal(true)}>
+                  <Plus size={16} />
+                  Nova Analise
+                </button>
+              </div>
             </div>
           </StaggerItem>
 
-          {isLoading && analyses.length === 0 ? (
+          {interviewActive ? (
+            <StaggerItem>
+              <div className="flex flex-col" style={{ minHeight: 480, height: 'calc(100vh - 230px)' }}>
+                <SwotInterview
+                  onClose={() => setInterviewActive(false)}
+                  onSwotCreated={handleSwotCreated}
+                />
+              </div>
+            </StaggerItem>
+          ) : isLoading && analyses.length === 0 ? (
             <StaggerItem>
               <div className="flex items-center justify-center py-20">
                 <span className="text-subtle text-sm" style={{ fontFamily: mono }}>Carregando...</span>
@@ -87,11 +139,11 @@ export default function SwotPage() {
                 <div className="w-16 h-16 rounded-xl bg-raised flex items-center justify-center mb-6">
                   <Crosshair size={28} className="text-subtle" />
                 </div>
-                <h3 className="text-lg font-semibold text-heading" style={{ fontFamily: mono }}>Crie sua primeira análise SWOT</h3>
+                <h3 className="text-lg font-semibold text-heading" style={{ fontFamily: mono }}>Crie sua primeira analise SWOT</h3>
                 <p className="text-subtle text-sm mt-2 max-w-sm mb-6">Avalie fatores internos e externos que afetam seu workspace.</p>
                 <button className="btn-neu btn-neu-lg px-5 py-2.5 rounded-xl font-medium flex items-center gap-2" onClick={() => setShowCreateModal(true)}>
                   <Plus size={16} />
-                  Nova Análise
+                  Nova Analise
                 </button>
               </div>
             </StaggerItem>

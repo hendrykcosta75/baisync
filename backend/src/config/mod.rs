@@ -17,6 +17,8 @@ pub struct Config {
     pub admin_user: String,
     pub admin_password: String,
     pub meta_app_secret: String,
+    pub elevenlabs_api_key: String,
+    pub elevenlabs_voice_id: String,
 }
 
 impl Config {
@@ -43,6 +45,9 @@ impl Config {
             admin_user: env::var("ADMIN_USER").unwrap_or_default(),
             admin_password: env::var("ADMIN_PASSWORD").unwrap_or_default(),
             meta_app_secret: env::var("META_APP_SECRET").unwrap_or_default(),
+            elevenlabs_api_key: env::var("ELEVENLABS_API_KEY").unwrap_or_default(),
+            elevenlabs_voice_id: env::var("ELEVENLABS_VOICE_ID")
+                .unwrap_or_else(|_| "21m00Tcm4TlvDq8ikWAM".into()),
         }
     }
 }

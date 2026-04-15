@@ -530,6 +530,20 @@ pub fn build_router(
             "/api/swot/{id}/items/{item_id}",
             put(handlers::swot::update_item).delete(handlers::swot::delete_item),
         )
+        // SWOT Interview
+        .route(
+            "/api/workspaces/{id}/swot/interview/chat",
+            post(handlers::swot_interview::interview_chat),
+        )
+        .route(
+            "/api/workspaces/{id}/swot/interview/tts",
+            post(handlers::swot_interview::interview_tts),
+        )
+        .route(
+            "/api/workspaces/{id}/swot/interview/stt",
+            post(handlers::swot_interview::interview_stt)
+                .layer(DefaultBodyLimit::max(11 * 1024 * 1024)),
+        )
         // Playground chat
         .route(
             "/api/assistants/{id}/chat",
