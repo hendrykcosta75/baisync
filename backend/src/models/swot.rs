@@ -53,7 +53,9 @@ pub struct CreateSwotItemRequest {
     pub linked_objective_id: Option<Uuid>,
 }
 
-fn default_priority() -> i32 { 3 }
+fn default_priority() -> i32 {
+    3
+}
 
 #[derive(Debug, Deserialize)]
 pub struct UpdateSwotItemRequest {

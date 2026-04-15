@@ -11,9 +11,8 @@ use crate::db::DbSession;
 use crate::errors::AppError;
 use crate::middleware::auth::AuthUser;
 use crate::models::user::{
-    AuthResponse, ChangePasswordRequest, DeleteAccountRequest, ForgotPasswordRequest,
-    LoginRequest, RegisterRequest, ResetPasswordRequest, UpdateProfileRequest, UserPublic,
-    Verify2FARequest,
+    AuthResponse, ChangePasswordRequest, DeleteAccountRequest, ForgotPasswordRequest, LoginRequest,
+    RegisterRequest, ResetPasswordRequest, UpdateProfileRequest, UserPublic, Verify2FARequest,
 };
 use crate::services::{auth as auth_service, email as email_service};
 
@@ -22,9 +21,14 @@ pub async fn register(
     Extension(config): Extension<Config>,
     Json(req): Json<RegisterRequest>,
 ) -> Result<Json<AuthResponse>, AppError> {
-    let response =
-        auth_service::register_user(&db, &req.email, &req.password, &req.name, &config.jwt_secret)
-            .await?;
+    let response = auth_service::register_user(
+        &db,
+        &req.email,
+        &req.password,
+        &req.name,
+        &config.jwt_secret,
+    )
+    .await?;
     Ok(Json(response))
 }
 
@@ -53,7 +57,8 @@ pub async fn forgot_password(
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     if let Some((user_id,)) = result
-        .into_rows_result()?.maybe_first_row::<(uuid::Uuid,)>()?
+        .into_rows_result()?
+        .maybe_first_row::<(uuid::Uuid,)>()?
     {
         let row = (user_id,);
         let token = auth_service::generate_reset_token();

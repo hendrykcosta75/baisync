@@ -64,8 +64,18 @@ pub async fn create_share_token(
 ) -> Result<Json<ShareTokenInfo>, AppError> {
     let asst = assistant::get_assistant(&db, &auth_user.workspace_id, &assistant_id).await?;
     let token = generate_token();
-    let permissions = req.permissions.clone().unwrap_or_else(|| vec!["read".to_string()]);
-    assistant::set_share_token(&db, &auth_user.workspace_id, &assistant_id, Some(token.clone()), Some(permissions.clone())).await?;
+    let permissions = req
+        .permissions
+        .clone()
+        .unwrap_or_else(|| vec!["read".to_string()]);
+    assistant::set_share_token(
+        &db,
+        &auth_user.workspace_id,
+        &assistant_id,
+        Some(token.clone()),
+        Some(permissions.clone()),
+    )
+    .await?;
 
     if let Some(ref recipient) = req.email {
         let perm_label = permissions.join(", ");
@@ -79,7 +89,13 @@ pub async fn create_share_token(
             token = token,
             perm_label = perm_label
         );
-        let _ = email::send_email(&config, recipient, &format!("Acesso ao assistente {} - Inertial Eclipse", asst.name), &body).await;
+        let _ = email::send_email(
+            &config,
+            recipient,
+            &format!("Acesso ao assistente {} - Inertial Eclipse", asst.name),
+            &body,
+        )
+        .await;
     }
 
     Ok(Json(ShareTokenInfo { token, permissions }))

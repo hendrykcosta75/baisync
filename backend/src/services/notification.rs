@@ -20,7 +20,7 @@ type NotificationRow = (
 
 fn row_to_notification(r: NotificationRow) -> Notification {
     let created_at = chrono::DateTime::<chrono::Utc>::from(
-        std::time::UNIX_EPOCH + std::time::Duration::from_millis(r.8.0 as u64),
+        std::time::UNIX_EPOCH + std::time::Duration::from_millis(r.8 .0 as u64),
     );
     Notification {
         user_id: r.0,
@@ -55,14 +55,19 @@ pub async fn create_notification(
     .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     // Publish SSE event via global bus
-    crate::services::events::publish_global(user_id, crate::services::events::SseEvent {
-        event_type: "notification_created".into(),
-        data: serde_json::json!({
-            "id": id.to_string(),
-            "title": title,
-            "type": notification_type,
-        }).to_string(),
-    }).await;
+    crate::services::events::publish_global(
+        user_id,
+        crate::services::events::SseEvent {
+            event_type: "notification_created".into(),
+            data: serde_json::json!({
+                "id": id.to_string(),
+                "title": title,
+                "type": notification_type,
+            })
+            .to_string(),
+        },
+    )
+    .await;
 
     Ok(Notification {
         user_id: *user_id,

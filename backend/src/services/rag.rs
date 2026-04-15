@@ -56,16 +56,25 @@ fn extract_text(content: &[u8], mime_type: &str) -> Result<String, AppError> {
             let text: String = raw
                 .lines()
                 .filter(|l| !l.starts_with('%') && !l.contains("obj") && !l.contains("endobj"))
-                .filter(|l| l.chars().filter(|c| c.is_alphanumeric() || c.is_whitespace()).count() > l.len() / 2)
+                .filter(|l| {
+                    l.chars()
+                        .filter(|c| c.is_alphanumeric() || c.is_whitespace())
+                        .count()
+                        > l.len() / 2
+                })
                 .collect::<Vec<_>>()
                 .join("\n");
             if text.trim().is_empty() {
-                Err(AppError::BadRequest("Could not extract text from PDF. Try uploading as TXT.".into()))
+                Err(AppError::BadRequest(
+                    "Could not extract text from PDF. Try uploading as TXT.".into(),
+                ))
             } else {
                 Ok(text)
             }
         }
-        _ => Err(AppError::BadRequest(format!("Unsupported file type: {mime_type}"))),
+        _ => Err(AppError::BadRequest(format!(
+            "Unsupported file type: {mime_type}"
+        ))),
     }
 }
 
@@ -164,7 +173,8 @@ pub async fn delete_file(
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     let name = result
-        .into_rows_result().ok()
+        .into_rows_result()
+        .ok()
         .and_then(|r| r.single_row::<(String,)>().ok())
         .map(|r| r.0)
         .unwrap_or_default();

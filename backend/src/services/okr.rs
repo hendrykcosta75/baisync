@@ -7,8 +7,7 @@ use uuid::Uuid;
 use crate::db::{self, DbSession};
 use crate::errors::AppError;
 use crate::models::okr::{
-    OkrAttachment, OkrCheckIn, OkrKeyResult, OkrObjective,
-    OkrObjectiveByCycle, OkrObjectiveChild,
+    OkrAttachment, OkrCheckIn, OkrKeyResult, OkrObjective, OkrObjectiveByCycle, OkrObjectiveChild,
 };
 
 fn ts_now() -> CqlTimestamp {
@@ -50,7 +49,11 @@ pub async fn create_objective(
         }
         set
     };
-    let team_ids_bind = if effective_team_ids.is_empty() { None } else { Some(&effective_team_ids) };
+    let team_ids_bind = if effective_team_ids.is_empty() {
+        None
+    } else {
+        Some(&effective_team_ids)
+    };
 
     db.query_unpaged(
         "INSERT INTO inertial_eclipse.okr_objectives (workspace_id, id, title, description, objective_type, cycle, status, owner_id, team_id, team_ids, parent_objective_id, progress, confidence, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 'on_track', ?, ?, ?, ?, 0.0, 0.5, ?, ?)",
@@ -89,7 +92,11 @@ pub async fn create_objective(
         status: "on_track".to_string(),
         owner_id: *owner_id,
         team_id: team_id.copied(),
-        team_ids: if team_ids_vec.is_empty() { None } else { Some(team_ids_vec) },
+        team_ids: if team_ids_vec.is_empty() {
+            None
+        } else {
+            Some(team_ids_vec)
+        },
         parent_objective_id: parent_objective_id.copied(),
         progress: 0.0,
         confidence: 0.5,
@@ -115,7 +122,19 @@ pub async fn list_objectives_by_cycle(
         .await
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
-    type CycleRow = (Uuid, Option<String>, Uuid, Option<String>, Option<String>, Option<String>, Option<f32>, Option<f32>, Option<Uuid>, Option<Uuid>, Option<HashSet<Uuid>>);
+    type CycleRow = (
+        Uuid,
+        Option<String>,
+        Uuid,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<f32>,
+        Option<f32>,
+        Option<Uuid>,
+        Option<Uuid>,
+        Option<HashSet<Uuid>>,
+    );
 
     let rows = result.into_rows_result()?;
 
@@ -175,9 +194,7 @@ pub async fn get_objective(
         .await
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
-    let row = result
-        .into_rows_result()?
-        .single_row::<ObjRow>()?;
+    let row = result.into_rows_result()?.single_row::<ObjRow>()?;
 
     Ok(row_to_objective(row))
 }
@@ -285,7 +302,12 @@ pub async fn update_objective(
 
     let new_team_ids: Option<HashSet<Uuid>> = team_ids
         .map(|ids| ids.iter().copied().collect())
-        .or_else(|| current.team_ids.as_ref().map(|v| v.iter().copied().collect()));
+        .or_else(|| {
+            current
+                .team_ids
+                .as_ref()
+                .map(|v| v.iter().copied().collect())
+        });
 
     db.query_unpaged(
         "INSERT INTO inertial_eclipse.okr_objectives_by_cycle (workspace_id, cycle, objective_id, title, objective_type, status, progress, confidence, owner_id, team_id, team_ids) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -308,13 +330,18 @@ pub async fn delete_objective(
         db.query_unpaged(
             "DELETE FROM inertial_eclipse.okr_check_ins WHERE key_result_id = ?",
             (&kr.id,),
-        ).await.map_err(|e| AppError::DatabaseError(e.to_string()))?;
+        )
+        .await
+        .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
         // Clean up KR lookup table
-        if let Err(e) = db.query_unpaged(
-            "DELETE FROM inertial_eclipse.okr_kr_objective_lookup WHERE key_result_id = ?",
-            (&kr.id,),
-        ).await {
+        if let Err(e) = db
+            .query_unpaged(
+                "DELETE FROM inertial_eclipse.okr_kr_objective_lookup WHERE key_result_id = ?",
+                (&kr.id,),
+            )
+            .await
+        {
             tracing::warn!("Failed to delete KR lookup for {}: {}", kr.id, e);
         }
     }
@@ -323,7 +350,9 @@ pub async fn delete_objective(
     db.query_unpaged(
         "DELETE FROM inertial_eclipse.okr_key_results WHERE objective_id = ?",
         (objective_id,),
-    ).await.map_err(|e| AppError::DatabaseError(e.to_string()))?;
+    )
+    .await
+    .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     // 3. Delete from by-cycle
     let _ = db.query_unpaged(
@@ -332,11 +361,18 @@ pub async fn delete_objective(
     ).await;
 
     // 4. Clean up children table (this objective as parent)
-    if let Err(e) = db.query_unpaged(
-        "DELETE FROM inertial_eclipse.okr_objective_children WHERE parent_objective_id = ?",
-        (objective_id,),
-    ).await {
-        tracing::warn!("Failed to delete children entries for objective {}: {}", objective_id, e);
+    if let Err(e) = db
+        .query_unpaged(
+            "DELETE FROM inertial_eclipse.okr_objective_children WHERE parent_objective_id = ?",
+            (objective_id,),
+        )
+        .await
+    {
+        tracing::warn!(
+            "Failed to delete children entries for objective {}: {}",
+            objective_id,
+            e
+        );
     }
 
     // 5. If this objective was a child, remove it from the parent's children list
@@ -353,7 +389,9 @@ pub async fn delete_objective(
     db.query_unpaged(
         "DELETE FROM inertial_eclipse.okr_objectives WHERE workspace_id = ? AND id = ?",
         (workspace_id, objective_id),
-    ).await.map_err(|e| AppError::DatabaseError(e.to_string()))?;
+    )
+    .await
+    .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     Ok(())
 }
@@ -421,9 +459,19 @@ pub async fn list_key_results(
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     type KrRow = (
-        Uuid, Uuid, Option<String>, Option<String>, Option<f32>, Option<f32>,
-        Option<f32>, Option<String>, Option<f32>, Option<String>, Option<Uuid>,
-        Option<DateTime<Utc>>, Option<DateTime<Utc>>,
+        Uuid,
+        Uuid,
+        Option<String>,
+        Option<String>,
+        Option<f32>,
+        Option<f32>,
+        Option<f32>,
+        Option<String>,
+        Option<f32>,
+        Option<String>,
+        Option<Uuid>,
+        Option<DateTime<Utc>>,
+        Option<DateTime<Utc>>,
     );
 
     let rows = result.into_rows_result()?;
@@ -552,19 +600,25 @@ pub async fn delete_key_result(
     db.query_unpaged(
         "DELETE FROM inertial_eclipse.okr_check_ins WHERE key_result_id = ?",
         (kr_id,),
-    ).await.map_err(|e| AppError::DatabaseError(e.to_string()))?;
+    )
+    .await
+    .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     // Delete KR
     db.query_unpaged(
         "DELETE FROM inertial_eclipse.okr_key_results WHERE objective_id = ? AND id = ?",
         (objective_id, kr_id),
-    ).await.map_err(|e| AppError::DatabaseError(e.to_string()))?;
+    )
+    .await
+    .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     // Clean up lookup table
-    let _ = db.query_unpaged(
-        "DELETE FROM inertial_eclipse.okr_kr_objective_lookup WHERE key_result_id = ?",
-        (kr_id,),
-    ).await;
+    let _ = db
+        .query_unpaged(
+            "DELETE FROM inertial_eclipse.okr_kr_objective_lookup WHERE key_result_id = ?",
+            (kr_id,),
+        )
+        .await;
 
     // Recompute objective progress
     recompute_objective_progress(db, objective_id).await?;
@@ -655,7 +709,21 @@ pub async fn list_check_ins(
     let rows = result.into_rows_result()?;
 
     let mut check_ins = Vec::new();
-    for row in rows.rows::<(Uuid, CqlTimeuuid, Option<f32>, Option<f32>, Option<f32>, Option<String>, Option<String>, Option<Uuid>, Option<String>, Option<DateTime<Utc>>)>()?.flatten() {
+    for row in rows
+        .rows::<(
+            Uuid,
+            CqlTimeuuid,
+            Option<f32>,
+            Option<f32>,
+            Option<f32>,
+            Option<String>,
+            Option<String>,
+            Option<Uuid>,
+            Option<String>,
+            Option<DateTime<Utc>>,
+        )>()?
+        .flatten()
+    {
         check_ins.push(OkrCheckIn {
             key_result_id: row.0,
             id: Uuid::from(row.1),
@@ -676,10 +744,7 @@ pub async fn list_check_ins(
 // ─── Helpers ───
 
 /// Recompute objective progress from KR values and update both tables.
-async fn recompute_objective_progress(
-    db: &DbSession,
-    objective_id: &Uuid,
-) -> Result<(), AppError> {
+async fn recompute_objective_progress(db: &DbSession, objective_id: &Uuid) -> Result<(), AppError> {
     let krs = list_key_results(db, objective_id).await?;
 
     if krs.is_empty() {
@@ -693,7 +758,11 @@ async fn recompute_objective_progress(
         let range = kr.target_value - kr.start_value;
         let kr_progress = if range.abs() < 0.0001 {
             if kr.kr_type == "binary" {
-                if kr.current_value >= 1.0 { 1.0 } else { 0.0 }
+                if kr.current_value >= 1.0 {
+                    1.0
+                } else {
+                    0.0
+                }
             } else {
                 0.0
             }
@@ -754,7 +823,9 @@ async fn recompute_objective_progress(
                 .ok();
             if let Some(r) = ws_result {
                 if let Ok(rows) = r.into_rows_result() {
-                    if let Ok(Some((ws_id, cycle_opt))) = rows.maybe_first_row::<(Uuid, Option<String>)>() {
+                    if let Ok(Some((ws_id, cycle_opt))) =
+                        rows.maybe_first_row::<(Uuid, Option<String>)>()
+                    {
                         info = Some((ws_id, cycle_opt));
                     }
                 }
@@ -835,7 +906,21 @@ pub async fn list_attachments(
     let rows = result.into_rows_result()?;
 
     let mut attachments = Vec::new();
-    for row in rows.rows::<(Uuid, Uuid, Option<String>, Option<Uuid>, Option<String>, Option<i64>, Option<String>, Option<Uuid>, Option<String>, Option<DateTime<Utc>>)>()?.flatten() {
+    for row in rows
+        .rows::<(
+            Uuid,
+            Uuid,
+            Option<String>,
+            Option<Uuid>,
+            Option<String>,
+            Option<i64>,
+            Option<String>,
+            Option<Uuid>,
+            Option<String>,
+            Option<DateTime<Utc>>,
+        )>()?
+        .flatten()
+    {
         attachments.push(OkrAttachment {
             entity_id: row.0,
             id: row.1,
@@ -893,7 +978,10 @@ pub async fn delete_attachment(
 }
 
 /// Get an objective by scanning (used when workspace_id is unknown, e.g. during KR creation).
-async fn get_objective_by_id_scan(db: &DbSession, objective_id: &Uuid) -> Result<OkrObjective, AppError> {
+async fn get_objective_by_id_scan(
+    db: &DbSession,
+    objective_id: &Uuid,
+) -> Result<OkrObjective, AppError> {
     let result = db
         .query_unpaged(
             "SELECT workspace_id, id, title, description, objective_type, cycle, status, owner_id, team_id, parent_objective_id, progress, confidence, created_at, updated_at, team_ids FROM inertial_eclipse.okr_objectives WHERE id = ? ALLOW FILTERING",
@@ -902,9 +990,7 @@ async fn get_objective_by_id_scan(db: &DbSession, objective_id: &Uuid) -> Result
         .await
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
-    let row = result
-        .into_rows_result()?
-        .single_row::<ObjRow>()?;
+    let row = result.into_rows_result()?.single_row::<ObjRow>()?;
 
     Ok(row_to_objective(row))
 }
@@ -923,7 +1009,9 @@ pub async fn get_kr_current_value(db: &DbSession, kr_id: &Uuid) -> Option<f32> {
             )
             .await
             .ok()?;
-        return result.into_rows_result().ok()
+        return result
+            .into_rows_result()
+            .ok()
             .and_then(|r| r.maybe_first_row::<(Option<f32>,)>().ok().flatten())
             .and_then(|r| r.0);
     }
@@ -937,7 +1025,9 @@ pub async fn get_kr_current_value(db: &DbSession, kr_id: &Uuid) -> Option<f32> {
         )
         .await
         .ok()?;
-    result.into_rows_result().ok()
+    result
+        .into_rows_result()
+        .ok()
         .and_then(|r| r.maybe_first_row::<(Option<f32>,)>().ok().flatten())
         .and_then(|r| r.0)
 }
@@ -951,7 +1041,9 @@ async fn get_objective_id_for_kr(db: &DbSession, kr_id: &Uuid) -> Option<Uuid> {
         )
         .await
         .ok()?;
-    result.into_rows_result().ok()
+    result
+        .into_rows_result()
+        .ok()
         .and_then(|r| r.maybe_first_row::<(Uuid,)>().ok().flatten())
         .map(|r| r.0)
 }
@@ -965,7 +1057,9 @@ async fn get_workspace_id_for_kr(db: &DbSession, kr_id: &Uuid) -> Option<Uuid> {
         )
         .await
         .ok()?;
-    result.into_rows_result().ok()
+    result
+        .into_rows_result()
+        .ok()
         .and_then(|r| r.maybe_first_row::<(Uuid,)>().ok().flatten())
         .map(|r| r.0)
 }
@@ -987,15 +1081,29 @@ pub async fn find_objective_for_kr(db: &DbSession, kr_id: &Uuid) -> Option<Uuid>
         .await
         .ok()?;
 
-    result.into_rows_result().ok()
+    result
+        .into_rows_result()
+        .ok()
         .and_then(|r| r.maybe_first_row::<(Uuid,)>().ok().flatten())
         .map(|r| r.0)
 }
 
 type ObjRow = (
-    Uuid, Uuid, Option<String>, Option<String>, Option<String>, Option<String>,
-    Option<String>, Option<Uuid>, Option<Uuid>, Option<Uuid>, Option<f32>, Option<f32>,
-    Option<DateTime<Utc>>, Option<DateTime<Utc>>, Option<HashSet<Uuid>>,
+    Uuid,
+    Uuid,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<Uuid>,
+    Option<Uuid>,
+    Option<Uuid>,
+    Option<f32>,
+    Option<f32>,
+    Option<DateTime<Utc>>,
+    Option<DateTime<Utc>>,
+    Option<HashSet<Uuid>>,
 );
 
 fn row_to_objective(row: ObjRow) -> OkrObjective {
@@ -1039,7 +1147,18 @@ pub async fn list_children(
     let rows = result.into_rows_result()?;
 
     let mut children = Vec::new();
-    for row in rows.rows::<(Uuid, Uuid, Option<Uuid>, Option<String>, Option<f32>, Option<f32>, Option<Uuid>)>()?.flatten() {
+    for row in rows
+        .rows::<(
+            Uuid,
+            Uuid,
+            Option<Uuid>,
+            Option<String>,
+            Option<f32>,
+            Option<f32>,
+            Option<Uuid>,
+        )>()?
+        .flatten()
+    {
         children.push(OkrObjectiveChild {
             parent_objective_id: row.0,
             child_objective_id: row.1,

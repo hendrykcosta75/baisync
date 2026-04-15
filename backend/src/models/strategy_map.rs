@@ -48,8 +48,12 @@ pub struct CreateNodeRequest {
     pub bsc_perspective: Option<String>,
 }
 
-fn default_width() -> f32 { 200.0 }
-fn default_height() -> f32 { 100.0 }
+fn default_width() -> f32 {
+    200.0
+}
+fn default_height() -> f32 {
+    100.0
+}
 
 #[derive(Debug, Deserialize)]
 pub struct UpdateNodeRequest {
@@ -84,4 +88,6 @@ pub struct CreateEdgeRequest {
     pub style_data: Option<String>,
 }
 
-fn default_edge_type() -> String { "hierarchy".to_string() }
+fn default_edge_type() -> String {
+    "hierarchy".to_string()
+}

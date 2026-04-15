@@ -19,24 +19,26 @@ fn ts_now() -> CqlTimestamp {
 /// Strip accents and non-ASCII characters from a string.
 /// EMV QR Code only allows: A-Z a-z 0-9 and special chars $ % * + - . / : space
 fn sanitize_emv(s: &str) -> String {
-    s.chars().map(|c| match c {
-        'á' | 'à' | 'â' | 'ã' | 'ä' => 'a',
-        'Á' | 'À' | 'Â' | 'Ã' | 'Ä' => 'A',
-        'é' | 'è' | 'ê' | 'ë' => 'e',
-        'É' | 'È' | 'Ê' | 'Ë' => 'E',
-        'í' | 'ì' | 'î' | 'ï' => 'i',
-        'Í' | 'Ì' | 'Î' | 'Ï' => 'I',
-        'ó' | 'ò' | 'ô' | 'õ' | 'ö' => 'o',
-        'Ó' | 'Ò' | 'Ô' | 'Õ' | 'Ö' => 'O',
-        'ú' | 'ù' | 'û' | 'ü' => 'u',
-        'Ú' | 'Ù' | 'Û' | 'Ü' => 'U',
-        'ç' => 'c',
-        'Ç' => 'C',
-        'ñ' => 'n',
-        'Ñ' => 'N',
-        c if c.is_ascii() => c,
-        _ => ' ',
-    }).collect()
+    s.chars()
+        .map(|c| match c {
+            'á' | 'à' | 'â' | 'ã' | 'ä' => 'a',
+            'Á' | 'À' | 'Â' | 'Ã' | 'Ä' => 'A',
+            'é' | 'è' | 'ê' | 'ë' => 'e',
+            'É' | 'È' | 'Ê' | 'Ë' => 'E',
+            'í' | 'ì' | 'î' | 'ï' => 'i',
+            'Í' | 'Ì' | 'Î' | 'Ï' => 'I',
+            'ó' | 'ò' | 'ô' | 'õ' | 'ö' => 'o',
+            'Ó' | 'Ò' | 'Ô' | 'Õ' | 'Ö' => 'O',
+            'ú' | 'ù' | 'û' | 'ü' => 'u',
+            'Ú' | 'Ù' | 'Û' | 'Ü' => 'U',
+            'ç' => 'c',
+            'Ç' => 'C',
+            'ñ' => 'n',
+            'Ñ' => 'N',
+            c if c.is_ascii() => c,
+            _ => ' ',
+        })
+        .collect()
 }
 
 /// Generate a PIX BR Code payload (copia-e-cola) following the EMV QR Code standard.
@@ -50,7 +52,7 @@ fn generate_pix_payload(pix_key: &str, amount: f64, description: &str, txid: &st
     // Merchant Account Information (ID 26) — PIX specific
     let mut mai = String::new();
     mai.push_str(&tlv("00", "br.gov.bcb.pix")); // GUI
-    mai.push_str(&tlv("01", pix_key));            // PIX key
+    mai.push_str(&tlv("01", pix_key)); // PIX key
     let desc_clean = sanitize_emv(description);
     if !desc_clean.is_empty() {
         let desc_truncated: String = desc_clean.chars().take(72).collect();
@@ -80,11 +82,19 @@ fn generate_pix_payload(pix_key: &str, amount: f64, description: &str, txid: &st
     payload.push_str(&tlv("60", "Brasil"));
 
     // Additional Data Field (ID 62)
-    let txid_clean: String = txid.chars()
+    let txid_clean: String = txid
+        .chars()
         .filter(|c| c.is_ascii_alphanumeric())
         .take(25)
         .collect();
-    let additional = tlv("05", if txid_clean.is_empty() { "***" } else { &txid_clean });
+    let additional = tlv(
+        "05",
+        if txid_clean.is_empty() {
+            "***"
+        } else {
+            &txid_clean
+        },
+    );
     payload.push_str(&tlv("62", &additional));
 
     // CRC16 — append "6304" then compute CRC over entire payload including "6304"
@@ -121,14 +131,16 @@ fn generate_qr_base64(payload: &str) -> Result<String, AppError> {
     let code = QrCode::new(payload.as_bytes())
         .map_err(|e| AppError::InternalError(format!("Failed to generate QR code: {e}")))?;
 
-    let image = code.render::<Luma<u8>>()
+    let image = code
+        .render::<Luma<u8>>()
         .quiet_zone(true)
         .min_dimensions(400, 400)
         .build();
 
     let mut png_bytes: Vec<u8> = Vec::new();
     let mut cursor = std::io::Cursor::new(&mut png_bytes);
-    image.write_to(&mut cursor, image::ImageFormat::Png)
+    image
+        .write_to(&mut cursor, image::ImageFormat::Png)
         .map_err(|e| AppError::InternalError(format!("Failed to encode QR as PNG: {e}")))?;
 
     Ok(BASE64.encode(&png_bytes))
@@ -170,20 +182,32 @@ async fn create_mp_payment(
         .map_err(|e| AppError::InternalError(format!("Failed to call MP API: {e}")))?;
 
     let status = resp.status();
-    let resp_body: serde_json::Value = resp.json().await
+    let resp_body: serde_json::Value = resp
+        .json()
+        .await
         .map_err(|e| AppError::InternalError(format!("Failed to parse MP response: {e}")))?;
 
     if !status.is_success() {
-        let msg = resp_body.get("message")
+        let msg = resp_body
+            .get("message")
             .and_then(|v| v.as_str())
             .unwrap_or("Unknown error");
-        return Err(AppError::InternalError(format!("MP API error ({}): {}", status, msg)));
+        return Err(AppError::InternalError(format!(
+            "MP API error ({}): {}",
+            status, msg
+        )));
     }
 
-    let mp_id = resp_body.get("id")
+    let mp_id = resp_body
+        .get("id")
         .and_then(|v| v.as_i64())
         .map(|v| v.to_string())
-        .or_else(|| resp_body.get("id").and_then(|v| v.as_str()).map(|s| s.to_string()))
+        .or_else(|| {
+            resp_body
+                .get("id")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+        })
         .ok_or_else(|| AppError::InternalError("MP response missing payment id".into()))?;
 
     let qr_base64 = resp_body
@@ -202,19 +226,28 @@ async fn create_mp_payment(
 }
 
 /// Fetch payment status from Mercado Pago API using user's access token.
-async fn fetch_mp_payment_status(access_token: &str, mp_payment_id: &str) -> Result<String, AppError> {
+async fn fetch_mp_payment_status(
+    access_token: &str,
+    mp_payment_id: &str,
+) -> Result<String, AppError> {
     let client = reqwest::Client::new();
     let resp = client
-        .get(format!("https://api.mercadopago.com/v1/payments/{}", mp_payment_id))
+        .get(format!(
+            "https://api.mercadopago.com/v1/payments/{}",
+            mp_payment_id
+        ))
         .bearer_auth(access_token)
         .send()
         .await
         .map_err(|e| AppError::InternalError(format!("Failed to fetch MP payment: {e}")))?;
 
-    let body: serde_json::Value = resp.json().await
+    let body: serde_json::Value = resp
+        .json()
+        .await
         .map_err(|e| AppError::InternalError(format!("Failed to parse MP response: {e}")))?;
 
-    let status = body.get("status")
+    let status = body
+        .get("status")
         .and_then(|v| v.as_str())
         .unwrap_or("pending")
         .to_string();
@@ -236,7 +269,9 @@ pub async fn get_user_mp_token(
     encryption: &EncryptionService,
     user_id: &Uuid,
 ) -> Result<Option<String>, AppError> {
-    match crate::services::workspace::get_decrypted_api_key(db, encryption, user_id, "mercadopago").await {
+    match crate::services::workspace::get_decrypted_api_key(db, encryption, user_id, "mercadopago")
+        .await
+    {
         Ok(key) => Ok(Some(key)),
         Err(_) => Ok(None),
     }
@@ -268,24 +303,34 @@ async fn create_stripe_pix_payment(
         .map_err(|e| AppError::InternalError(format!("Failed to call Stripe API: {e}")))?;
 
     let status = resp.status();
-    let resp_body: serde_json::Value = resp.json().await
+    let resp_body: serde_json::Value = resp
+        .json()
+        .await
         .map_err(|e| AppError::InternalError(format!("Failed to parse Stripe response: {e}")))?;
 
     if !status.is_success() {
-        let msg = resp_body.pointer("/error/message")
+        let msg = resp_body
+            .pointer("/error/message")
             .and_then(|v| v.as_str())
             .unwrap_or("Unknown error");
-        return Err(AppError::InternalError(format!("Stripe API error ({}): {}", status, msg)));
+        return Err(AppError::InternalError(format!(
+            "Stripe API error ({}): {}",
+            status, msg
+        )));
     }
 
-    let pi_id = resp_body.get("id")
+    let pi_id = resp_body
+        .get("id")
         .and_then(|v| v.as_str())
         .ok_or_else(|| AppError::InternalError("Stripe response missing payment_intent id".into()))?
         .to_string();
 
     // Confirm the PaymentIntent to generate the PIX QR code
     let confirm_resp = client
-        .post(format!("https://api.stripe.com/v1/payment_intents/{}/confirm", pi_id))
+        .post(format!(
+            "https://api.stripe.com/v1/payment_intents/{}/confirm",
+            pi_id
+        ))
         .basic_auth(secret_key, None::<&str>)
         .form(&[
             ("payment_method_data[type]", "pix"),
@@ -293,17 +338,24 @@ async fn create_stripe_pix_payment(
         ])
         .send()
         .await
-        .map_err(|e| AppError::InternalError(format!("Failed to confirm Stripe PaymentIntent: {e}")))?;
+        .map_err(|e| {
+            AppError::InternalError(format!("Failed to confirm Stripe PaymentIntent: {e}"))
+        })?;
 
     let confirm_status = confirm_resp.status();
-    let confirm_body: serde_json::Value = confirm_resp.json().await
-        .map_err(|e| AppError::InternalError(format!("Failed to parse Stripe confirm response: {e}")))?;
+    let confirm_body: serde_json::Value = confirm_resp.json().await.map_err(|e| {
+        AppError::InternalError(format!("Failed to parse Stripe confirm response: {e}"))
+    })?;
 
     if !confirm_status.is_success() {
-        let msg = confirm_body.pointer("/error/message")
+        let msg = confirm_body
+            .pointer("/error/message")
             .and_then(|v| v.as_str())
             .unwrap_or("Unknown error");
-        return Err(AppError::InternalError(format!("Stripe confirm error ({}): {}", confirm_status, msg)));
+        return Err(AppError::InternalError(format!(
+            "Stripe confirm error ({}): {}",
+            confirm_status, msg
+        )));
     }
 
     // Extract PIX QR code data from next_action
@@ -345,19 +397,28 @@ async fn create_stripe_pix_payment(
 }
 
 /// Fetch payment status from Stripe API.
-async fn fetch_stripe_payment_status(secret_key: &str, payment_intent_id: &str) -> Result<String, AppError> {
+async fn fetch_stripe_payment_status(
+    secret_key: &str,
+    payment_intent_id: &str,
+) -> Result<String, AppError> {
     let client = reqwest::Client::new();
     let resp = client
-        .get(format!("https://api.stripe.com/v1/payment_intents/{}", payment_intent_id))
+        .get(format!(
+            "https://api.stripe.com/v1/payment_intents/{}",
+            payment_intent_id
+        ))
         .basic_auth(secret_key, None::<&str>)
         .send()
         .await
         .map_err(|e| AppError::InternalError(format!("Failed to fetch Stripe payment: {e}")))?;
 
-    let body: serde_json::Value = resp.json().await
+    let body: serde_json::Value = resp
+        .json()
+        .await
         .map_err(|e| AppError::InternalError(format!("Failed to parse Stripe response: {e}")))?;
 
-    let status = body.get("status")
+    let status = body
+        .get("status")
         .and_then(|v| v.as_str())
         .unwrap_or("requires_action")
         .to_string();
@@ -378,7 +439,8 @@ pub async fn get_user_stripe_token(
     encryption: &EncryptionService,
     user_id: &Uuid,
 ) -> Result<Option<String>, AppError> {
-    match crate::services::workspace::get_decrypted_api_key(db, encryption, user_id, "stripe").await {
+    match crate::services::workspace::get_decrypted_api_key(db, encryption, user_id, "stripe").await
+    {
         Ok(key) => Ok(Some(key)),
         Err(_) => Ok(None),
     }
@@ -417,9 +479,8 @@ pub async fn create_charge(
             let token = mp_access_token
                 .ok_or_else(|| AppError::BadRequest("Token Mercado Pago não configurado".into()))?;
 
-            let (mp_id, qr_b64, copia) = create_mp_payment(
-                token, amount, description, notification_url,
-            ).await?;
+            let (mp_id, qr_b64, copia) =
+                create_mp_payment(token, amount, description, notification_url).await?;
 
             (Some(mp_id), Some(qr_b64), Some(copia))
         }
@@ -427,9 +488,8 @@ pub async fn create_charge(
             let token = mp_access_token
                 .ok_or_else(|| AppError::BadRequest("Chave Stripe não configurada".into()))?;
 
-            let (pi_id, qr_b64, copia) = create_stripe_pix_payment(
-                token, amount, description,
-            ).await?;
+            let (pi_id, qr_b64, copia) =
+                create_stripe_pix_payment(token, amount, description).await?;
 
             (Some(pi_id), Some(qr_b64), Some(copia))
         }
@@ -543,13 +603,23 @@ pub fn spawn_mp_payment_poller(
                 (&user_id, &charge_id),
             ).await;
 
-            let created_at = charge_result.ok()
+            let created_at = charge_result
+                .ok()
                 .and_then(|r| r.into_rows_result().ok())
                 .and_then(|r| r.maybe_first_row::<(CqlTimestamp,)>().ok().flatten())
-                .map(|r| DateTime::from_timestamp_millis(r.0.0).unwrap_or_default())
+                .map(|r| DateTime::from_timestamp_millis(r.0 .0).unwrap_or_default())
                 .unwrap_or_default();
 
-            if let Err(e) = update_charge_status(&db, &user_id, &charge_id, &assistant_id, created_at, &new_status).await {
+            if let Err(e) = update_charge_status(
+                &db,
+                &user_id,
+                &charge_id,
+                &assistant_id,
+                created_at,
+                &new_status,
+            )
+            .await
+            {
                 tracing::error!(error = %e, "MP poller: failed to update status");
             }
 
@@ -561,14 +631,20 @@ pub fn spawn_mp_payment_poller(
             }
 
             // Publish SSE event
-            event_bus.publish(&user_id, crate::services::events::SseEvent {
-                event_type: "pix_status_changed".into(),
-                data: serde_json::json!({
-                    "chargeId": charge_id.to_string(),
-                    "assistantId": assistant_id.to_string(),
-                    "status": new_status,
-                }).to_string(),
-            }).await;
+            event_bus
+                .publish(
+                    &user_id,
+                    crate::services::events::SseEvent {
+                        event_type: "pix_status_changed".into(),
+                        data: serde_json::json!({
+                            "chargeId": charge_id.to_string(),
+                            "assistantId": assistant_id.to_string(),
+                            "status": new_status,
+                        })
+                        .to_string(),
+                    },
+                )
+                .await;
 
             tracing::info!(charge_id = %charge_id, new_status = %new_status, attempt = attempt, "MP poller: status updated");
             return;
@@ -613,8 +689,8 @@ fn status_row_to_charge(r: ChargeStatusRow) -> PixCharge {
         mp_qr_code_base64: None,
         mp_copia_e_cola: None,
         status: r.10,
-        created_at: DateTime::from_timestamp_millis(r.11.0).unwrap_or_default(),
-        updated_at: DateTime::from_timestamp_millis(r.12.0).unwrap_or_default(),
+        created_at: DateTime::from_timestamp_millis(r.11 .0).unwrap_or_default(),
+        updated_at: DateTime::from_timestamp_millis(r.12 .0).unwrap_or_default(),
         expires_at: None,
         customer_name: r.13,
         customer_cpf: r.14,
@@ -670,12 +746,16 @@ pub async fn check_charge_status_live(
                 "mercadopago" => {
                     if let Ok(Some(token)) = get_user_mp_token(db, encryption, user_id).await {
                         fetch_mp_payment_status(&token, payment_id).await.ok()
-                    } else { None }
+                    } else {
+                        None
+                    }
                 }
                 "stripe" => {
                     if let Ok(Some(token)) = get_user_stripe_token(db, encryption, user_id).await {
                         fetch_stripe_payment_status(&token, payment_id).await.ok()
-                    } else { None }
+                    } else {
+                        None
+                    }
                 }
                 _ => None,
             };
@@ -684,19 +764,29 @@ pub async fn check_charge_status_live(
                 if new_status != "pending" {
                     // Update in DB
                     let _ = update_charge_status(
-                        db, user_id, charge_id, &charge.assistant_id,
-                        charge.created_at, &new_status,
-                    ).await;
+                        db,
+                        user_id,
+                        charge_id,
+                        &charge.assistant_id,
+                        charge.created_at,
+                        &new_status,
+                    )
+                    .await;
 
                     // Publish SSE event
-                    crate::services::events::publish_global(user_id, crate::services::events::SseEvent {
-                        event_type: "pix_status_changed".into(),
-                        data: serde_json::json!({
-                            "chargeId": charge_id.to_string(),
-                            "assistantId": charge.assistant_id.to_string(),
-                            "status": new_status,
-                        }).to_string(),
-                    }).await;
+                    crate::services::events::publish_global(
+                        user_id,
+                        crate::services::events::SseEvent {
+                            event_type: "pix_status_changed".into(),
+                            data: serde_json::json!({
+                                "chargeId": charge_id.to_string(),
+                                "assistantId": charge.assistant_id.to_string(),
+                                "status": new_status,
+                            })
+                            .to_string(),
+                        },
+                    )
+                    .await;
 
                     // Notify if approved
                     if new_status == "approved" {
@@ -747,10 +837,11 @@ pub async fn notify_pix_payment_confirmed(
     let assistant_id = &charge.assistant_id;
 
     // Get assistant name
-    let assistant_name = match crate::services::assistant::get_assistant(db, user_id, assistant_id).await {
-        Ok(a) => a.name,
-        Err(_) => "Assistente".to_string(),
-    };
+    let assistant_name =
+        match crate::services::assistant::get_assistant(db, user_id, assistant_id).await {
+            Ok(a) => a.name,
+            Err(_) => "Assistente".to_string(),
+        };
 
     let customer_name = charge.customer_name.as_deref().unwrap_or("--");
     let customer_cpf = charge.customer_cpf.as_deref().unwrap_or("--");
@@ -762,18 +853,33 @@ pub async fn notify_pix_payment_confirmed(
         customer_name, charge.contact_phone, charge.description, assistant_name
     );
     if let Err(e) = crate::services::notification::create_notification(
-        db, user_id, Some(assistant_id), None,
-        "pix_payment_confirmed", &title, &message,
-    ).await {
+        db,
+        user_id,
+        Some(assistant_id),
+        None,
+        "pix_payment_confirmed",
+        &title,
+        &message,
+    )
+    .await
+    {
         tracing::error!(error = %e, "Failed to create PIX payment notification");
     }
 
     // 2. Email to user
     if let Ok(user) = crate::services::auth::get_user_by_id(db, user_id).await {
         if let Err(e) = crate::services::email::send_pix_payment_confirmed_email(
-            config, &user.email, &assistant_name, charge.amount,
-            &charge.description, customer_name, customer_cpf, &charge.contact_phone,
-        ).await {
+            config,
+            &user.email,
+            &assistant_name,
+            charge.amount,
+            &charge.description,
+            customer_name,
+            customer_cpf,
+            &charge.contact_phone,
+        )
+        .await
+        {
             tracing::error!(error = %e, "Failed to send PIX payment email");
         }
     }
@@ -786,7 +892,8 @@ pub async fn notify_pix_payment_confirmed(
             (assistant_id, user_id, conversation_id),
         ).await;
 
-        let channel = conv_result.ok()
+        let channel = conv_result
+            .ok()
             .and_then(|r| r.into_rows_result().ok())
             .and_then(|r| r.maybe_first_row::<(String,)>().ok().flatten())
             .map(|r| r.0)
@@ -794,15 +901,23 @@ pub async fn notify_pix_payment_confirmed(
 
         if !channel.is_empty() {
             // Find integration for this channel
-            let integrations = crate::services::assistant::list_integrations(db, assistant_id, user_id).await.unwrap_or_default();
+            let integrations =
+                crate::services::assistant::list_integrations(db, assistant_id, user_id)
+                    .await
+                    .unwrap_or_default();
             if let Some(integration) = integrations.into_iter().find(|i| i.channel == channel) {
                 let confirm_msg = format!(
                     "Pagamento confirmado! ✅\n\nValor: R$ {:.2}\nDescricao: {}\n\nObrigado, {}!",
                     charge.amount, charge.description, customer_name
                 );
                 if let Err(e) = crate::services::messaging::send_message_via_provider_public(
-                    config, &integration, &charge.contact_phone, &confirm_msg,
-                ).await {
+                    config,
+                    &integration,
+                    &charge.contact_phone,
+                    &confirm_msg,
+                )
+                .await
+                {
                     tracing::error!(error = %e, "Failed to send PIX confirmation to client");
                 }
             }
@@ -825,33 +940,54 @@ pub async fn process_webhook(
 
     let row = result
         .into_rows_result()
-        .map_err(|_| AppError::NotFound(format!("Charge not found for mp_payment_id: {mp_payment_id}")))?
+        .map_err(|_| {
+            AppError::NotFound(format!(
+                "Charge not found for mp_payment_id: {mp_payment_id}"
+            ))
+        })?
         .single_row::<(String, Uuid, Uuid, Uuid)>()
-        .map_err(|_| AppError::NotFound(format!("Charge not found for mp_payment_id: {mp_payment_id}")))?;
+        .map_err(|_| {
+            AppError::NotFound(format!(
+                "Charge not found for mp_payment_id: {mp_payment_id}"
+            ))
+        })?;
 
     let user_id = row.1;
     let charge_id = row.2;
     let assistant_id = row.3;
 
     // Decrypt user's MP token to verify payment status
-    let token = get_user_mp_token(db, encryption, &user_id).await?
+    let token = get_user_mp_token(db, encryption, &user_id)
+        .await?
         .ok_or_else(|| AppError::InternalError("User MP token not found for webhook".into()))?;
 
     let new_status = fetch_mp_payment_status(&token, mp_payment_id).await?;
 
-    let charge_result = db.query_unpaged(
-        "SELECT created_at FROM inertial_eclipse.pix_charges WHERE user_id = ? AND id = ?",
-        (&user_id, &charge_id),
-    ).await.map_err(|e| AppError::DatabaseError(format!("Failed to get charge: {e}")))?;
+    let charge_result = db
+        .query_unpaged(
+            "SELECT created_at FROM inertial_eclipse.pix_charges WHERE user_id = ? AND id = ?",
+            (&user_id, &charge_id),
+        )
+        .await
+        .map_err(|e| AppError::DatabaseError(format!("Failed to get charge: {e}")))?;
 
     let created_at_ts = charge_result
-        .into_rows_result().ok()
+        .into_rows_result()
+        .ok()
         .and_then(|r| r.single_row::<(CqlTimestamp,)>().ok())
         .map(|r| r.0)
         .unwrap_or(CqlTimestamp(0));
 
     let created_at = DateTime::from_timestamp_millis(created_at_ts.0).unwrap_or_default();
-    update_charge_status(db, &user_id, &charge_id, &assistant_id, created_at, &new_status).await?;
+    update_charge_status(
+        db,
+        &user_id,
+        &charge_id,
+        &assistant_id,
+        created_at,
+        &new_status,
+    )
+    .await?;
 
     // Notify user and client when payment is approved
     if new_status == "approved" {
@@ -861,14 +997,20 @@ pub async fn process_webhook(
     }
 
     // Publish SSE event
-    event_bus.publish(&user_id, crate::services::events::SseEvent {
-        event_type: "pix_status_changed".into(),
-        data: serde_json::json!({
-            "chargeId": charge_id.to_string(),
-            "assistantId": assistant_id.to_string(),
-            "status": new_status,
-        }).to_string(),
-    }).await;
+    event_bus
+        .publish(
+            &user_id,
+            crate::services::events::SseEvent {
+                event_type: "pix_status_changed".into(),
+                data: serde_json::json!({
+                    "chargeId": charge_id.to_string(),
+                    "assistantId": assistant_id.to_string(),
+                    "status": new_status,
+                })
+                .to_string(),
+            },
+        )
+        .await;
 
     tracing::info!(mp_payment_id = %mp_payment_id, new_status = %new_status, charge_id = %charge_id, "PIX webhook processed");
     Ok(())
@@ -897,7 +1039,8 @@ pub async fn list_charges_by_assistant(
         "SELECT id, amount, status, description, contact_phone, created_at, customer_name, customer_cpf, pix_mode FROM inertial_eclipse.pix_charges_by_assistant WHERE assistant_id = ? LIMIT {}",
         limit
     );
-    let result = db.query_unpaged(query, (assistant_id,))
+    let result = db
+        .query_unpaged(query, (assistant_id,))
         .await
         .map_err(|e| AppError::DatabaseError(format!("Failed to list charges: {e}")))?;
 
@@ -912,7 +1055,7 @@ pub async fn list_charges_by_assistant(
             status: r.2,
             description: r.3,
             contact_phone: r.4,
-            created_at: DateTime::from_timestamp_millis(r.5.0).unwrap_or_default(),
+            created_at: DateTime::from_timestamp_millis(r.5 .0).unwrap_or_default(),
             customer_name: r.6,
             customer_cpf: r.7,
             pix_mode: r.8,
@@ -931,8 +1074,12 @@ pub async fn get_assistant_financial_summary(
     let total_charges = charges.len() as i64;
     let paid_count = charges.iter().filter(|c| c.status == "approved").count() as i64;
     let pending_count = charges.iter().filter(|c| c.status == "pending").count() as i64;
-    let unpaid_count = charges.iter().filter(|c| c.status != "approved" && c.status != "pending").count() as i64;
-    let total_revenue: f64 = charges.iter()
+    let unpaid_count = charges
+        .iter()
+        .filter(|c| c.status != "approved" && c.status != "pending")
+        .count() as i64;
+    let total_revenue: f64 = charges
+        .iter()
         .filter(|c| c.status == "approved")
         .map(|c| c.amount)
         .sum();
@@ -950,10 +1097,13 @@ pub async fn get_user_financial_overview(
     db: &DbSession,
     user_id: &Uuid,
 ) -> Result<Vec<(Uuid, FinancialSummary)>, AppError> {
-    let result = db.query_unpaged(
-        "SELECT id FROM inertial_eclipse.assistants WHERE user_id = ?",
-        (user_id,),
-    ).await.map_err(|e| AppError::DatabaseError(format!("Failed to list assistants: {e}")))?;
+    let result = db
+        .query_unpaged(
+            "SELECT id FROM inertial_eclipse.assistants WHERE user_id = ?",
+            (user_id,),
+        )
+        .await
+        .map_err(|e| AppError::DatabaseError(format!("Failed to list assistants: {e}")))?;
 
     let rows = result.into_rows_result()?;
 

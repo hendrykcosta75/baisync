@@ -49,7 +49,12 @@ impl TestApp {
             .expect("Failed to execute request")
     }
 
-    pub async fn post_authenticated(&self, path: &str, body: &serde_json::Value, token: &str) -> Response {
+    pub async fn post_authenticated(
+        &self,
+        path: &str,
+        body: &serde_json::Value,
+        token: &str,
+    ) -> Response {
         self.client
             .post(format!("{}{}", self.address, path))
             .header("Authorization", format!("Bearer {}", token))
@@ -59,7 +64,12 @@ impl TestApp {
             .expect("Failed to execute request")
     }
 
-    pub async fn put_authenticated(&self, path: &str, body: &serde_json::Value, token: &str) -> Response {
+    pub async fn put_authenticated(
+        &self,
+        path: &str,
+        body: &serde_json::Value,
+        token: &str,
+    ) -> Response {
         self.client
             .put(format!("{}{}", self.address, path))
             .header("Authorization", format!("Bearer {}", token))
@@ -122,4 +132,3 @@ pub async fn spawn_app() -> TestApp {
         client: Client::new(),
     }
 }
-

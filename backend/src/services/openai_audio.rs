@@ -1,7 +1,11 @@
 use crate::errors::AppError;
 
 /// OpenAI TTS — returns raw MP3 bytes.
-pub async fn text_to_speech(api_key: &str, voice_id: &str, text: &str) -> Result<Vec<u8>, AppError> {
+pub async fn text_to_speech(
+    api_key: &str,
+    voice_id: &str,
+    text: &str,
+) -> Result<Vec<u8>, AppError> {
     let client = reqwest::Client::new();
     let resp = client
         .post("https://api.openai.com/v1/audio/speech")

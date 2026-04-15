@@ -14,22 +14,22 @@ use crate::models::appointment::{
 // ─── Row types ───────────────────────────────────────────────────────────────
 
 type AppointmentRow = (
-    Uuid,              // user_id
-    Uuid,              // id
-    Option<Uuid>,      // assistant_id
-    Option<String>,    // client_name
-    Option<String>,    // client_email
-    Option<String>,    // client_phone
-    CqlTimestamp,      // date_time
-    Option<i32>,       // duration_minutes
-    Option<String>,    // appointment_type
-    Option<String>,    // notes
-    Option<String>,    // origin_channel
-    Option<String>,    // status
-    Option<Uuid>,      // conversation_id
-    Option<bool>,      // is_manual
-    CqlTimestamp,      // created_at
-    CqlTimestamp,      // updated_at
+    Uuid,           // user_id
+    Uuid,           // id
+    Option<Uuid>,   // assistant_id
+    Option<String>, // client_name
+    Option<String>, // client_email
+    Option<String>, // client_phone
+    CqlTimestamp,   // date_time
+    Option<i32>,    // duration_minutes
+    Option<String>, // appointment_type
+    Option<String>, // notes
+    Option<String>, // origin_channel
+    Option<String>, // status
+    Option<Uuid>,   // conversation_id
+    Option<bool>,   // is_manual
+    CqlTimestamp,   // created_at
+    CqlTimestamp,   // updated_at
 );
 
 type ByAssistantRow = (
@@ -44,14 +44,14 @@ type ByAssistantRow = (
 );
 
 type AvailabilityRow = (
-    Uuid,                      // assistant_id
-    Option<Uuid>,              // user_id
-    Option<String>,            // timezone
-    Option<i32>,               // default_duration_minutes
-    Option<i32>,               // buffer_minutes
-    Option<i32>,               // max_per_day
-    Option<Vec<String>>,       // blocked_dates
-    Option<String>,            // schedule_json
+    Uuid,                // assistant_id
+    Option<Uuid>,        // user_id
+    Option<String>,      // timezone
+    Option<i32>,         // default_duration_minutes
+    Option<i32>,         // buffer_minutes
+    Option<i32>,         // max_per_day
+    Option<Vec<String>>, // blocked_dates
+    Option<String>,      // schedule_json
 );
 
 fn ts_to_dt(ts: CqlTimestamp) -> DateTime<Utc> {
@@ -73,13 +73,18 @@ pub fn parse_datetime_in_tz(date_time_str: &str, tz: &Tz) -> Option<DateTime<Utc
     let naive = chrono::NaiveDateTime::parse_from_str(date_time_str, "%Y-%m-%dT%H:%M:%S")
         .or_else(|_| chrono::NaiveDateTime::parse_from_str(date_time_str, "%Y-%m-%dT%H:%M"))
         .ok()?;
-    tz.from_local_datetime(&naive).earliest().map(|dt| dt.with_timezone(&Utc))
+    tz.from_local_datetime(&naive)
+        .earliest()
+        .map(|dt| dt.with_timezone(&Utc))
 }
 
 /// Resolve the timezone for an assistant from its availability config (or default to São Paulo).
 pub async fn resolve_assistant_tz(db: &DbSession, assistant_id: &uuid::Uuid) -> Tz {
     match get_availability(db, assistant_id).await {
-        Ok(Some(avail)) => avail.timezone.parse().unwrap_or(chrono_tz::America::Sao_Paulo),
+        Ok(Some(avail)) => avail
+            .timezone
+            .parse()
+            .unwrap_or(chrono_tz::America::Sao_Paulo),
         _ => chrono_tz::America::Sao_Paulo,
     }
 }
@@ -88,7 +93,7 @@ fn row_to_appointment(r: AppointmentRow) -> Appointment {
     Appointment {
         user_id: r.0,
         id: r.1,
-        assistant_id: r.2,  // already Option<Uuid>
+        assistant_id: r.2, // already Option<Uuid>
         client_name: r.3.unwrap_or_default(),
         client_email: r.4,
         client_phone: r.5.unwrap_or_default(),
@@ -129,7 +134,9 @@ pub async fn create_appointment(
             return Err(AppError::BadRequest(errors.join("; ")));
         }
     } else if req.date_time < Utc::now() {
-        return Err(AppError::BadRequest("Não é possível agendar em datas passadas".into()));
+        return Err(AppError::BadRequest(
+            "Não é possível agendar em datas passadas".into(),
+        ));
     }
 
     // Insert into appointments
@@ -242,14 +249,16 @@ pub async fn update_appointment(
     // If rescheduling, validate new time (only if associated with assistant)
     if req.date_time.is_some() {
         if let Some(ref aid) = existing.assistant_id {
-            let errors = validate_appointment(
-                db, aid, &new_date_time, new_duration, Some(appointment_id),
-            ).await?;
+            let errors =
+                validate_appointment(db, aid, &new_date_time, new_duration, Some(appointment_id))
+                    .await?;
             if !errors.is_empty() {
                 return Err(AppError::BadRequest(errors.join("; ")));
             }
         } else if new_date_time < Utc::now() {
-            return Err(AppError::BadRequest("Não é possível agendar em datas passadas".into()));
+            return Err(AppError::BadRequest(
+                "Não é possível agendar em datas passadas".into(),
+            ));
         }
     }
 
@@ -426,7 +435,10 @@ pub async fn validate_appointment(
 
     // Availability check (if configured)
     if let Some(avail) = get_availability(db, assistant_id).await? {
-        let tz: Tz = avail.timezone.parse().unwrap_or(chrono_tz::America::Sao_Paulo);
+        let tz: Tz = avail
+            .timezone
+            .parse()
+            .unwrap_or(chrono_tz::America::Sao_Paulo);
         let local_dt = date_time.with_timezone(&tz);
         let local_date_str = local_dt.format("%Y-%m-%d").to_string();
 
@@ -442,36 +454,50 @@ pub async fn validate_appointment(
                 if is_empty_schedule {
                     // No days configured → treat as open schedule (no day/time restrictions)
                 } else {
-                let day_name = match local_dt.weekday() {
-                    chrono::Weekday::Mon => "monday",
-                    chrono::Weekday::Tue => "tuesday",
-                    chrono::Weekday::Wed => "wednesday",
-                    chrono::Weekday::Thu => "thursday",
-                    chrono::Weekday::Fri => "friday",
-                    chrono::Weekday::Sat => "saturday",
-                    chrono::Weekday::Sun => "sunday",
-                };
+                    let day_name = match local_dt.weekday() {
+                        chrono::Weekday::Mon => "monday",
+                        chrono::Weekday::Tue => "tuesday",
+                        chrono::Weekday::Wed => "wednesday",
+                        chrono::Weekday::Thu => "thursday",
+                        chrono::Weekday::Fri => "friday",
+                        chrono::Weekday::Sat => "saturday",
+                        chrono::Weekday::Sun => "sunday",
+                    };
 
-                if let Some(slots) = schedule.get(day_name).and_then(|v| v.as_array()) {
-                    if slots.is_empty() {
-                        errors.push(format!("Não há disponibilidade neste dia da semana ({day_name})"));
-                    } else {
-                        let local_time = local_dt.time();
-                        let appt_end_time = local_time + chrono::Duration::minutes(duration_minutes as i64);
-                        let in_slot = slots.iter().any(|slot| {
-                            let start_str = slot.get("start").and_then(|v| v.as_str()).unwrap_or("00:00");
-                            let end_str = slot.get("end").and_then(|v| v.as_str()).unwrap_or("23:59");
-                            let slot_start = NaiveTime::parse_from_str(start_str, "%H:%M").unwrap_or(NaiveTime::MIN);
-                            let slot_end = NaiveTime::parse_from_str(end_str, "%H:%M").unwrap_or(NaiveTime::from_hms_opt(23, 59, 0).unwrap());
-                            local_time >= slot_start && appt_end_time <= slot_end
-                        });
-                        if !in_slot {
-                            errors.push("O horário solicitado está fora da disponibilidade configurada".to_string());
+                    if let Some(slots) = schedule.get(day_name).and_then(|v| v.as_array()) {
+                        if slots.is_empty() {
+                            errors.push(format!(
+                                "Não há disponibilidade neste dia da semana ({day_name})"
+                            ));
+                        } else {
+                            let local_time = local_dt.time();
+                            let appt_end_time =
+                                local_time + chrono::Duration::minutes(duration_minutes as i64);
+                            let in_slot = slots.iter().any(|slot| {
+                                let start_str = slot
+                                    .get("start")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("00:00");
+                                let end_str =
+                                    slot.get("end").and_then(|v| v.as_str()).unwrap_or("23:59");
+                                let slot_start = NaiveTime::parse_from_str(start_str, "%H:%M")
+                                    .unwrap_or(NaiveTime::MIN);
+                                let slot_end = NaiveTime::parse_from_str(end_str, "%H:%M")
+                                    .unwrap_or(NaiveTime::from_hms_opt(23, 59, 0).unwrap());
+                                local_time >= slot_start && appt_end_time <= slot_end
+                            });
+                            if !in_slot {
+                                errors.push(
+                                    "O horário solicitado está fora da disponibilidade configurada"
+                                        .to_string(),
+                                );
+                            }
                         }
+                    } else {
+                        errors.push(format!(
+                            "Não há disponibilidade neste dia da semana ({day_name})"
+                        ));
                     }
-                } else {
-                    errors.push(format!("Não há disponibilidade neste dia da semana ({day_name})"));
-                }
                 } // close else (non-empty schedule)
             }
         }
@@ -490,11 +516,21 @@ pub async fn validate_appointment(
                 .unwrap_or(*date_time);
 
             let existing = list_by_assistant_range(db, assistant_id, &day_start, &day_end).await?;
-            let count = existing.iter().filter(|(id, _, _, _)| {
-                if let Some(exc) = exclude_id { id != exc } else { true }
-            }).count();
+            let count = existing
+                .iter()
+                .filter(|(id, _, _, _)| {
+                    if let Some(exc) = exclude_id {
+                        id != exc
+                    } else {
+                        true
+                    }
+                })
+                .count();
             if count as i32 >= avail.max_per_day {
-                errors.push(format!("Limite de {} agendamentos por dia atingido", avail.max_per_day));
+                errors.push(format!(
+                    "Limite de {} agendamentos por dia atingido",
+                    avail.max_per_day
+                ));
             }
         }
 
@@ -502,12 +538,16 @@ pub async fn validate_appointment(
         if avail.buffer_minutes > 0 {
             let buffer = chrono::Duration::minutes(avail.buffer_minutes as i64);
             let window_start = *date_time - buffer;
-            let window_end = *date_time + chrono::Duration::minutes(duration_minutes as i64) + buffer;
+            let window_end =
+                *date_time + chrono::Duration::minutes(duration_minutes as i64) + buffer;
 
-            let nearby = list_by_assistant_range(db, assistant_id, &window_start, &window_end).await?;
+            let nearby =
+                list_by_assistant_range(db, assistant_id, &window_start, &window_end).await?;
             for (id, dt, dur, _) in &nearby {
                 if let Some(exc) = exclude_id {
-                    if id == exc { continue; }
+                    if id == exc {
+                        continue;
+                    }
                 }
                 let ex_start = *dt - buffer;
                 let ex_end = *dt + chrono::Duration::minutes(*dur as i64) + buffer;
@@ -542,9 +582,7 @@ pub async fn get_availability(
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     let rows = result.into_rows_result()?;
-    let row = rows
-        .rows::<AvailabilityRow>()?
-        .next();
+    let row = rows.rows::<AvailabilityRow>()?.next();
 
     match row {
         Some(Ok(r)) => Ok(Some(AvailabilityConfig {
@@ -568,23 +606,30 @@ pub async fn upsert_availability(
     user_id: &Uuid,
     req: UpdateAvailabilityRequest,
 ) -> Result<AvailabilityConfig, AppError> {
-    let existing = get_availability(db, assistant_id).await?.unwrap_or(AvailabilityConfig {
-        assistant_id: *assistant_id,
-        user_id: *user_id,
-        timezone: "America/Sao_Paulo".into(),
-        default_duration_minutes: 30,
-        buffer_minutes: 0,
-        max_per_day: 0,
-        blocked_dates: vec![],
-        schedule_json: None,
-    });
+    let existing = get_availability(db, assistant_id)
+        .await?
+        .unwrap_or(AvailabilityConfig {
+            assistant_id: *assistant_id,
+            user_id: *user_id,
+            timezone: "America/Sao_Paulo".into(),
+            default_duration_minutes: 30,
+            buffer_minutes: 0,
+            max_per_day: 0,
+            blocked_dates: vec![],
+            schedule_json: None,
+        });
 
     let timezone = req.timezone.unwrap_or(existing.timezone);
-    let default_duration = req.default_duration_minutes.unwrap_or(existing.default_duration_minutes);
+    let default_duration = req
+        .default_duration_minutes
+        .unwrap_or(existing.default_duration_minutes);
     let buffer = req.buffer_minutes.unwrap_or(existing.buffer_minutes);
     let max_per_day = req.max_per_day.unwrap_or(existing.max_per_day);
     let blocked_dates = req.blocked_dates.unwrap_or(existing.blocked_dates);
-    let schedule_json = req.schedule.map(|v| v.to_string()).or(existing.schedule_json);
+    let schedule_json = req
+        .schedule
+        .map(|v| v.to_string())
+        .or(existing.schedule_json);
 
     db.query_unpaged(
         "INSERT INTO inertial_eclipse.assistant_availability (assistant_id, user_id, timezone, default_duration_minutes, buffer_minutes, max_per_day, blocked_dates, schedule_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -621,7 +666,10 @@ pub async fn get_available_slots(
     let date = NaiveDate::parse_from_str(date_str, "%Y-%m-%d")
         .map_err(|_| AppError::BadRequest("Data inválida. Use o formato YYYY-MM-DD".into()))?;
 
-    let duration = avail.as_ref().map(|a| a.default_duration_minutes).unwrap_or(30);
+    let duration = avail
+        .as_ref()
+        .map(|a| a.default_duration_minutes)
+        .unwrap_or(30);
     let buffer = avail.as_ref().map(|a| a.buffer_minutes).unwrap_or(0);
 
     // Check blocked dates
@@ -642,7 +690,10 @@ pub async fn get_available_slots(
         chrono::Weekday::Sun => "sunday",
     };
 
-    let default_open = vec![(NaiveTime::from_hms_opt(8, 0, 0).unwrap(), NaiveTime::from_hms_opt(18, 0, 0).unwrap())];
+    let default_open = vec![(
+        NaiveTime::from_hms_opt(8, 0, 0).unwrap(),
+        NaiveTime::from_hms_opt(18, 0, 0).unwrap(),
+    )];
     let time_slots: Vec<(NaiveTime, NaiveTime)> = if let Some(ref a) = avail {
         if let Some(ref sj) = a.schedule_json {
             if let Ok(schedule) = serde_json::from_str::<Value>(sj) {
@@ -654,12 +705,11 @@ pub async fn get_available_slots(
                     slots
                         .iter()
                         .filter_map(|s| {
-                            let start = NaiveTime::parse_from_str(
-                                s.get("start")?.as_str()?, "%H:%M",
-                            ).ok()?;
-                            let end = NaiveTime::parse_from_str(
-                                s.get("end")?.as_str()?, "%H:%M",
-                            ).ok()?;
+                            let start =
+                                NaiveTime::parse_from_str(s.get("start")?.as_str()?, "%H:%M")
+                                    .ok()?;
+                            let end =
+                                NaiveTime::parse_from_str(s.get("end")?.as_str()?, "%H:%M").ok()?;
                             Some((start, end))
                         })
                         .collect()
@@ -682,10 +732,14 @@ pub async fn get_available_slots(
     // Get existing appointments for this day
     let day_start_local = date.and_hms_opt(0, 0, 0).unwrap();
     let day_end_local = date.and_hms_opt(23, 59, 59).unwrap();
-    let day_start_utc = tz.from_local_datetime(&day_start_local).earliest()
+    let day_start_utc = tz
+        .from_local_datetime(&day_start_local)
+        .earliest()
         .map(|d| d.with_timezone(&Utc))
         .unwrap_or_else(Utc::now);
-    let day_end_utc = tz.from_local_datetime(&day_end_local).latest()
+    let day_end_utc = tz
+        .from_local_datetime(&day_end_local)
+        .latest()
         .map(|d| d.with_timezone(&Utc))
         .unwrap_or_else(Utc::now);
 

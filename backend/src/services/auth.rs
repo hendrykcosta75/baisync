@@ -131,7 +131,11 @@ pub async fn register_user(
         .await
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
-    if existing.into_rows_result()?.maybe_first_row::<(Uuid,)>()?.is_some() {
+    if existing
+        .into_rows_result()?
+        .maybe_first_row::<(Uuid,)>()?
+        .is_some()
+    {
         return Err(AppError::BadRequest("Email already registered".into()));
     }
 
@@ -179,7 +183,15 @@ pub async fn login_user(
 
     let (id, email, password_hash, name, two_factor_enabled, blocked, created_at) = result
         .into_rows_result()?
-        .single_row::<(Uuid, String, String, String, Option<bool>, Option<bool>, DateTime<Utc>)>()
+        .single_row::<(
+            Uuid,
+            String,
+            String,
+            String,
+            Option<bool>,
+            Option<bool>,
+            DateTime<Utc>,
+        )>()
         .map_err(|_| AppError::Unauthorized("Invalid email or password".into()))?;
 
     if blocked.unwrap_or(false) {
@@ -221,9 +233,41 @@ pub async fn get_user_by_id(db: &DbSession, user_id: &Uuid) -> Result<User, AppE
         .await
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
-    let (id, email, password_hash, name, two_factor_enabled, two_factor_secret, api_key_openai, api_key_claude, api_key_gemini, api_key_elevenlabs, api_key_mercadopago, api_key_stripe, blocked, created_at, updated_at) = result
+    let (
+        id,
+        email,
+        password_hash,
+        name,
+        two_factor_enabled,
+        two_factor_secret,
+        api_key_openai,
+        api_key_claude,
+        api_key_gemini,
+        api_key_elevenlabs,
+        api_key_mercadopago,
+        api_key_stripe,
+        blocked,
+        created_at,
+        updated_at,
+    ) = result
         .into_rows_result()?
-        .single_row::<(Uuid, String, String, String, Option<bool>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<bool>, DateTime<Utc>, DateTime<Utc>)>()
+        .single_row::<(
+            Uuid,
+            String,
+            String,
+            String,
+            Option<bool>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<bool>,
+            DateTime<Utc>,
+            DateTime<Utc>,
+        )>()
         .map_err(|_| AppError::NotFound("User not found".into()))?;
 
     Ok(User {
@@ -350,12 +394,37 @@ pub async fn delete_account(
         for row in rows.rows::<(Uuid,)>().into_iter().flatten().flatten() {
             let assistant_id = row.0;
             // Delete related data
-            let _ = db.query_unpaged("DELETE FROM inertial_eclipse.assistant_tools WHERE assistant_id = ?", (&assistant_id,)).await;
-            let _ = db.query_unpaged("DELETE FROM inertial_eclipse.assistant_files WHERE assistant_id = ?", (&assistant_id,)).await;
-            let _ = db.query_unpaged("DELETE FROM inertial_eclipse.integrations WHERE assistant_id = ?", (&assistant_id,)).await;
-            let _ = db.query_unpaged("DELETE FROM inertial_eclipse.conversations WHERE assistant_id = ?", (&assistant_id,)).await;
+            let _ = db
+                .query_unpaged(
+                    "DELETE FROM inertial_eclipse.assistant_tools WHERE assistant_id = ?",
+                    (&assistant_id,),
+                )
+                .await;
+            let _ = db
+                .query_unpaged(
+                    "DELETE FROM inertial_eclipse.assistant_files WHERE assistant_id = ?",
+                    (&assistant_id,),
+                )
+                .await;
+            let _ = db
+                .query_unpaged(
+                    "DELETE FROM inertial_eclipse.integrations WHERE assistant_id = ?",
+                    (&assistant_id,),
+                )
+                .await;
+            let _ = db
+                .query_unpaged(
+                    "DELETE FROM inertial_eclipse.conversations WHERE assistant_id = ?",
+                    (&assistant_id,),
+                )
+                .await;
         }
-        let _ = db.query_unpaged("DELETE FROM inertial_eclipse.assistants WHERE user_id = ?", (user_id,)).await;
+        let _ = db
+            .query_unpaged(
+                "DELETE FROM inertial_eclipse.assistants WHERE user_id = ?",
+                (user_id,),
+            )
+            .await;
     }
 
     // Delete user
@@ -376,11 +445,7 @@ pub fn generate_reset_token() -> String {
     base64::Engine::encode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, &bytes)
 }
 
-pub async fn save_reset_token(
-    db: &DbSession,
-    user_id: &Uuid,
-    token: &str,
-) -> Result<(), AppError> {
+pub async fn save_reset_token(db: &DbSession, user_id: &Uuid, token: &str) -> Result<(), AppError> {
     let val = format!("reset:{token}");
     db.query_unpaged(
         "UPDATE inertial_eclipse.users SET two_factor_secret = ? WHERE id = ?",
@@ -490,8 +555,12 @@ pub async fn get_avatar(db: &DbSession, user_id: &Uuid) -> Result<(String, Vec<u
         .single_row::<(Option<String>, Option<Vec<u8>>)>()
         .map_err(|_| AppError::NotFound("User not found".into()))?;
 
-    let mime = row.0.ok_or_else(|| AppError::NotFound("No avatar".into()))?;
-    let data = row.1.ok_or_else(|| AppError::NotFound("No avatar data".into()))?;
+    let mime = row
+        .0
+        .ok_or_else(|| AppError::NotFound("No avatar".into()))?;
+    let data = row
+        .1
+        .ok_or_else(|| AppError::NotFound("No avatar data".into()))?;
 
     if mime.is_empty() || data.is_empty() {
         return Err(AppError::NotFound("No avatar".into()));
@@ -500,7 +569,10 @@ pub async fn get_avatar(db: &DbSession, user_id: &Uuid) -> Result<(String, Vec<u
     Ok((mime, data))
 }
 
-pub async fn get_user_public_with_avatar(db: &DbSession, user_id: &Uuid) -> Result<UserPublic, AppError> {
+pub async fn get_user_public_with_avatar(
+    db: &DbSession,
+    user_id: &Uuid,
+) -> Result<UserPublic, AppError> {
     let user = get_user_by_id(db, user_id).await?;
     let avatar = has_avatar(db, user_id).await;
     Ok(UserPublic {

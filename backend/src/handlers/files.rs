@@ -33,8 +33,13 @@ pub async fn upload(
     mut multipart: Multipart,
 ) -> Result<Json<Value>, AppError> {
     let owner_id = assistant_service::resolve_assistant_access(
-        &db, &auth_user.workspace_id, &assistant_id, query.share_token.as_deref(), "admin",
-    ).await?;
+        &db,
+        &auth_user.workspace_id,
+        &assistant_id,
+        query.share_token.as_deref(),
+        "admin",
+    )
+    .await?;
 
     let mut file_name = String::new();
     let mut file_bytes = Vec::new();
@@ -46,14 +51,8 @@ pub async fn upload(
         .map_err(|e| AppError::BadRequest(format!("Multipart error: {e}")))?
     {
         if field.name() == Some("file") {
-            file_name = field
-                .file_name()
-                .unwrap_or("unnamed")
-                .to_string();
-            mime_type = field
-                .content_type()
-                .unwrap_or("text/plain")
-                .to_string();
+            file_name = field.file_name().unwrap_or("unnamed").to_string();
+            mime_type = field.content_type().unwrap_or("text/plain").to_string();
 
             // Infer mime from extension if generic
             if mime_type == "application/octet-stream" {
@@ -113,8 +112,13 @@ pub async fn list(
     Query(query): Query<ShareTokenQuery>,
 ) -> Result<Json<Vec<FileResponse>>, AppError> {
     let owner_id = assistant_service::resolve_assistant_access(
-        &db, &auth_user.workspace_id, &assistant_id, query.share_token.as_deref(), "read",
-    ).await?;
+        &db,
+        &auth_user.workspace_id,
+        &assistant_id,
+        query.share_token.as_deref(),
+        "read",
+    )
+    .await?;
     let files = rag::list_files(&db, &assistant_id, &owner_id).await?;
 
     Ok(Json(
@@ -138,8 +142,13 @@ pub async fn delete(
     Query(query): Query<ShareTokenQuery>,
 ) -> Result<Json<Value>, AppError> {
     let owner_id = assistant_service::resolve_assistant_access(
-        &db, &auth_user.workspace_id, &assistant_id, query.share_token.as_deref(), "admin",
-    ).await?;
+        &db,
+        &auth_user.workspace_id,
+        &assistant_id,
+        query.share_token.as_deref(),
+        "admin",
+    )
+    .await?;
     rag::delete_file(&db, &assistant_id, &owner_id, &file_id).await?;
     Ok(Json(json!({"message": "File deleted"})))
 }

@@ -237,7 +237,9 @@ pub async fn chat(
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, AppError> {
     let api_key = config.baisync_api_key.clone();
     if api_key.is_empty() {
-        return Err(AppError::InternalError("BAISYNC_API_KEY not configured".into()));
+        return Err(AppError::InternalError(
+            "BAISYNC_API_KEY not configured".into(),
+        ));
     }
 
     let user_id = auth_user.user_id;
@@ -254,7 +256,9 @@ pub async fn chat(
 
     // Build system prompt
     let user = crate::services::auth::get_user_by_id(&db, &user_id).await?;
-    let assistants = crate::services::assistant::list_assistants(&db, &user_id).await.unwrap_or_default();
+    let assistants = crate::services::assistant::list_assistants(&db, &user_id)
+        .await
+        .unwrap_or_default();
 
     let mut assistant_details = Vec::new();
     for a in &assistants {
@@ -282,11 +286,14 @@ pub async fn chat(
         }
 
         // Fetch integrations
-        if let Ok(integrations) = crate::services::assistant::list_integrations(&db, &a.id, &user_id).await {
+        if let Ok(integrations) =
+            crate::services::assistant::list_integrations(&db, &a.id, &user_id).await
+        {
             if !integrations.is_empty() {
-                let int_list: Vec<String> = integrations.iter().map(|i| {
-                    format!("{}/{} (status: {})", i.channel, i.provider, i.status)
-                }).collect();
+                let int_list: Vec<String> = integrations
+                    .iter()
+                    .map(|i| format!("{}/{} (status: {})", i.channel, i.provider, i.status))
+                    .collect();
                 detail.push_str(&format!("\n- Integrações: {}", int_list.join(", ")));
             }
         }
@@ -294,9 +301,16 @@ pub async fn chat(
         // Fetch tools
         if let Ok(tools) = crate::services::assistant::list_tools(&db, &a.id).await {
             if !tools.is_empty() {
-                let tool_list: Vec<String> = tools.iter().map(|t| {
-                    format!("{} ({})", t.name, if t.is_enabled { "ativo" } else { "inativo" })
-                }).collect();
+                let tool_list: Vec<String> = tools
+                    .iter()
+                    .map(|t| {
+                        format!(
+                            "{} ({})",
+                            t.name,
+                            if t.is_enabled { "ativo" } else { "inativo" }
+                        )
+                    })
+                    .collect();
                 detail.push_str(&format!("\n- Ferramentas: {}", tool_list.join(", ")));
             }
         }
@@ -304,9 +318,10 @@ pub async fn chat(
         // Fetch files
         if let Ok(files) = crate::services::rag::list_files(&db, &a.id, &user_id).await {
             if !files.is_empty() {
-                let file_list: Vec<String> = files.iter().map(|f| {
-                    format!("{} ({})", f.name, f.mime_type)
-                }).collect();
+                let file_list: Vec<String> = files
+                    .iter()
+                    .map(|f| format!("{} ({})", f.name, f.mime_type))
+                    .collect();
                 detail.push_str(&format!("\n- Arquivos (RAG): {}", file_list.join(", ")));
             }
         }
@@ -324,7 +339,9 @@ pub async fn chat(
     let active_ws_id = crate::services::workspace::get_active_workspace_id(&db, &user_id)
         .await
         .unwrap_or(user_id);
-    let active_ws = crate::services::workspace::get_workspace(&db, &active_ws_id).await.ok();
+    let active_ws = crate::services::workspace::get_workspace(&db, &active_ws_id)
+        .await
+        .ok();
     let user_workspaces = crate::services::workspace::list_user_workspaces(&db, &user_id)
         .await
         .unwrap_or_default();
@@ -341,7 +358,11 @@ pub async fn chat(
         let ws_list: Vec<String> = user_workspaces
             .iter()
             .map(|w| {
-                let marker = if w.workspace_id == active_ws_id { " <- ativo" } else { "" };
+                let marker = if w.workspace_id == active_ws_id {
+                    " <- ativo"
+                } else {
+                    ""
+                };
                 format!(
                     "  - {} (id: {}, tipo: {}, role: {}){}",
                     w.workspace_name, w.workspace_id, w.workspace_type, w.role, marker
@@ -634,7 +655,11 @@ O usuário pode enviar imagens e documentos diretamente no chat. Quando receber 
 - Para ações de workspace/canais, use os IDs do Contexto de Workspaces. Se o usuário mencionar um canal pelo nome (ex: #geral), encontre o channel_id na lista.
 - Quando o usuário pedir informações de outro workspace, use o workspace_id correspondente. Você só pode acessar workspaces listados no contexto.
 - Ações como get_channel_messages e send_channel_message funcionam com qualquer canal que o usuário tenha acesso, independente do workspace ativo."#,
-        user_name = if user.name.is_empty() { "Usuário" } else { &user.name },
+        user_name = if user.name.is_empty() {
+            "Usuário"
+        } else {
+            &user.name
+        },
         user_email = user.email,
         assistant_list = assistant_list,
         workspace_context = workspace_context,
@@ -726,10 +751,11 @@ O usuário pode enviar imagens e documentos diretamente no chat. Quando receber 
                 .await;
 
             let file_id = match upload_res {
-                Ok(res) if res.status().is_success() => {
-                    res.json::<serde_json::Value>().await.ok()
-                        .and_then(|body| body["id"].as_str().map(String::from))
-                }
+                Ok(res) if res.status().is_success() => res
+                    .json::<serde_json::Value>()
+                    .await
+                    .ok()
+                    .and_then(|body| body["id"].as_str().map(String::from)),
                 Ok(res) => {
                     let err = res.text().await.unwrap_or_default();
                     tracing::error!("OpenAI file upload failed: {}", err);
@@ -742,12 +768,17 @@ O usuário pode enviar imagens e documentos diretamente no chat. Quando receber 
             };
 
             let Some(file_id) = file_id else {
-                return Err(AppError::BadRequest(
-                    format!("Não foi possível processar o arquivo \"{}\". Tente novamente.", att.name)
-                ));
+                return Err(AppError::BadRequest(format!(
+                    "Não foi possível processar o arquivo \"{}\". Tente novamente.",
+                    att.name
+                )));
             };
 
-            let kind = if att.mime_type.starts_with("image/") { "image" } else { "file" };
+            let kind = if att.mime_type.starts_with("image/") {
+                "image"
+            } else {
+                "file"
+            };
             uploaded_file_refs.push(serde_json::json!({"id": file_id, "kind": kind}));
 
             if att.mime_type.starts_with("image/") {
@@ -784,17 +815,17 @@ O usuário pode enviar imagens e documentos diretamente no chat. Quando receber 
         // Send uploaded file refs so frontend can persist them for history
         if !uploaded_file_refs.is_empty() {
             let _ = tx
-                .send(Ok(Event::default()
-                    .event("file_refs")
-                    .data(serde_json::json!({"file_refs": uploaded_file_refs}).to_string())))
+                .send(Ok(Event::default().event("file_refs").data(
+                    serde_json::json!({"file_refs": uploaded_file_refs}).to_string(),
+                )))
                 .await;
         }
 
         // Send thinking status
         let _ = tx
-            .send(Ok(Event::default()
-                .event("status")
-                .data(serde_json::json!({"text": "Analisando mensagem..."}).to_string())))
+            .send(Ok(Event::default().event("status").data(
+                serde_json::json!({"text": "Analisando mensagem..."}).to_string(),
+            )))
             .await;
 
         // Call OpenAI Responses API with streaming
@@ -815,9 +846,9 @@ O usuário pode enviar imagens e documentos diretamente no chat. Quando receber 
             .await;
 
         let _ = tx
-            .send(Ok(Event::default()
-                .event("status")
-                .data(serde_json::json!({"text": "Pensando sobre o problema..."}).to_string())))
+            .send(Ok(Event::default().event("status").data(
+                serde_json::json!({"text": "Pensando sobre o problema..."}).to_string(),
+            )))
             .await;
 
         match resp {
@@ -855,7 +886,9 @@ O usuário pode enviar imagens e documentos diretamente no chat. Quando receber 
                                 }
 
                                 if let Some(data) = line.strip_prefix("data: ") {
-                                    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(data) {
+                                    if let Ok(parsed) =
+                                        serde_json::from_str::<serde_json::Value>(data)
+                                    {
                                         let event_type = parsed["type"].as_str().unwrap_or("");
 
                                         // response.output_text.delta contains streaming text
@@ -863,9 +896,10 @@ O usuário pode enviar imagens e documentos diretamente no chat. Quando receber 
                                             if let Some(delta) = parsed["delta"].as_str() {
                                                 full_content.push_str(delta);
                                                 let _ = tx
-                                                    .send(Ok(Event::default()
-                                                        .event("token")
-                                                        .data(serde_json::json!({"text": delta}).to_string())))
+                                                    .send(Ok(Event::default().event("token").data(
+                                                        serde_json::json!({"text": delta})
+                                                            .to_string(),
+                                                    )))
                                                     .await;
                                             }
                                         }
@@ -897,13 +931,17 @@ O usuário pode enviar imagens e documentos diretamente no chat. Quando receber 
                         "pct": pct as i32,
                         "warning": warning_msg,
                     });
-                    let _ = tx.send(Ok(Event::default().event("rate_limit").data(rl_data.to_string()))).await;
+                    let _ = tx
+                        .send(Ok(Event::default()
+                            .event("rate_limit")
+                            .data(rl_data.to_string())))
+                        .await;
                 }
 
                 let _ = tx
-                    .send(Ok(Event::default()
-                        .event("done")
-                        .data(serde_json::json!({"content_length": full_content.len()}).to_string())))
+                    .send(Ok(Event::default().event("done").data(
+                        serde_json::json!({"content_length": full_content.len()}).to_string(),
+                    )))
                     .await;
             }
             Err(e) => {

@@ -6,7 +6,9 @@ use uuid::Uuid;
 use crate::db::DbSession;
 use crate::errors::AppError;
 use crate::middleware::auth::AuthUser;
-use crate::models::swot::{CreateSwotItemRequest, CreateSwotRequest, UpdateSwotItemRequest, UpdateSwotRequest};
+use crate::models::swot::{
+    CreateSwotItemRequest, CreateSwotRequest, UpdateSwotItemRequest, UpdateSwotRequest,
+};
 use crate::services::swot as swot_service;
 use crate::services::workspace as ws_service;
 
@@ -28,13 +30,20 @@ pub async fn create_analysis(
 ) -> Result<Json<serde_json::Value>, AppError> {
     let role = ws_service::get_member_role(&db, &workspace_id, &auth_user.user_id).await?;
     if role != "owner" && role != "admin" {
-        return Err(AppError::Forbidden("Apenas administradores podem criar análises SWOT".into()));
+        return Err(AppError::Forbidden(
+            "Apenas administradores podem criar análises SWOT".into(),
+        ));
     }
 
     let analysis = swot_service::create_analysis(
-        &db, &workspace_id, &body.title, body.description.as_deref(),
-        body.cycle.as_deref(), &auth_user.user_id,
-    ).await?;
+        &db,
+        &workspace_id,
+        &body.title,
+        body.description.as_deref(),
+        body.cycle.as_deref(),
+        &auth_user.user_id,
+    )
+    .await?;
 
     Ok(Json(json!({ "analysis": analysis })))
 }
@@ -57,7 +66,9 @@ pub async fn update_analysis(
 ) -> Result<Json<serde_json::Value>, AppError> {
     let role = ws_service::get_member_role(&db, &workspace_id, &auth_user.user_id).await?;
     if role != "owner" && role != "admin" {
-        return Err(AppError::Forbidden("Apenas administradores podem editar análises SWOT".into()));
+        return Err(AppError::Forbidden(
+            "Apenas administradores podem editar análises SWOT".into(),
+        ));
     }
 
     let now = scylla::frame::value::CqlTimestamp(chrono::Utc::now().timestamp_millis());
@@ -85,7 +96,9 @@ pub async fn delete_analysis(
 ) -> Result<Json<serde_json::Value>, AppError> {
     let role = ws_service::get_member_role(&db, &workspace_id, &auth_user.user_id).await?;
     if role != "owner" && role != "admin" {
-        return Err(AppError::Forbidden("Apenas administradores podem excluir análises SWOT".into()));
+        return Err(AppError::Forbidden(
+            "Apenas administradores podem excluir análises SWOT".into(),
+        ));
     }
 
     swot_service::delete_analysis(&db, &workspace_id, &analysis_id).await?;
@@ -101,9 +114,15 @@ pub async fn create_item(
     Json(body): Json<CreateSwotItemRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let item = swot_service::create_item(
-        &db, &analysis_id, &body.quadrant, &body.content,
-        body.priority, body.linked_objective_id.as_ref(), &auth_user.user_id,
-    ).await?;
+        &db,
+        &analysis_id,
+        &body.quadrant,
+        &body.content,
+        body.priority,
+        body.linked_objective_id.as_ref(),
+        &auth_user.user_id,
+    )
+    .await?;
 
     Ok(Json(json!({ "item": item })))
 }
@@ -115,10 +134,16 @@ pub async fn update_item(
     Json(body): Json<UpdateSwotItemRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     swot_service::update_item(
-        &db, &analysis_id, &item_id,
-        body.content.as_deref(), body.priority, body.quadrant.as_deref(),
-        body.linked_objective_id.as_ref(), body.position,
-    ).await?;
+        &db,
+        &analysis_id,
+        &item_id,
+        body.content.as_deref(),
+        body.priority,
+        body.quadrant.as_deref(),
+        body.linked_objective_id.as_ref(),
+        body.position,
+    )
+    .await?;
 
     Ok(Json(json!({ "success": true })))
 }

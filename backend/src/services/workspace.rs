@@ -101,7 +101,8 @@ pub async fn get_workspace(db: &DbSession, workspace_id: &Uuid) -> Result<Worksp
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     let (id, name, workspace_type, owner_id, created_at, updated_at) = result
-        .into_rows_result()?.single_row::<(Uuid, String, String, Uuid, DateTime<Utc>, DateTime<Utc>)>()
+        .into_rows_result()?
+        .single_row::<(Uuid, String, String, Uuid, DateTime<Utc>, DateTime<Utc>)>()
         .map_err(|_| AppError::NotFound("Workspace not found".into()))?;
 
     Ok(Workspace {
@@ -141,22 +142,23 @@ pub async fn update_workspace(
     Ok(())
 }
 
-pub async fn delete_workspace(
-    db: &DbSession,
-    workspace_id: &Uuid,
-) -> Result<(), AppError> {
+pub async fn delete_workspace(db: &DbSession, workspace_id: &Uuid) -> Result<(), AppError> {
     // Remove all members and their denormalized entries
     let members = list_members(db, workspace_id).await?;
     for m in &members {
         remove_member(db, workspace_id, &m.user_id).await?;
 
         // Reset active workspace to personal if they were on this workspace
-        let active = get_active_workspace_id(db, &m.user_id).await.unwrap_or(m.user_id);
+        let active = get_active_workspace_id(db, &m.user_id)
+            .await
+            .unwrap_or(m.user_id);
         if active == *workspace_id {
-            let _ = db.query_unpaged(
-                "UPDATE inertial_eclipse.users SET active_workspace_id = ? WHERE id = ?",
-                (&m.user_id, &m.user_id),
-            ).await;
+            let _ = db
+                .query_unpaged(
+                    "UPDATE inertial_eclipse.users SET active_workspace_id = ? WHERE id = ?",
+                    (&m.user_id, &m.user_id),
+                )
+                .await;
         }
     }
 
@@ -202,7 +204,17 @@ pub async fn list_user_workspaces(
     let rows = result.into_rows_result()?;
 
     let mut workspaces = Vec::new();
-    for row in rows.rows::<(Uuid, Uuid, Option<String>, Option<String>, Option<String>, DateTime<Utc>)>()?.flatten() {
+    for row in rows
+        .rows::<(
+            Uuid,
+            Uuid,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            DateTime<Utc>,
+        )>()?
+        .flatten()
+    {
         workspaces.push(UserWorkspace {
             user_id: row.0,
             workspace_id: row.1,
@@ -234,10 +246,7 @@ pub async fn switch_workspace(
     Ok(())
 }
 
-pub async fn get_active_workspace_id(
-    db: &DbSession,
-    user_id: &Uuid,
-) -> Result<Uuid, AppError> {
+pub async fn get_active_workspace_id(db: &DbSession, user_id: &Uuid) -> Result<Uuid, AppError> {
     let result = db
         .query_unpaged(
             "SELECT active_workspace_id FROM inertial_eclipse.users WHERE id = ?",
@@ -247,7 +256,8 @@ pub async fn get_active_workspace_id(
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     let (active_ws,) = result
-        .into_rows_result()?.single_row::<(Option<Uuid>,)>()
+        .into_rows_result()?
+        .single_row::<(Option<Uuid>,)>()
         .map_err(|_| AppError::NotFound("User not found".into()))?;
 
     // Fallback to user_id if no active workspace set
@@ -344,7 +354,10 @@ pub async fn list_members(
     let rows = result.into_rows_result()?;
 
     let mut members = Vec::new();
-    for row in rows.rows::<(Uuid, Uuid, String, Option<Uuid>, DateTime<Utc>)>()?.flatten() {
+    for row in rows
+        .rows::<(Uuid, Uuid, String, Option<Uuid>, DateTime<Utc>)>()?
+        .flatten()
+    {
         // Fetch user name and email
         let user_info = db
             .query_unpaged(
@@ -389,7 +402,8 @@ pub async fn get_member_role(
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     let (role,) = result
-        .into_rows_result()?.single_row::<(String,)>()
+        .into_rows_result()?
+        .single_row::<(String,)>()
         .map_err(|_| AppError::Forbidden("Not a member of this workspace".into()))?;
 
     Ok(role)
@@ -434,7 +448,10 @@ pub fn can_add_items(role: &str) -> bool {
 /// Can perform check-ins on key results
 #[allow(dead_code)]
 pub fn can_checkin(role: &str) -> bool {
-    matches!(role, "owner" | "admin" | "strategist" | "analyst" | "member")
+    matches!(
+        role,
+        "owner" | "admin" | "strategist" | "analyst" | "member"
+    )
 }
 
 /// Can manage workspace settings, invite/remove members
@@ -488,10 +505,7 @@ pub async fn create_invite(
     })
 }
 
-pub async fn get_invite_by_token(
-    db: &DbSession,
-    token: &str,
-) -> Result<WorkspaceInvite, AppError> {
+pub async fn get_invite_by_token(db: &DbSession, token: &str) -> Result<WorkspaceInvite, AppError> {
     let result = db
         .query_unpaged(
             "SELECT id, workspace_id, email, role, invited_by, \"token\", expires_at, accepted, created_at FROM inertial_eclipse.workspace_invites WHERE \"token\" = ? ALLOW FILTERING",
@@ -501,7 +515,18 @@ pub async fn get_invite_by_token(
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     let (id, workspace_id, email, role, invited_by, tok, expires_at, accepted, created_at) = result
-        .into_rows_result()?.single_row::<(Uuid, Uuid, String, String, Uuid, String, DateTime<Utc>, Option<bool>, DateTime<Utc>)>()
+        .into_rows_result()?
+        .single_row::<(
+            Uuid,
+            Uuid,
+            String,
+            String,
+            Uuid,
+            String,
+            DateTime<Utc>,
+            Option<bool>,
+            DateTime<Utc>,
+        )>()
         .map_err(|_| AppError::NotFound("Invite not found".into()))?;
 
     Ok(WorkspaceInvite {
@@ -538,7 +563,14 @@ pub async fn accept_invite(
     .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     // Add user as member
-    add_member(db, &invite.workspace_id, user_id, &invite.role, Some(&invite.invited_by)).await?;
+    add_member(
+        db,
+        &invite.workspace_id,
+        user_id,
+        &invite.role,
+        Some(&invite.invited_by),
+    )
+    .await?;
 
     Ok(())
 }
@@ -557,7 +589,18 @@ pub async fn get_api_keys(
         .await
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
-    match result.into_rows_result()?.maybe_first_row::<(Uuid, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<DateTime<Utc>>)>() {
+    match result.into_rows_result()?.maybe_first_row::<(
+        Uuid,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<DateTime<Utc>>,
+    )>() {
         Ok(Some(row)) => Ok(WorkspaceApiKeys {
             workspace_id: row.0,
             openai_api_key: row.1,
@@ -594,19 +637,23 @@ pub async fn update_api_keys(
     let current = get_api_keys(db, workspace_id).await?;
     let now = ts_now();
 
-    let encrypt_opt = |raw: Option<&str>, current: Option<String>| -> Result<Option<String>, AppError> {
-        match raw {
-            Some(key) if !key.is_empty() => Ok(Some(encryption.encrypt(key)?)),
-            Some(_) => Ok(None), // empty string = clear
-            None => Ok(current),
-        }
-    };
+    let encrypt_opt =
+        |raw: Option<&str>, current: Option<String>| -> Result<Option<String>, AppError> {
+            match raw {
+                Some(key) if !key.is_empty() => Ok(Some(encryption.encrypt(key)?)),
+                Some(_) => Ok(None), // empty string = clear
+                None => Ok(current),
+            }
+        };
 
     let openai = encrypt_opt(updates["openai"].as_str(), current.openai_api_key)?;
     let claude = encrypt_opt(updates["claude"].as_str(), current.claude_api_key)?;
     let gemini = encrypt_opt(updates["gemini"].as_str(), current.gemini_api_key)?;
     let elevenlabs = encrypt_opt(updates["elevenlabs"].as_str(), current.elevenlabs_api_key)?;
-    let mercadopago = encrypt_opt(updates["mercadopago"].as_str(), current.mercadopago_access_token)?;
+    let mercadopago = encrypt_opt(
+        updates["mercadopago"].as_str(),
+        current.mercadopago_access_token,
+    )?;
     let stripe = encrypt_opt(updates["stripe"].as_str(), current.stripe_secret_key)?;
 
     // Public keys (not encrypted)
@@ -694,7 +741,9 @@ pub async fn get_decrypted_api_key(
         }
     }
 
-    Err(AppError::BadRequest(format!("API key not configured for provider: {provider}")))
+    Err(AppError::BadRequest(format!(
+        "API key not configured for provider: {provider}"
+    )))
 }
 
 /// Check which API keys are configured for a workspace (includes user fallback).
@@ -756,7 +805,14 @@ pub async fn migrate_user_api_keys(
 
     let rows_result = result.into_rows_result()?;
     if let Ok(Some((openai, claude, gemini, elevenlabs, mercadopago, stripe))) = rows_result
-        .maybe_first_row::<(Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>)>()
+        .maybe_first_row::<(
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+        )>()
     {
         // Also fetch public keys
         let pks = db
@@ -767,7 +823,11 @@ pub async fn migrate_user_api_keys(
             .await
             .ok()
             .and_then(|r| r.into_rows_result().ok())
-            .and_then(|r| r.maybe_first_row::<(Option<String>, Option<String>)>().ok().flatten());
+            .and_then(|r| {
+                r.maybe_first_row::<(Option<String>, Option<String>)>()
+                    .ok()
+                    .flatten()
+            });
         let (stripe_pk, mp_pk) = pks.unwrap_or((None, None));
 
         let now = ts_now();

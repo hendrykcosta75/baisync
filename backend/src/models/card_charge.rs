@@ -17,8 +17,8 @@ pub struct CardCharge {
     pub status: String,
     pub customer_name: Option<String>,
     pub customer_cpf: Option<String>,
-    pub payment_type: String,  // "credit" or "debit"
-    pub installments: i32,     // 1 for debit, 1-12 for credit
+    pub payment_type: String, // "credit" or "debit"
+    pub installments: i32,    // 1 for debit, 1-12 for credit
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

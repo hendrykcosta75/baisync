@@ -89,12 +89,15 @@ mod tests {
     #[test]
     fn create_appointment_request_full() {
         let ast_id = Uuid::new_v4();
-        let json = format!(r#"{{
+        let json = format!(
+            r#"{{
             "assistant_id":"{}","client_name":"Jane","client_email":"jane@test.com",
             "client_phone":"+5511888","date_time":"2026-06-01T14:00:00Z",
             "duration_minutes":60,"appointment_type":"consultation",
             "notes":"First visit","is_manual":true
-        }}"#, ast_id);
+        }}"#,
+            ast_id
+        );
         let req: CreateAppointmentRequest = serde_json::from_str(&json).unwrap();
         assert_eq!(req.assistant_id, Some(ast_id));
         assert_eq!(req.client_email, Some("jane@test.com".into()));

@@ -197,7 +197,10 @@ mod tests {
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };
-        let with_unread = ChannelWithUnread { channel, unread_count: 5 };
+        let with_unread = ChannelWithUnread {
+            channel,
+            unread_count: 5,
+        };
         let json = serde_json::to_value(&with_unread).unwrap();
         assert_eq!(json["name"], "test");
         assert_eq!(json["unread_count"], 5);
@@ -253,7 +256,10 @@ mod tests {
         // canvas_data has #[serde(default)] so it should default to empty string
         let json = format!(
             r#"{{"channel_id":"{}","id":"{}","title":"Canvas","created_by":"{}","updated_by":"{}","created_at":"2024-01-01T00:00:00Z","updated_at":"2024-01-01T00:00:00Z"}}"#,
-            Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4()
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4()
         );
         let canvas: ChannelCanvas = serde_json::from_str(&json).unwrap();
         assert_eq!(canvas.canvas_data, "");

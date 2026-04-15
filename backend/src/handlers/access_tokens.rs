@@ -75,7 +75,8 @@ pub async fn list_tokens(
 
     let mut tokens = Vec::new();
     let rows = result.into_rows_result()?;
-    for row in rows.rows::<(
+    for row in rows
+        .rows::<(
             Uuid,
             String,
             String,
@@ -84,7 +85,8 @@ pub async fn list_tokens(
             Option<chrono::DateTime<Utc>>,
             chrono::DateTime<Utc>,
             bool,
-        )>()?.flatten()
+        )>()?
+        .flatten()
     {
         let (id, name, token, permission_level, email, expires_at, created_at, is_revoked) = row;
         tokens.push(AccessToken {
@@ -115,9 +117,8 @@ pub async fn create_token(
     let id = Uuid::new_v4();
     let token = generate_token();
     let now = Utc::now();
-    let expires_at: Option<chrono::DateTime<Utc>> = req
-        .expires_in_days
-        .map(|d| now + chrono::Duration::days(d));
+    let expires_at: Option<chrono::DateTime<Utc>> =
+        req.expires_in_days.map(|d| now + chrono::Duration::days(d));
 
     let is_revoked = false;
     db.query_unpaged(
@@ -151,7 +152,13 @@ pub async fn create_token(
             level_label = level_label,
             token = token
         );
-        let _ = email::send_email(&config, recipient, "Seu token de acesso - Inertial Eclipse", &body).await;
+        let _ = email::send_email(
+            &config,
+            recipient,
+            "Seu token de acesso - Inertial Eclipse",
+            &body,
+        )
+        .await;
     }
 
     Ok(Json(AccessToken {

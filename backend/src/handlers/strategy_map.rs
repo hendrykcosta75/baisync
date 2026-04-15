@@ -56,7 +56,9 @@ pub async fn create_node(
 ) -> Result<Json<serde_json::Value>, AppError> {
     let role = ws_service::get_member_role(&db, &workspace_id, &auth_user.user_id).await?;
     if role != "owner" && role != "admin" {
-        return Err(AppError::Forbidden("Apenas administradores podem editar o mapa".into()));
+        return Err(AppError::Forbidden(
+            "Apenas administradores podem editar o mapa".into(),
+        ));
     }
 
     let mut entity_id = body.entity_id;
@@ -68,17 +70,35 @@ pub async fn create_node(
         let cycle = format!("{}-Q{}", now.year(), quarter);
 
         let obj = okr_service::create_objective(
-            &db, &workspace_id, &body.label, None,
-            "committed", &cycle, &auth_user.user_id, None, None, None,
-        ).await?;
+            &db,
+            &workspace_id,
+            &body.label,
+            None,
+            "committed",
+            &cycle,
+            &auth_user.user_id,
+            None,
+            None,
+            None,
+        )
+        .await?;
         entity_id = Some(obj.id);
     }
 
     let node = map_service::create_node(
-        &db, &workspace_id, &body.node_type, entity_id.as_ref(),
-        &body.label, body.position_x, body.position_y, body.width, body.height,
-        body.style_data.as_deref(), body.bsc_perspective.as_deref(),
-    ).await?;
+        &db,
+        &workspace_id,
+        &body.node_type,
+        entity_id.as_ref(),
+        &body.label,
+        body.position_x,
+        body.position_y,
+        body.width,
+        body.height,
+        body.style_data.as_deref(),
+        body.bsc_perspective.as_deref(),
+    )
+    .await?;
 
     Ok(Json(json!({ "node": node })))
 }
@@ -91,7 +111,9 @@ pub async fn update_node(
 ) -> Result<Json<serde_json::Value>, AppError> {
     let role = ws_service::get_member_role(&db, &workspace_id, &auth_user.user_id).await?;
     if role != "owner" && role != "admin" {
-        return Err(AppError::Forbidden("Apenas administradores podem editar o mapa".into()));
+        return Err(AppError::Forbidden(
+            "Apenas administradores podem editar o mapa".into(),
+        ));
     }
 
     // If label changed, sync to linked entity
@@ -102,14 +124,32 @@ pub async fn update_node(
                 match node.node_type.as_str() {
                     "objective" => {
                         if let Err(e) = okr_service::update_objective(
-                            &db, &workspace_id, &entity_id,
-                            Some(new_label.as_str()), None, None, None, None, None, None, None, None,
-                        ).await {
-                            tracing::warn!("Failed to sync label to objective {}: {}", entity_id, e);
+                            &db,
+                            &workspace_id,
+                            &entity_id,
+                            Some(new_label.as_str()),
+                            None,
+                            None,
+                            None,
+                            None,
+                            None,
+                            None,
+                            None,
+                            None,
+                        )
+                        .await
+                        {
+                            tracing::warn!(
+                                "Failed to sync label to objective {}: {}",
+                                entity_id,
+                                e
+                            );
                         }
                     }
                     "key_result" => {
-                        if let Err(e) = okr_service::update_key_result_title(&db, &entity_id, new_label).await {
+                        if let Err(e) =
+                            okr_service::update_key_result_title(&db, &entity_id, new_label).await
+                        {
                             tracing::warn!("Failed to sync label to KR {}: {}", entity_id, e);
                         }
                     }
@@ -120,10 +160,18 @@ pub async fn update_node(
     }
 
     map_service::update_node(
-        &db, &workspace_id, &node_id,
-        body.label.as_deref(), body.position_x, body.position_y,
-        body.width, body.height, body.style_data.as_deref(), body.bsc_perspective.as_deref(),
-    ).await?;
+        &db,
+        &workspace_id,
+        &node_id,
+        body.label.as_deref(),
+        body.position_x,
+        body.position_y,
+        body.width,
+        body.height,
+        body.style_data.as_deref(),
+        body.bsc_perspective.as_deref(),
+    )
+    .await?;
 
     Ok(Json(json!({ "success": true })))
 }
@@ -135,7 +183,9 @@ pub async fn delete_node(
 ) -> Result<Json<serde_json::Value>, AppError> {
     let role = ws_service::get_member_role(&db, &workspace_id, &auth_user.user_id).await?;
     if role != "owner" && role != "admin" {
-        return Err(AppError::Forbidden("Apenas administradores podem editar o mapa".into()));
+        return Err(AppError::Forbidden(
+            "Apenas administradores podem editar o mapa".into(),
+        ));
     }
 
     // If the node is linked to an OKR entity, delete that entity too
@@ -144,13 +194,18 @@ pub async fn delete_node(
         if let Some(entity_id) = node.entity_id {
             match node.node_type.as_str() {
                 "objective" => {
-                    if let Err(e) = okr_service::delete_objective(&db, &workspace_id, &entity_id).await {
+                    if let Err(e) =
+                        okr_service::delete_objective(&db, &workspace_id, &entity_id).await
+                    {
                         tracing::warn!("Failed to delete linked objective {}: {}", entity_id, e);
                     }
                 }
                 "key_result" => {
-                    if let Some(obj_id) = okr_service::find_objective_for_kr(&db, &entity_id).await {
-                        if let Err(e) = okr_service::delete_key_result(&db, &obj_id, &entity_id).await {
+                    if let Some(obj_id) = okr_service::find_objective_for_kr(&db, &entity_id).await
+                    {
+                        if let Err(e) =
+                            okr_service::delete_key_result(&db, &obj_id, &entity_id).await
+                        {
                             tracing::warn!("Failed to delete linked KR {}: {}", entity_id, e);
                         }
                     }
@@ -173,10 +228,14 @@ pub async fn batch_update_positions(
 ) -> Result<Json<serde_json::Value>, AppError> {
     let role = ws_service::get_member_role(&db, &workspace_id, &auth_user.user_id).await?;
     if role != "owner" && role != "admin" {
-        return Err(AppError::Forbidden("Apenas administradores podem editar o mapa".into()));
+        return Err(AppError::Forbidden(
+            "Apenas administradores podem editar o mapa".into(),
+        ));
     }
 
-    let updates: Vec<(Uuid, f32, f32)> = body.nodes.iter()
+    let updates: Vec<(Uuid, f32, f32)> = body
+        .nodes
+        .iter()
         .map(|n| (n.id, n.position_x, n.position_y))
         .collect();
 
@@ -193,13 +252,21 @@ pub async fn create_edge(
 ) -> Result<Json<serde_json::Value>, AppError> {
     let role = ws_service::get_member_role(&db, &workspace_id, &auth_user.user_id).await?;
     if role != "owner" && role != "admin" {
-        return Err(AppError::Forbidden("Apenas administradores podem editar o mapa".into()));
+        return Err(AppError::Forbidden(
+            "Apenas administradores podem editar o mapa".into(),
+        ));
     }
 
     let edge = map_service::create_edge(
-        &db, &workspace_id, &body.source_node_id, &body.target_node_id,
-        &body.edge_type, body.label.as_deref(), body.style_data.as_deref(),
-    ).await?;
+        &db,
+        &workspace_id,
+        &body.source_node_id,
+        &body.target_node_id,
+        &body.edge_type,
+        body.label.as_deref(),
+        body.style_data.as_deref(),
+    )
+    .await?;
 
     Ok(Json(json!({ "edge": edge })))
 }
@@ -211,7 +278,9 @@ pub async fn delete_edge(
 ) -> Result<Json<serde_json::Value>, AppError> {
     let role = ws_service::get_member_role(&db, &workspace_id, &auth_user.user_id).await?;
     if role != "owner" && role != "admin" {
-        return Err(AppError::Forbidden("Apenas administradores podem editar o mapa".into()));
+        return Err(AppError::Forbidden(
+            "Apenas administradores podem editar o mapa".into(),
+        ));
     }
 
     map_service::delete_edge(&db, &workspace_id, &edge_id).await?;

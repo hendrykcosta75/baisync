@@ -56,7 +56,19 @@ pub async fn list_analyses(
     let rows = result.into_rows_result()?;
 
     let mut analyses = Vec::new();
-    for row in rows.rows::<(Uuid, Uuid, Option<String>, Option<String>, Option<String>, Option<Uuid>, Option<DateTime<Utc>>, Option<DateTime<Utc>>)>()?.flatten() {
+    for row in rows
+        .rows::<(
+            Uuid,
+            Uuid,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<Uuid>,
+            Option<DateTime<Utc>>,
+            Option<DateTime<Utc>>,
+        )>()?
+        .flatten()
+    {
         analyses.push(SwotAnalysis {
             workspace_id: row.0,
             id: row.1,
@@ -89,7 +101,16 @@ pub async fn get_analysis(
     let row = result
         .into_rows_result()
         .map_err(|_| AppError::NotFound("SWOT analysis not found".into()))?
-        .single_row::<(Uuid, Uuid, Option<String>, Option<String>, Option<String>, Option<Uuid>, Option<DateTime<Utc>>, Option<DateTime<Utc>>)>()
+        .single_row::<(
+            Uuid,
+            Uuid,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<Uuid>,
+            Option<DateTime<Utc>>,
+            Option<DateTime<Utc>>,
+        )>()
         .map_err(|_| AppError::NotFound("SWOT analysis not found".into()))?;
 
     let items = list_items(db, analysis_id).await?;
@@ -115,12 +136,16 @@ pub async fn delete_analysis(
     db.query_unpaged(
         "DELETE FROM inertial_eclipse.swot_items WHERE analysis_id = ?",
         (analysis_id,),
-    ).await.map_err(|e| AppError::DatabaseError(e.to_string()))?;
+    )
+    .await
+    .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     db.query_unpaged(
         "DELETE FROM inertial_eclipse.swot_analyses WHERE workspace_id = ? AND id = ?",
         (workspace_id, analysis_id),
-    ).await.map_err(|e| AppError::DatabaseError(e.to_string()))?;
+    )
+    .await
+    .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     Ok(())
 }
@@ -163,10 +188,7 @@ pub async fn create_item(
     })
 }
 
-pub async fn list_items(
-    db: &DbSession,
-    analysis_id: &Uuid,
-) -> Result<Vec<SwotItem>, AppError> {
+pub async fn list_items(db: &DbSession, analysis_id: &Uuid) -> Result<Vec<SwotItem>, AppError> {
     let result = db
         .query_unpaged(
             "SELECT analysis_id, id, quadrant, content, priority, linked_objective_id, author_id, position, created_at FROM inertial_eclipse.swot_items WHERE analysis_id = ?",
@@ -178,7 +200,20 @@ pub async fn list_items(
     let rows = result.into_rows_result()?;
 
     let mut items = Vec::new();
-    for row in rows.rows::<(Uuid, Uuid, Option<String>, Option<String>, Option<i32>, Option<Uuid>, Option<Uuid>, Option<i32>, Option<DateTime<Utc>>)>()?.flatten() {
+    for row in rows
+        .rows::<(
+            Uuid,
+            Uuid,
+            Option<String>,
+            Option<String>,
+            Option<i32>,
+            Option<Uuid>,
+            Option<Uuid>,
+            Option<i32>,
+            Option<DateTime<Utc>>,
+        )>()?
+        .flatten()
+    {
         items.push(SwotItem {
             analysis_id: row.0,
             id: row.1,
@@ -210,19 +245,25 @@ pub async fn update_item(
         db.query_unpaged(
             "UPDATE inertial_eclipse.swot_items SET content = ? WHERE analysis_id = ? AND id = ?",
             (v, analysis_id, item_id),
-        ).await.map_err(|e| AppError::DatabaseError(e.to_string()))?;
+        )
+        .await
+        .map_err(|e| AppError::DatabaseError(e.to_string()))?;
     }
     if let Some(v) = priority {
         db.query_unpaged(
             "UPDATE inertial_eclipse.swot_items SET priority = ? WHERE analysis_id = ? AND id = ?",
             (v, analysis_id, item_id),
-        ).await.map_err(|e| AppError::DatabaseError(e.to_string()))?;
+        )
+        .await
+        .map_err(|e| AppError::DatabaseError(e.to_string()))?;
     }
     if let Some(v) = quadrant {
         db.query_unpaged(
             "UPDATE inertial_eclipse.swot_items SET quadrant = ? WHERE analysis_id = ? AND id = ?",
             (v, analysis_id, item_id),
-        ).await.map_err(|e| AppError::DatabaseError(e.to_string()))?;
+        )
+        .await
+        .map_err(|e| AppError::DatabaseError(e.to_string()))?;
     }
     if let Some(v) = linked_objective_id {
         db.query_unpaged(
@@ -234,7 +275,9 @@ pub async fn update_item(
         db.query_unpaged(
             "UPDATE inertial_eclipse.swot_items SET position = ? WHERE analysis_id = ? AND id = ?",
             (v, analysis_id, item_id),
-        ).await.map_err(|e| AppError::DatabaseError(e.to_string()))?;
+        )
+        .await
+        .map_err(|e| AppError::DatabaseError(e.to_string()))?;
     }
     Ok(())
 }
@@ -247,7 +290,9 @@ pub async fn delete_item(
     db.query_unpaged(
         "DELETE FROM inertial_eclipse.swot_items WHERE analysis_id = ? AND id = ?",
         (analysis_id, item_id),
-    ).await.map_err(|e| AppError::DatabaseError(e.to_string()))?;
+    )
+    .await
+    .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     Ok(())
 }

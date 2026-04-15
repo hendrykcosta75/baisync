@@ -45,8 +45,7 @@ pub fn build_router(
         )
         .route(
             "/api/webhooks/meta",
-            get(handlers::messages::webhook_meta_verify)
-                .post(handlers::messages::webhook_meta),
+            get(handlers::messages::webhook_meta_verify).post(handlers::messages::webhook_meta),
         )
         .route(
             "/api/webhooks/telegram/{token}",
@@ -91,10 +90,7 @@ pub fn build_router(
                 .delete(handlers::assistants::delete),
         )
         // Tools
-        .route(
-            "/api/tools/test-url",
-            post(handlers::tools::test_url),
-        )
+        .route("/api/tools/test-url", post(handlers::tools::test_url))
         .route(
             "/api/assistants/{id}/tools",
             get(handlers::tools::list).post(handlers::tools::create),
@@ -145,28 +141,18 @@ pub fn build_router(
             get(handlers::integrations::messaging_config),
         )
         // Models
-        .route(
-            "/api/models/{provider}",
-            get(handlers::models::list_models),
-        )
+        .route("/api/models/{provider}", get(handlers::models::list_models))
         // User profile
-        .route(
-            "/api/user/profile",
-            put(handlers::auth::update_profile),
-        )
+        .route("/api/user/profile", put(handlers::auth::update_profile))
         .route(
             "/api/user/avatar",
-            post(handlers::auth::upload_avatar)
-                .delete(handlers::auth::delete_avatar),
+            post(handlers::auth::upload_avatar).delete(handlers::auth::delete_avatar),
         )
         .route(
             "/api/user/change-password",
             post(handlers::auth::change_password),
         )
-        .route(
-            "/api/user/account",
-            delete(handlers::auth::delete_account),
-        )
+        .route("/api/user/account", delete(handlers::auth::delete_account))
         // API Keys
         .route(
             "/api/user/api-keys",
@@ -217,10 +203,7 @@ pub fn build_router(
             get(handlers::sharing::get_shared_assistant),
         )
         // Accepted shares
-        .route(
-            "/api/shares/accept",
-            post(handlers::sharing::accept_share),
-        )
+        .route("/api/shares/accept", post(handlers::sharing::accept_share))
         .route(
             "/api/shares/accepted",
             get(handlers::sharing::list_accepted_shares),
@@ -236,8 +219,7 @@ pub fn build_router(
         )
         .route(
             "/api/assistants/{id}/access-tokens",
-            get(handlers::access_tokens::list_tokens)
-                .post(handlers::access_tokens::create_token),
+            get(handlers::access_tokens::list_tokens).post(handlers::access_tokens::create_token),
         )
         .route(
             "/api/assistants/{id}/access-tokens/{token_id}",
@@ -304,14 +286,16 @@ pub fn build_router(
             put(handlers::financeiro::update_charge_status_handler),
         )
         // Baisync Agent
-        .route("/api/baisync/chat", post(handlers::baisync::chat)
-            .layer(DefaultBodyLimit::max(21 * 1024 * 1024)))
-        .route("/api/baisync/rate-limit", get(handlers::baisync::rate_limit))
-        // Test Agent
         .route(
-            "/api/test-agent/chat",
-            post(handlers::test_agent::chat),
+            "/api/baisync/chat",
+            post(handlers::baisync::chat).layer(DefaultBodyLimit::max(21 * 1024 * 1024)),
         )
+        .route(
+            "/api/baisync/rate-limit",
+            get(handlers::baisync::rate_limit),
+        )
+        // Test Agent
+        .route("/api/test-agent/chat", post(handlers::test_agent::chat))
         .route(
             "/api/test-agent/generate-prompt",
             post(handlers::test_agent::generate_prompt),
@@ -327,7 +311,9 @@ pub fn build_router(
         )
         .route(
             "/api/workspaces/{id}",
-            get(handlers::workspaces::get).put(handlers::workspaces::update).delete(handlers::workspaces::delete),
+            get(handlers::workspaces::get)
+                .put(handlers::workspaces::update)
+                .delete(handlers::workspaces::delete),
         )
         .route(
             "/api/workspaces/{id}/switch",
@@ -348,8 +334,7 @@ pub fn build_router(
         )
         .route(
             "/api/workspaces/{id}/api-keys",
-            get(handlers::workspaces::get_api_keys)
-                .put(handlers::workspaces::update_api_keys),
+            get(handlers::workspaces::get_api_keys).put(handlers::workspaces::update_api_keys),
         )
         .route(
             "/api/workspace-invites/{token}/accept",
@@ -358,8 +343,7 @@ pub fn build_router(
         // Channels
         .route(
             "/api/workspaces/{id}/channels",
-            get(handlers::channels::list_channels)
-                .post(handlers::channels::create_channel),
+            get(handlers::channels::list_channels).post(handlers::channels::create_channel),
         )
         .route(
             "/api/channels/{id}",
@@ -378,13 +362,11 @@ pub fn build_router(
         )
         .route(
             "/api/channels/{id}/messages",
-            get(handlers::channels::list_messages)
-                .post(handlers::channels::send_message),
+            get(handlers::channels::list_messages).post(handlers::channels::send_message),
         )
         .route(
             "/api/channels/{channel_id}/messages/{message_id}",
-            put(handlers::channels::edit_message)
-                .delete(handlers::channels::delete_message),
+            put(handlers::channels::edit_message).delete(handlers::channels::delete_message),
         )
         .route(
             "/api/channels/{id}/read",
@@ -393,8 +375,7 @@ pub fn build_router(
         // Channel Notes
         .route(
             "/api/channels/{id}/notes",
-            get(handlers::channels::list_notes)
-                .post(handlers::channels::create_note),
+            get(handlers::channels::list_notes).post(handlers::channels::create_note),
         )
         .route(
             "/api/channels/{channel_id}/notes/{note_id}",
@@ -405,8 +386,7 @@ pub fn build_router(
         // Channel Canvases
         .route(
             "/api/channels/{id}/canvases",
-            get(handlers::channels::list_canvases)
-                .post(handlers::channels::create_canvas),
+            get(handlers::channels::list_canvases).post(handlers::channels::create_canvas),
         )
         .route(
             "/api/channels/{channel_id}/canvases/{canvas_id}",
@@ -416,8 +396,7 @@ pub fn build_router(
         )
         .route(
             "/api/workspaces/{id}/dms",
-            get(handlers::channels::list_dms)
-                .post(handlers::channels::create_dm),
+            get(handlers::channels::list_dms).post(handlers::channels::create_dm),
         )
         // Teams
         .route(
@@ -432,8 +411,7 @@ pub fn build_router(
         )
         .route(
             "/api/teams/{id}/members",
-            get(handlers::teams::list_members)
-                .post(handlers::teams::add_member),
+            get(handlers::teams::list_members).post(handlers::teams::add_member),
         )
         .route(
             "/api/teams/{id}/members/{user_id}",
@@ -441,8 +419,7 @@ pub fn build_router(
         )
         .route(
             "/api/teams/{id}/tasks",
-            get(handlers::teams::list_tasks)
-                .post(handlers::teams::create_task),
+            get(handlers::teams::list_tasks).post(handlers::teams::create_task),
         )
         .route(
             "/api/teams/{id}/tasks/{task_id}",
@@ -466,8 +443,7 @@ pub fn build_router(
         )
         .route(
             "/api/tasks/{id}/comments",
-            get(handlers::teams::list_comments)
-                .post(handlers::teams::create_comment),
+            get(handlers::teams::list_comments).post(handlers::teams::create_comment),
         )
         .route(
             "/api/teams/{id}/activity",
@@ -476,8 +452,7 @@ pub fn build_router(
         // OKRs
         .route(
             "/api/workspaces/{id}/okrs",
-            get(handlers::okrs::list_objectives)
-                .post(handlers::okrs::create_objective),
+            get(handlers::okrs::list_objectives).post(handlers::okrs::create_objective),
         )
         .route(
             "/api/okrs/{id}",
@@ -491,29 +466,24 @@ pub fn build_router(
         )
         .route(
             "/api/okrs/{id}/key-results",
-            get(handlers::okrs::list_key_results)
-                .post(handlers::okrs::create_key_result),
+            get(handlers::okrs::list_key_results).post(handlers::okrs::create_key_result),
         )
         .route(
             "/api/okrs/{id}/key-results/{kr_id}",
-            put(handlers::okrs::update_key_result)
-                .delete(handlers::okrs::delete_key_result),
+            put(handlers::okrs::update_key_result).delete(handlers::okrs::delete_key_result),
         )
         .route(
             "/api/key-results/{id}/check-ins",
-            get(handlers::okrs::list_check_ins)
-                .post(handlers::okrs::create_check_in),
+            get(handlers::okrs::list_check_ins).post(handlers::okrs::create_check_in),
         )
         // OKR Attachments
         .route(
             "/api/okr-attachments/upload/{entity_type}/{entity_id}",
-            get(handlers::okrs::list_attachments)
-                .post(handlers::okrs::upload_attachment),
+            get(handlers::okrs::list_attachments).post(handlers::okrs::upload_attachment),
         )
         .route(
             "/api/okr-attachments/file/{entity_id}/{attachment_id}",
-            get(handlers::okrs::download_attachment)
-                .delete(handlers::okrs::delete_attachment),
+            get(handlers::okrs::download_attachment).delete(handlers::okrs::delete_attachment),
         )
         // Strategy Map
         .route(
@@ -530,8 +500,7 @@ pub fn build_router(
         )
         .route(
             "/api/workspaces/{id}/strategy-map/nodes/{node_id}",
-            put(handlers::strategy_map::update_node)
-                .delete(handlers::strategy_map::delete_node),
+            put(handlers::strategy_map::update_node).delete(handlers::strategy_map::delete_node),
         )
         .route(
             "/api/workspaces/{id}/strategy-map/nodes/batch-positions",
@@ -548,8 +517,7 @@ pub fn build_router(
         // SWOT
         .route(
             "/api/workspaces/{id}/swot",
-            get(handlers::swot::list_analyses)
-                .post(handlers::swot::create_analysis),
+            get(handlers::swot::list_analyses).post(handlers::swot::create_analysis),
         )
         .route(
             "/api/workspaces/{id}/swot/{analysis_id}",
@@ -557,16 +525,11 @@ pub fn build_router(
                 .put(handlers::swot::update_analysis)
                 .delete(handlers::swot::delete_analysis),
         )
-        .route(
-            "/api/swot/{id}/items",
-            post(handlers::swot::create_item),
-        )
+        .route("/api/swot/{id}/items", post(handlers::swot::create_item))
         .route(
             "/api/swot/{id}/items/{item_id}",
-            put(handlers::swot::update_item)
-                .delete(handlers::swot::delete_item),
+            put(handlers::swot::update_item).delete(handlers::swot::delete_item),
         )
-
         // Playground chat
         .route(
             "/api/assistants/{id}/chat",
@@ -579,8 +542,7 @@ pub fn build_router(
         )
         .route(
             "/api/assistants/{id}/conversations/{conv_id}",
-            delete(handlers::messages::delete_conversation)
-                .patch(handlers::messages::toggle_ai),
+            delete(handlers::messages::delete_conversation).patch(handlers::messages::toggle_ai),
         )
         .route(
             "/api/assistants/{id}/conversations/{conv_id}/messages",
@@ -615,10 +577,7 @@ pub fn build_router(
             "/api/admin/integrations",
             get(handlers::admin::list_integrations),
         )
-        .route(
-            "/api/admin/usage",
-            get(handlers::admin::platform_usage),
-        )
+        .route("/api/admin/usage", get(handlers::admin::platform_usage))
         .layer(axum_mw::from_fn(middleware::admin::admin_middleware));
 
     let cors = CorsLayer::new()

@@ -38,7 +38,13 @@ pub async fn chat(
     Extension(auth_user): Extension<AuthUser>,
     Json(req): Json<TestAgentChatRequest>,
 ) -> Result<Json<TestAgentChatResponse>, AppError> {
-    let api_key = crate::services::workspace::get_decrypted_api_key(&db, &encryption, &auth_user.workspace_id, &req.provider).await?;
+    let api_key = crate::services::workspace::get_decrypted_api_key(
+        &db,
+        &encryption,
+        &auth_user.workspace_id,
+        &req.provider,
+    )
+    .await?;
 
     let mut llm_messages = vec![LlmMessage {
         role: "system".into(),
@@ -59,7 +65,12 @@ pub async fn chat(
     let max_tokens = req.max_tokens.unwrap_or(1024);
 
     let response = llm::call_llm(
-        &req.provider, &req.model, &api_key, llm_messages, temperature, max_tokens,
+        &req.provider,
+        &req.model,
+        &api_key,
+        llm_messages,
+        temperature,
+        max_tokens,
     )
     .await?;
 
@@ -90,7 +101,13 @@ pub async fn generate_prompt(
     Extension(auth_user): Extension<AuthUser>,
     Json(req): Json<GeneratePromptRequest>,
 ) -> Result<Json<GeneratePromptResponse>, AppError> {
-    let api_key = crate::services::workspace::get_decrypted_api_key(&db, &encryption, &auth_user.workspace_id, &req.provider).await?;
+    let api_key = crate::services::workspace::get_decrypted_api_key(
+        &db,
+        &encryption,
+        &auth_user.workspace_id,
+        &req.provider,
+    )
+    .await?;
 
     let system = "Você é um especialista em QA e testes de chatbots. Sua tarefa é criar um prompt de sistema para um agente de teste que vai simular um cliente conversando com um chatbot de atendimento.\n\n\
         O prompt deve instruir o agente de teste a:\n\
@@ -121,7 +138,8 @@ pub async fn generate_prompt(
         },
     ];
 
-    let response = llm::call_llm(&req.provider, &req.model, &api_key, llm_messages, 0.5, 1500).await?;
+    let response =
+        llm::call_llm(&req.provider, &req.model, &api_key, llm_messages, 0.5, 1500).await?;
 
     Ok(Json(GeneratePromptResponse {
         prompt: response.content,
@@ -151,11 +169,21 @@ pub async fn evaluate(
     Extension(auth_user): Extension<AuthUser>,
     Json(req): Json<EvaluateRequest>,
 ) -> Result<Json<EvaluateResponse>, AppError> {
-    let api_key = crate::services::workspace::get_decrypted_api_key(&db, &encryption, &auth_user.workspace_id, &req.provider).await?;
+    let api_key = crate::services::workspace::get_decrypted_api_key(
+        &db,
+        &encryption,
+        &auth_user.workspace_id,
+        &req.provider,
+    )
+    .await?;
 
     let mut transcript = String::new();
     for msg in &req.messages {
-        let label = if msg.role == "user" { "Agente de Teste (Cliente)" } else { "Assistente Oficial" };
+        let label = if msg.role == "user" {
+            "Agente de Teste (Cliente)"
+        } else {
+            "Assistente Oficial"
+        };
         transcript.push_str(&format!("{}: {}\n\n", label, msg.content));
     }
 
@@ -185,11 +213,22 @@ pub async fn evaluate(
     );
 
     let llm_messages = vec![
-        LlmMessage { role: "system".into(), content: system.into(), media_base64: None, media_mime_type: None },
-        LlmMessage { role: "user".into(), content: user_content, media_base64: None, media_mime_type: None },
+        LlmMessage {
+            role: "system".into(),
+            content: system.into(),
+            media_base64: None,
+            media_mime_type: None,
+        },
+        LlmMessage {
+            role: "user".into(),
+            content: user_content,
+            media_base64: None,
+            media_mime_type: None,
+        },
     ];
 
-    let response = llm::call_llm(&req.provider, &req.model, &api_key, llm_messages, 0.3, 3000).await?;
+    let response =
+        llm::call_llm(&req.provider, &req.model, &api_key, llm_messages, 0.3, 3000).await?;
 
     Ok(Json(EvaluateResponse {
         evaluation: response.content,

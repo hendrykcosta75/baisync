@@ -11,8 +11,8 @@ use crate::db::DbSession;
 use crate::errors::AppError;
 use crate::middleware::auth::AuthUser;
 use crate::models::okr::{
-    CreateCheckInRequest, CreateKeyResultRequest, CreateObjectiveRequest,
-    OkrQueryParams, UpdateKeyResultRequest, UpdateObjectiveRequest,
+    CreateCheckInRequest, CreateKeyResultRequest, CreateObjectiveRequest, OkrQueryParams,
+    UpdateKeyResultRequest, UpdateObjectiveRequest,
 };
 use crate::services::events::{publish_global, SseEvent};
 use crate::services::okr as okr_service;
@@ -82,10 +82,15 @@ pub async fn list_objectives(
 
         // Filter by team if specified (check both team_id and team_ids)
         let filtered: Vec<_> = if let Some(team_id) = params.team_id {
-            enriched.into_iter().filter(|o| {
-                o.team_id == Some(team_id)
-                    || o.team_ids.as_ref().is_some_and(|ids| ids.contains(&team_id))
-            }).collect()
+            enriched
+                .into_iter()
+                .filter(|o| {
+                    o.team_id == Some(team_id)
+                        || o.team_ids
+                            .as_ref()
+                            .is_some_and(|ids| ids.contains(&team_id))
+                })
+                .collect()
         } else {
             enriched
         };
@@ -102,19 +107,36 @@ pub async fn create_objective(
 ) -> Result<Json<serde_json::Value>, AppError> {
     let role = ws_service::get_member_role(&db, &workspace_id, &auth_user.user_id).await?;
     if role != "owner" && role != "admin" {
-        return Err(AppError::Forbidden("Apenas administradores podem criar objetivos".into()));
+        return Err(AppError::Forbidden(
+            "Apenas administradores podem criar objetivos".into(),
+        ));
     }
 
     let owner_id = body.owner_id.unwrap_or(auth_user.user_id);
 
     let objective = okr_service::create_objective(
-        &db, &workspace_id, &body.title, body.description.as_deref(),
-        &body.objective_type, &body.cycle, &owner_id, body.team_id.as_ref(),
-        body.parent_objective_id.as_ref(), body.team_ids.as_ref(),
-    ).await?;
+        &db,
+        &workspace_id,
+        &body.title,
+        body.description.as_deref(),
+        &body.objective_type,
+        &body.cycle,
+        &owner_id,
+        body.team_id.as_ref(),
+        body.parent_objective_id.as_ref(),
+        body.team_ids.as_ref(),
+    )
+    .await?;
 
     let data = serde_json::to_string(&json!({ "objective": &objective })).unwrap_or_default();
-    publish_to_workspace(&db, &workspace_id, &auth_user.user_id, "okr_objective_created", &data).await;
+    publish_to_workspace(
+        &db,
+        &workspace_id,
+        &auth_user.user_id,
+        "okr_objective_created",
+        &data,
+    )
+    .await;
 
     Ok(Json(json!({ "objective": objective })))
 }
@@ -142,21 +164,38 @@ pub async fn update_objective(
     let obj = find_objective_and_verify(&db, &objective_id, &auth_user.user_id).await?;
     let role = ws_service::get_member_role(&db, &obj.workspace_id, &auth_user.user_id).await?;
     if role != "owner" && role != "admin" {
-        return Err(AppError::Forbidden("Apenas administradores podem editar objetivos".into()));
+        return Err(AppError::Forbidden(
+            "Apenas administradores podem editar objetivos".into(),
+        ));
     }
 
     okr_service::update_objective(
-        &db, &obj.workspace_id, &objective_id,
-        body.title.as_deref(), body.description.as_deref(),
-        body.objective_type.as_deref(), body.cycle.as_deref(),
-        body.status.as_deref(), body.owner_id.as_ref(), body.team_id.as_ref(),
-        body.parent_objective_id.as_ref(), body.team_ids.as_ref(),
-    ).await?;
+        &db,
+        &obj.workspace_id,
+        &objective_id,
+        body.title.as_deref(),
+        body.description.as_deref(),
+        body.objective_type.as_deref(),
+        body.cycle.as_deref(),
+        body.status.as_deref(),
+        body.owner_id.as_ref(),
+        body.team_id.as_ref(),
+        body.parent_objective_id.as_ref(),
+        body.team_ids.as_ref(),
+    )
+    .await?;
 
     let updated = okr_service::get_objective(&db, &obj.workspace_id, &objective_id).await?;
 
     let data = serde_json::to_string(&json!({ "objective": &updated })).unwrap_or_default();
-    publish_to_workspace(&db, &obj.workspace_id, &auth_user.user_id, "okr_objective_updated", &data).await;
+    publish_to_workspace(
+        &db,
+        &obj.workspace_id,
+        &auth_user.user_id,
+        "okr_objective_updated",
+        &data,
+    )
+    .await;
 
     Ok(Json(json!({ "objective": updated })))
 }
@@ -169,13 +208,22 @@ pub async fn delete_objective(
     let obj = find_objective_and_verify(&db, &objective_id, &auth_user.user_id).await?;
     let role = ws_service::get_member_role(&db, &obj.workspace_id, &auth_user.user_id).await?;
     if role != "owner" && role != "admin" {
-        return Err(AppError::Forbidden("Apenas administradores podem excluir objetivos".into()));
+        return Err(AppError::Forbidden(
+            "Apenas administradores podem excluir objetivos".into(),
+        ));
     }
 
     okr_service::delete_objective(&db, &obj.workspace_id, &objective_id).await?;
 
     let data = serde_json::to_string(&json!({ "objective_id": objective_id })).unwrap_or_default();
-    publish_to_workspace(&db, &obj.workspace_id, &auth_user.user_id, "okr_objective_deleted", &data).await;
+    publish_to_workspace(
+        &db,
+        &obj.workspace_id,
+        &auth_user.user_id,
+        "okr_objective_deleted",
+        &data,
+    )
+    .await;
 
     Ok(Json(json!({ "success": true })))
 }
@@ -211,15 +259,24 @@ pub async fn create_key_result(
     let obj = find_objective_and_verify(&db, &objective_id, &auth_user.user_id).await?;
     let role = ws_service::get_member_role(&db, &obj.workspace_id, &auth_user.user_id).await?;
     if role != "owner" && role != "admin" {
-        return Err(AppError::Forbidden("Apenas administradores podem criar resultados-chave".into()));
+        return Err(AppError::Forbidden(
+            "Apenas administradores podem criar resultados-chave".into(),
+        ));
     }
 
     let owner_id = body.owner_id.unwrap_or(auth_user.user_id);
 
     let kr = okr_service::create_key_result(
-        &db, &objective_id, &body.title, &body.kr_type,
-        body.start_value, body.target_value, body.unit.as_deref(), &owner_id,
-    ).await?;
+        &db,
+        &objective_id,
+        &body.title,
+        &body.kr_type,
+        body.start_value,
+        body.target_value,
+        body.unit.as_deref(),
+        &owner_id,
+    )
+    .await?;
 
     Ok(Json(json!({ "key_result": kr })))
 }
@@ -233,16 +290,26 @@ pub async fn update_key_result(
     let obj = find_objective_and_verify(&db, &objective_id, &auth_user.user_id).await?;
     let role = ws_service::get_member_role(&db, &obj.workspace_id, &auth_user.user_id).await?;
     if role != "owner" && role != "admin" {
-        return Err(AppError::Forbidden("Apenas administradores podem editar resultados-chave".into()));
+        return Err(AppError::Forbidden(
+            "Apenas administradores podem editar resultados-chave".into(),
+        ));
     }
 
     okr_service::update_key_result(
-        &db, &objective_id, &kr_id,
-        body.title.as_deref(), body.kr_type.as_deref(),
-        body.start_value, body.target_value, body.current_value,
-        body.unit.as_deref(), body.confidence, body.status.as_deref(),
+        &db,
+        &objective_id,
+        &kr_id,
+        body.title.as_deref(),
+        body.kr_type.as_deref(),
+        body.start_value,
+        body.target_value,
+        body.current_value,
+        body.unit.as_deref(),
+        body.confidence,
+        body.status.as_deref(),
         body.owner_id.as_ref(),
-    ).await?;
+    )
+    .await?;
 
     Ok(Json(json!({ "success": true })))
 }
@@ -255,7 +322,9 @@ pub async fn delete_key_result(
     let obj = find_objective_and_verify(&db, &objective_id, &auth_user.user_id).await?;
     let role = ws_service::get_member_role(&db, &obj.workspace_id, &auth_user.user_id).await?;
     if role != "owner" && role != "admin" {
-        return Err(AppError::Forbidden("Apenas administradores podem excluir resultados-chave".into()));
+        return Err(AppError::Forbidden(
+            "Apenas administradores podem excluir resultados-chave".into(),
+        ));
     }
 
     okr_service::delete_key_result(&db, &objective_id, &kr_id).await?;
@@ -272,8 +341,11 @@ pub async fn list_check_ins(
     Query(params): Query<PaginationParams>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let limit = params.limit.unwrap_or(20);
-    let (check_ins, next_cursor) = okr_service::list_check_ins(&db, &kr_id, params.cursor.as_deref(), limit).await?;
-    Ok(Json(json!({ "check_ins": check_ins, "next_cursor": next_cursor })))
+    let (check_ins, next_cursor) =
+        okr_service::list_check_ins(&db, &kr_id, params.cursor.as_deref(), limit).await?;
+    Ok(Json(
+        json!({ "check_ins": check_ins, "next_cursor": next_cursor }),
+    ))
 }
 
 pub async fn create_check_in(
@@ -290,10 +362,17 @@ pub async fn create_check_in(
         .unwrap_or(body.new_value);
 
     let check_in = okr_service::create_check_in(
-        &db, &kr_id, previous_value, body.new_value, body.confidence,
-        body.note.as_deref(), body.blockers.as_deref(),
-        &auth_user.user_id, &user_name,
-    ).await?;
+        &db,
+        &kr_id,
+        previous_value,
+        body.new_value,
+        body.confidence,
+        body.note.as_deref(),
+        body.blockers.as_deref(),
+        &auth_user.user_id,
+        &user_name,
+    )
+    .await?;
 
     Ok(Json(json!({ "check_in": check_in })))
 }
@@ -307,7 +386,9 @@ pub async fn upload_attachment(
     mut multipart: Multipart,
 ) -> Result<Json<serde_json::Value>, AppError> {
     if entity_type != "key-results" && entity_type != "check-ins" && entity_type != "objectives" {
-        return Err(AppError::BadRequest("entity_type must be 'key-results', 'check-ins', or 'objectives'".into()));
+        return Err(AppError::BadRequest(
+            "entity_type must be 'key-results', 'check-ins', or 'objectives'".into(),
+        ));
     }
 
     let user_name = get_user_name(&db, &auth_user.user_id).await;
@@ -323,7 +404,10 @@ pub async fn upload_attachment(
     {
         if field.name() == Some("file") {
             file_name = field.file_name().unwrap_or("unnamed").to_string();
-            mime_type = field.content_type().unwrap_or("application/octet-stream").to_string();
+            mime_type = field
+                .content_type()
+                .unwrap_or("application/octet-stream")
+                .to_string();
             file_bytes = field
                 .bytes()
                 .await
@@ -348,10 +432,18 @@ pub async fn upload_attachment(
     };
 
     let attachment = okr_service::create_attachment(
-        &db, &entity_id, db_entity_type, &auth_user.workspace_id,
-        &file_name, file_bytes.len() as i64, &mime_type, &file_bytes,
-        &auth_user.user_id, &user_name,
-    ).await?;
+        &db,
+        &entity_id,
+        db_entity_type,
+        &auth_user.workspace_id,
+        &file_name,
+        file_bytes.len() as i64,
+        &mime_type,
+        &file_bytes,
+        &auth_user.user_id,
+        &user_name,
+    )
+    .await?;
 
     Ok(Json(json!({ "attachment": attachment })))
 }
@@ -370,11 +462,15 @@ pub async fn download_attachment(
     Extension(_auth_user): Extension<AuthUser>,
     Path((entity_id, attachment_id)): Path<(Uuid, Uuid)>,
 ) -> Result<Response, AppError> {
-    let (file_name, mime_type, data) = okr_service::get_attachment_data(&db, &entity_id, &attachment_id).await?;
+    let (file_name, mime_type, data) =
+        okr_service::get_attachment_data(&db, &entity_id, &attachment_id).await?;
 
     let response = Response::builder()
         .header(header::CONTENT_TYPE, mime_type)
-        .header(header::CONTENT_DISPOSITION, format!("attachment; filename=\"{file_name}\""))
+        .header(
+            header::CONTENT_DISPOSITION,
+            format!("attachment; filename=\"{file_name}\""),
+        )
         .body(Body::from(data))
         .map_err(|e| AppError::InternalError(e.to_string()))?;
 

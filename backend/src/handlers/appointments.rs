@@ -34,10 +34,16 @@ pub async fn create(
     // Verify user owns the assistant (only if associated)
     if let Some(ref aid) = req.assistant_id {
         assistant_service::resolve_assistant_access(
-            &db, &auth_user.workspace_id, aid, None, "write",
-        ).await?;
+            &db,
+            &auth_user.workspace_id,
+            aid,
+            None,
+            "write",
+        )
+        .await?;
     }
-    let appointment = appointment_service::create_appointment(&db, &auth_user.workspace_id, req).await?;
+    let appointment =
+        appointment_service::create_appointment(&db, &auth_user.workspace_id, req).await?;
     Ok(Json(appointment))
 }
 
@@ -46,7 +52,8 @@ pub async fn get(
     Extension(auth_user): Extension<AuthUser>,
     Path(appointment_id): Path<Uuid>,
 ) -> Result<Json<Appointment>, AppError> {
-    let appointment = appointment_service::get_appointment(&db, &auth_user.workspace_id, &appointment_id).await?;
+    let appointment =
+        appointment_service::get_appointment(&db, &auth_user.workspace_id, &appointment_id).await?;
     Ok(Json(appointment))
 }
 
@@ -56,7 +63,9 @@ pub async fn update(
     Path(appointment_id): Path<Uuid>,
     Json(req): Json<UpdateAppointmentRequest>,
 ) -> Result<Json<Appointment>, AppError> {
-    let appointment = appointment_service::update_appointment(&db, &auth_user.workspace_id, &appointment_id, req).await?;
+    let appointment =
+        appointment_service::update_appointment(&db, &auth_user.workspace_id, &appointment_id, req)
+            .await?;
     Ok(Json(appointment))
 }
 
@@ -88,12 +97,18 @@ pub async fn get_availability(
     Query(query): Query<ShareTokenQuery>,
 ) -> Result<Json<Value>, AppError> {
     assistant_service::resolve_assistant_access(
-        &db, &auth_user.workspace_id, &assistant_id, query.share_token.as_deref(), "read",
-    ).await?;
+        &db,
+        &auth_user.workspace_id,
+        &assistant_id,
+        query.share_token.as_deref(),
+        "read",
+    )
+    .await?;
     let avail = appointment_service::get_availability(&db, &assistant_id).await?;
     match avail {
         Some(config) => {
-            let schedule_parsed = config.schedule_json
+            let schedule_parsed = config
+                .schedule_json
                 .as_deref()
                 .and_then(|s| serde_json::from_str::<Value>(s).ok())
                 .unwrap_or(json!({}));
@@ -119,9 +134,16 @@ pub async fn upsert_availability(
     Json(req): Json<UpdateAvailabilityRequest>,
 ) -> Result<Json<AvailabilityConfig>, AppError> {
     assistant_service::resolve_assistant_access(
-        &db, &auth_user.workspace_id, &assistant_id, query.share_token.as_deref(), "admin",
-    ).await?;
-    let config = appointment_service::upsert_availability(&db, &assistant_id, &auth_user.workspace_id, req).await?;
+        &db,
+        &auth_user.workspace_id,
+        &assistant_id,
+        query.share_token.as_deref(),
+        "admin",
+    )
+    .await?;
+    let config =
+        appointment_service::upsert_availability(&db, &assistant_id, &auth_user.workspace_id, req)
+            .await?;
     Ok(Json(config))
 }
 
@@ -138,8 +160,13 @@ pub async fn available_slots(
     Query(query): Query<SlotsQuery>,
 ) -> Result<Json<Vec<String>>, AppError> {
     assistant_service::resolve_assistant_access(
-        &db, &auth_user.workspace_id, &assistant_id, query.share_token.as_deref(), "read",
-    ).await?;
+        &db,
+        &auth_user.workspace_id,
+        &assistant_id,
+        query.share_token.as_deref(),
+        "read",
+    )
+    .await?;
     let slots = appointment_service::get_available_slots(&db, &assistant_id, &query.date).await?;
     Ok(Json(slots))
 }

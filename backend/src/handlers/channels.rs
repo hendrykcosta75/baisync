@@ -68,7 +68,8 @@ pub async fn list_channels(
     let all_channels = ch_service::list_channels(&db, &workspace_id).await?;
 
     // Get user's channel memberships with unread counts
-    let user_channels = ch_service::list_user_channels(&db, &auth_user.user_id, &workspace_id).await?;
+    let user_channels =
+        ch_service::list_user_channels(&db, &auth_user.user_id, &workspace_id).await?;
     let unread_map: std::collections::HashMap<uuid::Uuid, i32> = user_channels
         .iter()
         .map(|uc| (uc.channel_id, uc.unread_count))
@@ -85,7 +86,9 @@ pub async fn list_channels(
         })
         .collect();
 
-    Ok(Json(serde_json::json!({ "channels": channels_with_unread })))
+    Ok(Json(
+        serde_json::json!({ "channels": channels_with_unread }),
+    ))
 }
 
 pub async fn create_channel(
@@ -173,7 +176,9 @@ pub async fn delete_channel(
     // Only workspace owner/admin or channel owner can delete
     let ws_role = ws_service::get_member_role(&db, &workspace_id, &auth_user.user_id).await?;
     if ws_role != "owner" && ws_role != "admin" {
-        return Err(AppError::Forbidden("Only workspace admins can delete channels".into()));
+        return Err(AppError::Forbidden(
+            "Only workspace admins can delete channels".into(),
+        ));
     }
 
     ch_service::delete_channel(&db, &workspace_id, &channel_id).await?;
@@ -217,8 +222,16 @@ pub async fn add_channel_member(
 
     ch_service::add_member(&db, &channel_id, &user_id, &workspace_id, "member").await?;
 
-    let event_data = serde_json::json!({ "channel_id": channel_id, "user_id": user_id }).to_string();
-    publish_to_channel(&db, &channel_id, &auth_user.user_id, "channel_member_added", &event_data).await;
+    let event_data =
+        serde_json::json!({ "channel_id": channel_id, "user_id": user_id }).to_string();
+    publish_to_channel(
+        &db,
+        &channel_id,
+        &auth_user.user_id,
+        "channel_member_added",
+        &event_data,
+    )
+    .await;
 
     Ok(Json(serde_json::json!({ "success": true })))
 }
@@ -242,8 +255,16 @@ pub async fn remove_channel_member(
     ch_service::remove_member(&db, &channel_id, &user_id, &workspace_id).await?;
 
     // Notify remaining members
-    let event_data = serde_json::json!({ "channel_id": channel_id, "user_id": user_id }).to_string();
-    publish_to_channel(&db, &channel_id, &auth_user.user_id, "channel_member_removed", &event_data).await;
+    let event_data =
+        serde_json::json!({ "channel_id": channel_id, "user_id": user_id }).to_string();
+    publish_to_channel(
+        &db,
+        &channel_id,
+        &auth_user.user_id,
+        "channel_member_removed",
+        &event_data,
+    )
+    .await;
     // Also notify the removed user so their UI updates
     publish_to_user(&user_id, "channel_member_removed", &event_data).await;
 
@@ -297,7 +318,14 @@ pub async fn send_message(
 
     // Publish SSE event to all channel members
     let event_data = serde_json::to_string(&message).unwrap_or_default();
-    publish_to_channel(&db, &channel_id, &auth_user.user_id, "channel_message", &event_data).await;
+    publish_to_channel(
+        &db,
+        &channel_id,
+        &auth_user.user_id,
+        "channel_message",
+        &event_data,
+    )
+    .await;
 
     Ok(Json(serde_json::json!({ "message": message })))
 }
@@ -366,7 +394,14 @@ pub async fn create_note(
     let note = ch_service::create_note(&db, &channel_id, &body.title, &auth_user.user_id).await?;
 
     let event_data = serde_json::to_string(&note).unwrap_or_default();
-    publish_to_channel(&db, &channel_id, &auth_user.user_id, "channel_note_created", &event_data).await;
+    publish_to_channel(
+        &db,
+        &channel_id,
+        &auth_user.user_id,
+        "channel_note_created",
+        &event_data,
+    )
+    .await;
 
     Ok(Json(serde_json::json!({ "note": note })))
 }
@@ -407,7 +442,14 @@ pub async fn update_note(
     let note = ch_service::get_note(&db, &channel_id, &note_id).await?;
 
     let event_data = serde_json::to_string(&note).unwrap_or_default();
-    publish_to_channel(&db, &channel_id, &auth_user.user_id, "channel_note_updated", &event_data).await;
+    publish_to_channel(
+        &db,
+        &channel_id,
+        &auth_user.user_id,
+        "channel_note_updated",
+        &event_data,
+    )
+    .await;
 
     Ok(Json(serde_json::json!({ "note": note })))
 }
@@ -423,8 +465,16 @@ pub async fn delete_note(
 
     ch_service::delete_note(&db, &channel_id, &note_id).await?;
 
-    let event_data = serde_json::json!({ "channel_id": channel_id, "note_id": note_id }).to_string();
-    publish_to_channel(&db, &channel_id, &auth_user.user_id, "channel_note_deleted", &event_data).await;
+    let event_data =
+        serde_json::json!({ "channel_id": channel_id, "note_id": note_id }).to_string();
+    publish_to_channel(
+        &db,
+        &channel_id,
+        &auth_user.user_id,
+        "channel_note_deleted",
+        &event_data,
+    )
+    .await;
 
     Ok(Json(serde_json::json!({ "success": true })))
 }
@@ -452,10 +502,18 @@ pub async fn create_canvas(
     if !ch_service::is_member(&db, &channel_id, &auth_user.user_id).await? {
         return Err(AppError::Forbidden("Not a member of this channel".into()));
     }
-    let canvas = ch_service::create_canvas(&db, &channel_id, &body.title, &auth_user.user_id).await?;
+    let canvas =
+        ch_service::create_canvas(&db, &channel_id, &body.title, &auth_user.user_id).await?;
 
     let event_data = serde_json::to_string(&canvas).unwrap_or_default();
-    publish_to_channel(&db, &channel_id, &auth_user.user_id, "channel_canvas_created", &event_data).await;
+    publish_to_channel(
+        &db,
+        &channel_id,
+        &auth_user.user_id,
+        "channel_canvas_created",
+        &event_data,
+    )
+    .await;
 
     Ok(Json(serde_json::json!({ "canvas": canvas })))
 }
@@ -482,13 +540,24 @@ pub async fn update_canvas(
         return Err(AppError::Forbidden("Not a member of this channel".into()));
     }
     let canvas = ch_service::update_canvas(
-        &db, &channel_id, &canvas_id,
-        body.title.as_deref(), body.canvas_data.as_deref(),
+        &db,
+        &channel_id,
+        &canvas_id,
+        body.title.as_deref(),
+        body.canvas_data.as_deref(),
         &auth_user.user_id,
-    ).await?;
+    )
+    .await?;
 
     let event_data = serde_json::to_string(&canvas).unwrap_or_default();
-    publish_to_channel(&db, &channel_id, &auth_user.user_id, "channel_canvas_updated", &event_data).await;
+    publish_to_channel(
+        &db,
+        &channel_id,
+        &auth_user.user_id,
+        "channel_canvas_updated",
+        &event_data,
+    )
+    .await;
 
     Ok(Json(serde_json::json!({ "canvas": canvas })))
 }
@@ -503,8 +572,16 @@ pub async fn delete_canvas(
     }
     ch_service::delete_canvas(&db, &channel_id, &canvas_id).await?;
 
-    let event_data = serde_json::json!({ "channel_id": channel_id, "canvas_id": canvas_id }).to_string();
-    publish_to_channel(&db, &channel_id, &auth_user.user_id, "channel_canvas_deleted", &event_data).await;
+    let event_data =
+        serde_json::json!({ "channel_id": channel_id, "canvas_id": canvas_id }).to_string();
+    publish_to_channel(
+        &db,
+        &channel_id,
+        &auth_user.user_id,
+        "channel_canvas_deleted",
+        &event_data,
+    )
+    .await;
 
     Ok(Json(serde_json::json!({ "success": true })))
 }
@@ -526,9 +603,7 @@ pub async fn list_dms(
             let members = ch_service::list_members(&db, &ch.id).await?;
             let is_member = members.iter().any(|m| m.user_id == auth_user.user_id);
             if is_member {
-                let other = members
-                    .iter()
-                    .find(|m| m.user_id != auth_user.user_id);
+                let other = members.iter().find(|m| m.user_id != auth_user.user_id);
                 let mut val = serde_json::to_value(&ch).unwrap_or_default();
                 if let Some(o) = other {
                     val["other_user"] = serde_json::json!({

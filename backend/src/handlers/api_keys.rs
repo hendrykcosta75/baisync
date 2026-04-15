@@ -35,7 +35,8 @@ pub async fn update_keys(
         body
     };
 
-    let keys = ws_service::update_api_keys(&db, &auth_user.workspace_id, &encryption, &source).await?;
+    let keys =
+        ws_service::update_api_keys(&db, &auth_user.workspace_id, &encryption, &source).await?;
     Ok(Json(WorkspaceApiKeysResponse {
         openai_configured: keys.openai_api_key.is_some(),
         claude_configured: keys.claude_api_key.is_some(),
@@ -58,9 +59,10 @@ pub async fn check_stripe_pix(
     Extension(auth_user): Extension<AuthUser>,
     Extension(encryption): Extension<EncryptionService>,
 ) -> Result<Json<StripePixCheckResponse>, AppError> {
-    let token = ws_service::get_decrypted_api_key(&db, &encryption, &auth_user.workspace_id, "stripe")
-        .await
-        .map_err(|_| AppError::BadRequest("Chave Stripe não configurada".into()))?;
+    let token =
+        ws_service::get_decrypted_api_key(&db, &encryption, &auth_user.workspace_id, "stripe")
+            .await
+            .map_err(|_| AppError::BadRequest("Chave Stripe não configurada".into()))?;
 
     let client = reqwest::Client::new();
 
@@ -77,16 +79,23 @@ pub async fn check_stripe_pix(
         .map_err(|e| AppError::InternalError(format!("Falha ao conectar com Stripe: {e}")))?;
 
     let status = resp.status();
-    let body: serde_json::Value = resp.json().await
+    let body: serde_json::Value = resp
+        .json()
+        .await
         .map_err(|e| AppError::InternalError(format!("Falha ao parsear resposta Stripe: {e}")))?;
 
     if !status.is_success() {
-        let msg = body.pointer("/error/message")
+        let msg = body
+            .pointer("/error/message")
             .and_then(|v| v.as_str())
             .unwrap_or("Erro desconhecido");
 
         let msg_lower = msg.to_lowercase();
-        if msg_lower.contains("pix") && (msg_lower.contains("invalid") || msg_lower.contains("not activated") || msg_lower.contains("not enabled")) {
+        if msg_lower.contains("pix")
+            && (msg_lower.contains("invalid")
+                || msg_lower.contains("not activated")
+                || msg_lower.contains("not enabled"))
+        {
             return Ok(Json(StripePixCheckResponse {
                 pix_enabled: false,
                 message: "PIX não está ativado na sua conta Stripe. Ative em https://dashboard.stripe.com/settings/payment_methods".to_string(),
@@ -101,7 +110,10 @@ pub async fn check_stripe_pix(
 
     if let Some(pi_id) = body.get("id").and_then(|v| v.as_str()) {
         let _ = client
-            .post(format!("https://api.stripe.com/v1/payment_intents/{}/cancel", pi_id))
+            .post(format!(
+                "https://api.stripe.com/v1/payment_intents/{}/cancel",
+                pi_id
+            ))
             .basic_auth(&token, None::<&str>)
             .send()
             .await;

@@ -1,12 +1,12 @@
 use axum::extract::{Extension, Path, Query};
-use axum::Json;
-use axum::response::IntoResponse;
 use axum::http::HeaderMap;
+use axum::response::IntoResponse;
+use axum::Json;
 use base64::Engine as _;
 use hmac::{Hmac, Mac};
-use sha2::Sha256;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sha2::Sha256;
 use uuid::Uuid;
 
 use crate::config::Config;
@@ -14,10 +14,10 @@ use crate::db::DbSession;
 use crate::errors::AppError;
 use crate::middleware::auth::AuthUser;
 use crate::models::integration::UpdateIntegrationRequest;
+use crate::services::assistant as assistant_service;
 use crate::services::connection_state::{ConnectionState, ConnectionStateStore};
 use crate::services::encryption::EncryptionService;
 use crate::services::messaging::{self, IncomingWebhook, PlaygroundResponse, SummaryResponse};
-use crate::services::assistant as assistant_service;
 use crate::services::{email, notification};
 
 #[derive(Serialize)]
@@ -70,7 +70,9 @@ pub async fn webhook_baileys(
     let webhook_token = payload["webhookVerifyToken"].as_str().unwrap_or("");
     if !config.baileys_api_key.is_empty() && webhook_token != config.baileys_api_key {
         tracing::warn!("Baileys webhook token mismatch for {phone}");
-        return Err(AppError::Unauthorized("Invalid webhook verify token".into()));
+        return Err(AppError::Unauthorized(
+            "Invalid webhook verify token".into(),
+        ));
     }
 
     // connection.update events (QR codes, status changes) are allowed without a registered integration
@@ -78,7 +80,9 @@ pub async fn webhook_baileys(
     let phone_integration = messaging::find_integration_by_phone(&db, &phone).await.ok();
     if phone_integration.is_none() && event != "connection.update" {
         tracing::warn!("Baileys webhook received for unknown phone: {phone} event={event}");
-        return Err(AppError::NotFound("No integration found for this phone number".into()));
+        return Err(AppError::NotFound(
+            "No integration found for this phone number".into(),
+        ));
     }
 
     match event {
@@ -87,7 +91,10 @@ pub async fn webhook_baileys(
             let connection = data["connection"].as_str().unwrap_or("unknown");
             let qr_data_url = data["qrDataUrl"].as_str().map(|s| s.to_string());
 
-            tracing::info!("Baileys connection.update: phone={phone} status={connection} has_qr={}", qr_data_url.is_some());
+            tracing::info!(
+                "Baileys connection.update: phone={phone} status={connection} has_qr={}",
+                qr_data_url.is_some()
+            );
 
             conn_store.set(
                 &phone,
@@ -120,7 +127,9 @@ pub async fn webhook_baileys(
                 } else {
                     // Temporary: Baileys will auto-reconnect, don't mark as disconnected.
                     // The health check will mark as disconnected after sustained failures.
-                    tracing::info!("Baileys connection closed temporarily for {phone}, waiting for reconnect");
+                    tracing::info!(
+                        "Baileys connection closed temporarily for {phone}, waiting for reconnect"
+                    );
                     conn_store.set(
                         &phone,
                         ConnectionState {
@@ -168,7 +177,10 @@ pub async fn webhook_baileys(
                     let document_msg = &msg["message"]["documentMessage"];
                     let video_msg = &msg["message"]["videoMessage"];
                     let sticker_msg = &msg["message"]["stickerMessage"];
-                    let is_media = !image_msg.is_null() || !document_msg.is_null() || !video_msg.is_null() || !sticker_msg.is_null();
+                    let is_media = !image_msg.is_null()
+                        || !document_msg.is_null()
+                        || !video_msg.is_null()
+                        || !sticker_msg.is_null();
 
                     if phone.is_empty() {
                         continue;
@@ -238,12 +250,20 @@ pub async fn webhook_baileys(
                     } else if is_media {
                         // Determine which media message type and extract mime + caption
                         let (media_node, caption, default_mime) = if !image_msg.is_null() {
-                            (image_msg, image_msg["caption"].as_str().unwrap_or(""), "image/jpeg")
+                            (
+                                image_msg,
+                                image_msg["caption"].as_str().unwrap_or(""),
+                                "image/jpeg",
+                            )
                         } else if !document_msg.is_null() {
                             let fname = document_msg["fileName"].as_str().unwrap_or("document");
                             (document_msg, fname, "application/pdf")
                         } else if !video_msg.is_null() {
-                            (video_msg, video_msg["caption"].as_str().unwrap_or(""), "video/mp4")
+                            (
+                                video_msg,
+                                video_msg["caption"].as_str().unwrap_or(""),
+                                "video/mp4",
+                            )
                         } else {
                             (sticker_msg, "", "image/webp")
                         };
@@ -278,7 +298,8 @@ pub async fn webhook_baileys(
                         continue;
                     }
 
-                    let push_name = msg["pushName"].as_str()
+                    let push_name = msg["pushName"]
+                        .as_str()
                         .filter(|s| !s.is_empty())
                         .map(|s| s.to_string());
 
@@ -294,12 +315,18 @@ pub async fn webhook_baileys(
                     };
 
                     match messaging::process_incoming_message(
-                        &db, &config, &encryption, &event_bus, webhook,
+                        &db,
+                        &config,
+                        &encryption,
+                        &event_bus,
+                        webhook,
                     )
                     .await
                     {
                         Ok(_) => tracing::info!("Processed Baileys message from {phone}"),
-                        Err(e) => tracing::error!("Failed to process Baileys message from {phone}: {e}"),
+                        Err(e) => {
+                            tracing::error!("Failed to process Baileys message from {phone}: {e}")
+                        }
                     }
                 }
             }
@@ -332,10 +359,16 @@ async fn update_baileys_status(db: &DbSession, config: &Config, phone: &str, new
         &integration.id,
         UpdateIntegrationRequest {
             status: Some(new_status.into()),
-            channel: None, provider: None, config_token: None, config_phone_number: None,
-            config_chatwoot_url: None, config_rate_limit_per_day: None,
-            config_max_message_length: None, config_audio_response_mode: None,
-            config_interpret_documents: None, config_split_messages: None,
+            channel: None,
+            provider: None,
+            config_token: None,
+            config_phone_number: None,
+            config_chatwoot_url: None,
+            config_rate_limit_per_day: None,
+            config_max_message_length: None,
+            config_audio_response_mode: None,
+            config_interpret_documents: None,
+            config_split_messages: None,
             config_webhook_verify_token: None,
         },
     )
@@ -345,7 +378,10 @@ async fn update_baileys_status(db: &DbSession, config: &Config, phone: &str, new
         return;
     }
 
-    tracing::info!("Integration {} status updated to {new_status} (phone={phone})", integration.id);
+    tracing::info!(
+        "Integration {} status updated to {new_status} (phone={phone})",
+        integration.id
+    );
 
     if new_status != "disconnected" {
         return;
@@ -445,7 +481,9 @@ pub async fn webhook_meta_verify(
     let challenge = query.hub_challenge.as_deref().unwrap_or("");
 
     if mode != "subscribe" || token.is_empty() {
-        return Err(AppError::Unauthorized("Invalid verification request".into()));
+        return Err(AppError::Unauthorized(
+            "Invalid verification request".into(),
+        ));
     }
 
     // Look up integration by the verify token directly (avoids full table scan)
@@ -458,7 +496,8 @@ pub async fn webhook_meta_verify(
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     let found = result
-        .into_rows_result()?.maybe_first_row::<(Option<String>,)>()?
+        .into_rows_result()?
+        .maybe_first_row::<(Option<String>,)>()?
         .is_some();
 
     if !found {
@@ -511,7 +550,8 @@ pub async fn webhook_meta(
             if let Some(changes) = changes {
                 for change in changes {
                     let value = &change["value"];
-                    let phone_number_id = value["metadata"]["phone_number_id"].as_str().unwrap_or("");
+                    let phone_number_id =
+                        value["metadata"]["phone_number_id"].as_str().unwrap_or("");
 
                     // Extract contact name from the contacts array in the webhook payload
                     let meta_contact_name = value["contacts"]
@@ -535,7 +575,8 @@ pub async fn webhook_meta(
                                     None,
                                 ),
                                 "audio" => {
-                                    let media_id = msg["audio"]["id"].as_str().unwrap_or("").to_string();
+                                    let media_id =
+                                        msg["audio"]["id"].as_str().unwrap_or("").to_string();
                                     let mime = msg["audio"]["mime_type"]
                                         .as_str()
                                         .unwrap_or("audio/ogg")
@@ -543,26 +584,45 @@ pub async fn webhook_meta(
                                     ("".to_string(), Some(media_id), Some(mime))
                                 }
                                 "image" => {
-                                    let media_id = msg["image"]["id"].as_str().unwrap_or("").to_string();
-                                    let mime = msg["image"]["mime_type"].as_str().unwrap_or("image/jpeg").to_string();
-                                    let caption = msg["image"]["caption"].as_str().unwrap_or("").to_string();
+                                    let media_id =
+                                        msg["image"]["id"].as_str().unwrap_or("").to_string();
+                                    let mime = msg["image"]["mime_type"]
+                                        .as_str()
+                                        .unwrap_or("image/jpeg")
+                                        .to_string();
+                                    let caption =
+                                        msg["image"]["caption"].as_str().unwrap_or("").to_string();
                                     (caption, Some(media_id), Some(mime))
                                 }
                                 "document" => {
-                                    let media_id = msg["document"]["id"].as_str().unwrap_or("").to_string();
-                                    let mime = msg["document"]["mime_type"].as_str().unwrap_or("application/pdf").to_string();
-                                    let filename = msg["document"]["filename"].as_str().unwrap_or("document");
+                                    let media_id =
+                                        msg["document"]["id"].as_str().unwrap_or("").to_string();
+                                    let mime = msg["document"]["mime_type"]
+                                        .as_str()
+                                        .unwrap_or("application/pdf")
+                                        .to_string();
+                                    let filename =
+                                        msg["document"]["filename"].as_str().unwrap_or("document");
                                     (format!("[{filename}]"), Some(media_id), Some(mime))
                                 }
                                 "video" => {
-                                    let media_id = msg["video"]["id"].as_str().unwrap_or("").to_string();
-                                    let mime = msg["video"]["mime_type"].as_str().unwrap_or("video/mp4").to_string();
-                                    let caption = msg["video"]["caption"].as_str().unwrap_or("").to_string();
+                                    let media_id =
+                                        msg["video"]["id"].as_str().unwrap_or("").to_string();
+                                    let mime = msg["video"]["mime_type"]
+                                        .as_str()
+                                        .unwrap_or("video/mp4")
+                                        .to_string();
+                                    let caption =
+                                        msg["video"]["caption"].as_str().unwrap_or("").to_string();
                                     (caption, Some(media_id), Some(mime))
                                 }
                                 "sticker" => {
-                                    let media_id = msg["sticker"]["id"].as_str().unwrap_or("").to_string();
-                                    let mime = msg["sticker"]["mime_type"].as_str().unwrap_or("image/webp").to_string();
+                                    let media_id =
+                                        msg["sticker"]["id"].as_str().unwrap_or("").to_string();
+                                    let mime = msg["sticker"]["mime_type"]
+                                        .as_str()
+                                        .unwrap_or("image/webp")
+                                        .to_string();
                                     ("".to_string(), Some(media_id), Some(mime))
                                 }
                                 _ => {
@@ -571,7 +631,13 @@ pub async fn webhook_meta(
                                 }
                             };
 
-                            if message.is_empty() && media_url.as_ref().map(|s: &String| s.is_empty()).unwrap_or(true) && media_type.is_none() {
+                            if message.is_empty()
+                                && media_url
+                                    .as_ref()
+                                    .map(|s: &String| s.is_empty())
+                                    .unwrap_or(true)
+                                && media_type.is_none()
+                            {
                                 continue;
                             }
                             if from.is_empty() || phone_number_id.is_empty() {
@@ -590,12 +656,18 @@ pub async fn webhook_meta(
                             };
 
                             match messaging::process_incoming_message(
-                                &db, &config, &encryption, &event_bus, webhook,
+                                &db,
+                                &config,
+                                &encryption,
+                                &event_bus,
+                                webhook,
                             )
                             .await
                             {
                                 Ok(_) => tracing::info!("Processed Meta message from +{from}"),
-                                Err(e) => tracing::error!("Failed to process Meta message from +{from}: {e}"),
+                                Err(e) => tracing::error!(
+                                    "Failed to process Meta message from +{from}: {e}"
+                                ),
                             }
                         }
                     }
@@ -632,7 +704,9 @@ pub async fn webhook_telegram(
     let tg_contact_name = match (tg_first.is_empty(), tg_last.is_empty()) {
         (false, false) => Some(format!("{tg_first} {tg_last}")),
         (false, true) => Some(tg_first.to_string()),
-        _ => message["from"]["username"].as_str().map(|u| format!("@{u}")),
+        _ => message["from"]["username"]
+            .as_str()
+            .map(|u| format!("@{u}")),
     };
 
     let text = message["text"].as_str().unwrap_or("");
@@ -669,16 +743,19 @@ pub async fn webhook_telegram(
                     .ok()?;
                 let v: serde_json::Value = r.json().await.ok()?;
                 v["result"]["file_path"].as_str().map(|s| s.to_string())
-            }.await;
+            }
+            .await;
 
             if let Some(path) = file_path {
                 let download_url = format!("https://api.telegram.org/file/bot{token}/{path}");
                 let resp = client.get(&download_url).send().await.ok();
                 if let Some(r) = resp {
                     if r.status().is_success() {
-                        return r.bytes().await.ok().map(|b| {
-                            base64::engine::general_purpose::STANDARD.encode(&b)
-                        });
+                        return r
+                            .bytes()
+                            .await
+                            .ok()
+                            .map(|b| base64::engine::general_purpose::STANDARD.encode(&b));
                     }
                 }
             }
@@ -704,7 +781,9 @@ pub async fn webhook_telegram(
             (fid, "image/jpeg")
         } else if !document.is_null() {
             let fid = document["file_id"].as_str().unwrap_or("");
-            let mime = document["mime_type"].as_str().unwrap_or("application/octet-stream");
+            let mime = document["mime_type"]
+                .as_str()
+                .unwrap_or("application/octet-stream");
             (fid, mime)
         } else {
             let fid = video["file_id"].as_str().unwrap_or("");
@@ -733,7 +812,8 @@ pub async fn webhook_telegram(
         contact_name: tg_contact_name,
     };
 
-    match messaging::process_incoming_message(&db, &config, &encryption, &event_bus, webhook).await {
+    match messaging::process_incoming_message(&db, &config, &encryption, &event_bus, webhook).await
+    {
         Ok(_) => tracing::info!("Processed Telegram message from chat {chat_id}"),
         Err(e) => tracing::error!("Failed to process Telegram message from chat {chat_id}: {e}"),
     }
@@ -757,7 +837,10 @@ pub async fn playground_chat(
     Json(req): Json<ChatRequest>,
 ) -> Result<Json<PlaygroundResponse>, AppError> {
     let response = messaging::playground_chat(
-        &db, &encryption, &auth_user.workspace_id, &assistant_id,
+        &db,
+        &encryption,
+        &auth_user.workspace_id,
+        &assistant_id,
         query.share_token.as_deref(),
         &req.message,
     )
@@ -774,22 +857,42 @@ pub async fn list_conversations(
     Query(query): Query<ConversationListQuery>,
 ) -> Result<Json<crate::models::pagination::PaginatedResponse<ConversationResponse>>, AppError> {
     let owner_id = assistant_service::resolve_assistant_access(
-        &db, &auth_user.workspace_id, &assistant_id, query.share_token.as_deref(), "read",
-    ).await?;
+        &db,
+        &auth_user.workspace_id,
+        &assistant_id,
+        query.share_token.as_deref(),
+        "read",
+    )
+    .await?;
     let limit = query.limit.unwrap_or(30).min(100).max(1);
-    let paginated =
-        messaging::list_conversations(&db, &assistant_id, &owner_id, limit, query.cursor.as_deref(), query.search.as_deref()).await?;
+    let paginated = messaging::list_conversations(
+        &db,
+        &assistant_id,
+        &owner_id,
+        limit,
+        query.cursor.as_deref(),
+        query.search.as_deref(),
+    )
+    .await?;
 
     let mut responses = Vec::new();
     for conv in &paginated.items {
-        let messages = messaging::get_recent_messages(&db, &conv.id, 1).await.unwrap_or_default();
+        let messages = messaging::get_recent_messages(&db, &conv.id, 1)
+            .await
+            .unwrap_or_default();
         let message_count = messaging::count_messages(&db, &conv.id).await.unwrap_or(0);
         let total_tokens = messaging::sum_tokens(&db, &conv.id).await.unwrap_or(0);
-        let last_message = messages.first().and_then(|m| m.content.clone()).unwrap_or_default();
+        let last_message = messages
+            .first()
+            .and_then(|m| m.content.clone())
+            .unwrap_or_default();
 
         responses.push(ConversationResponse {
             id: conv.id.to_string(),
-            contact_name: conv.contact_name.clone().unwrap_or_else(|| conv.contact_number.clone()),
+            contact_name: conv
+                .contact_name
+                .clone()
+                .unwrap_or_else(|| conv.contact_number.clone()),
             channel: conv.channel.clone(),
             last_message,
             last_message_at: conv.last_message_at.to_rfc3339(),
@@ -820,13 +923,21 @@ pub async fn list_messages(
     Query(query): Query<MessageListQuery>,
 ) -> Result<Json<crate::models::pagination::PaginatedResponse<MessageResponse>>, AppError> {
     let owner_id = assistant_service::resolve_assistant_access(
-        &db, &auth_user.workspace_id, &assistant_id, query.share_token.as_deref(), "read",
-    ).await?;
+        &db,
+        &auth_user.workspace_id,
+        &assistant_id,
+        query.share_token.as_deref(),
+        "read",
+    )
+    .await?;
     // Validate conversation belongs to this assistant+user before returning messages
     messaging::get_conversation(&db, &assistant_id, &owner_id, &conversation_id).await?;
     let limit = query.limit.unwrap_or(50).min(200).max(1);
-    let paginated = messaging::get_messages_paged(&db, &conversation_id, limit, query.cursor.as_deref()).await?;
-    let responses: Vec<MessageResponse> = paginated.items
+    let paginated =
+        messaging::get_messages_paged(&db, &conversation_id, limit, query.cursor.as_deref())
+            .await?;
+    let responses: Vec<MessageResponse> = paginated
+        .items
         .into_iter()
         .map(|m| MessageResponse {
             id: m.id.to_string(),
@@ -851,8 +962,13 @@ pub async fn delete_conversation(
     Query(query): Query<crate::handlers::assistants::ShareTokenQuery>,
 ) -> Result<Json<Value>, AppError> {
     let owner_id = assistant_service::resolve_assistant_access(
-        &db, &auth_user.workspace_id, &assistant_id, query.share_token.as_deref(), "write",
-    ).await?;
+        &db,
+        &auth_user.workspace_id,
+        &assistant_id,
+        query.share_token.as_deref(),
+        "write",
+    )
+    .await?;
     messaging::delete_conversation(&db, &assistant_id, &owner_id, &conversation_id).await?;
     Ok(Json(serde_json::json!({"message": "Conversation deleted"})))
 }
@@ -874,11 +990,23 @@ pub async fn send_message(
     Json(req): Json<SendMessageRequest>,
 ) -> Result<Json<MessageResponse>, AppError> {
     let owner_id = assistant_service::resolve_assistant_access(
-        &db, &auth_user.workspace_id, &assistant_id, query.share_token.as_deref(), "write",
-    ).await?;
+        &db,
+        &auth_user.workspace_id,
+        &assistant_id,
+        query.share_token.as_deref(),
+        "write",
+    )
+    .await?;
     let response = messaging::send_direct_message(
-        &db, &config, &encryption, &owner_id, &assistant_id, &conversation_id, &req.message,
-    ).await?;
+        &db,
+        &config,
+        &encryption,
+        &owner_id,
+        &assistant_id,
+        &conversation_id,
+        &req.message,
+    )
+    .await?;
     Ok(Json(MessageResponse {
         id: response.id.to_string(),
         content: response.content.unwrap_or_default(),
@@ -904,9 +1032,21 @@ pub async fn toggle_ai(
     Json(req): Json<ToggleAiRequest>,
 ) -> Result<Json<Value>, AppError> {
     let owner_id = assistant_service::resolve_assistant_access(
-        &db, &auth_user.workspace_id, &assistant_id, query.share_token.as_deref(), "write",
-    ).await?;
-    messaging::toggle_ai_enabled(&db, &assistant_id, &owner_id, &conversation_id, req.ai_enabled).await?;
+        &db,
+        &auth_user.workspace_id,
+        &assistant_id,
+        query.share_token.as_deref(),
+        "write",
+    )
+    .await?;
+    messaging::toggle_ai_enabled(
+        &db,
+        &assistant_id,
+        &owner_id,
+        &conversation_id,
+        req.ai_enabled,
+    )
+    .await?;
     Ok(Json(serde_json::json!({"aiEnabled": req.ai_enabled})))
 }
 
@@ -927,11 +1067,22 @@ pub async fn summarize_conversation(
     Json(req): Json<SummarizeRequest>,
 ) -> Result<Json<SummaryResponse>, AppError> {
     let owner_id = assistant_service::resolve_assistant_access(
-        &db, &auth_user.workspace_id, &assistant_id, query.share_token.as_deref(), "read",
-    ).await?;
+        &db,
+        &auth_user.workspace_id,
+        &assistant_id,
+        query.share_token.as_deref(),
+        "read",
+    )
+    .await?;
     let response = messaging::summarize_conversation(
-        &db, &encryption, &owner_id, &assistant_id, &conversation_id,
-        &req.provider, &req.model,
-    ).await?;
+        &db,
+        &encryption,
+        &owner_id,
+        &assistant_id,
+        &conversation_id,
+        &req.provider,
+        &req.model,
+    )
+    .await?;
     Ok(Json(response))
 }

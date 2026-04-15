@@ -60,7 +60,16 @@ async fn check_all_connections(db: &DbSession, config: &Config) -> Result<(), St
 
     let client = Client::new();
 
-    for (assistant_id, user_id, integration_id, channel, provider, config_token, config_phone_number) in rows {
+    for (
+        assistant_id,
+        user_id,
+        integration_id,
+        channel,
+        provider,
+        config_token,
+        config_phone_number,
+    ) in rows
+    {
         let still_connected = check_connection(
             &client,
             config,
@@ -245,7 +254,8 @@ async fn get_user_email(db: &DbSession, user_id: &Uuid) -> Option<String> {
         .await
         .ok()?;
     result
-        .into_rows_result().ok()?
+        .into_rows_result()
+        .ok()?
         .single_row::<(String,)>()
         .ok()
         .map(|(email,)| email)
@@ -260,7 +270,8 @@ async fn get_assistant_name(db: &DbSession, user_id: &Uuid, assistant_id: &Uuid)
         .await
         .ok()?;
     result
-        .into_rows_result().ok()?
+        .into_rows_result()
+        .ok()?
         .single_row::<(String,)>()
         .ok()
         .map(|(name,)| name)

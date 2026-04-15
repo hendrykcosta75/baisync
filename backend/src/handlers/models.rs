@@ -31,14 +31,22 @@ pub async fn list_models(
     Query(query): Query<OwnerResolveQuery>,
 ) -> Result<Json<ModelsResponse>, AppError> {
     let user_id = assistant_service::resolve_api_key_user(
-        &db, &auth_user.workspace_id, query.assistant_id.as_ref(), query.share_token.as_deref(),
-    ).await?;
+        &db,
+        &auth_user.workspace_id,
+        query.assistant_id.as_ref(),
+        query.share_token.as_deref(),
+    )
+    .await?;
 
     if !matches!(provider.as_str(), "openai" | "claude" | "gemini") {
-        return Err(AppError::BadRequest(format!("Unknown provider: {provider}")));
+        return Err(AppError::BadRequest(format!(
+            "Unknown provider: {provider}"
+        )));
     }
 
-    let api_key = crate::services::workspace::get_decrypted_api_key(&db, &encryption, &user_id, &provider).await?;
+    let api_key =
+        crate::services::workspace::get_decrypted_api_key(&db, &encryption, &user_id, &provider)
+            .await?;
 
     let models = match provider.as_str() {
         "openai" => fetch_openai_models(&api_key).await?,
@@ -121,9 +129,7 @@ fn get_claude_models() -> Vec<ModelInfo> {
 
 async fn fetch_gemini_models(api_key: &str) -> Result<Vec<ModelInfo>, AppError> {
     let client = Client::new();
-    let url = format!(
-        "https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
-    );
+    let url = format!("https://generativelanguage.googleapis.com/v1beta/models?key={api_key}");
 
     let resp = client
         .get(&url)

@@ -34,7 +34,9 @@ pub async fn webhook_mercadopago(
         return Json(json!({"status": "ok"}));
     }
 
-    if let Err(e) = crate::services::pix::process_webhook(&db, &config, &encryption, &event_bus, &mp_id).await {
+    if let Err(e) =
+        crate::services::pix::process_webhook(&db, &config, &encryption, &event_bus, &mp_id).await
+    {
         tracing::error!(error = %e, mp_payment_id = %mp_id, "Failed to process Mercado Pago webhook");
     }
 

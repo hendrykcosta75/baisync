@@ -4,7 +4,9 @@ use uuid::Uuid;
 
 use crate::db::DbSession;
 use crate::errors::AppError;
-use crate::models::channel::{Channel, ChannelCanvas, ChannelMember, ChannelMessage, ChannelNote, UserChannel};
+use crate::models::channel::{
+    Channel, ChannelCanvas, ChannelMember, ChannelMessage, ChannelNote, UserChannel,
+};
 
 fn ts_now() -> CqlTimestamp {
     CqlTimestamp(Utc::now().timestamp_millis())
@@ -56,10 +58,7 @@ pub async fn create_channel(
     })
 }
 
-pub async fn list_channels(
-    db: &DbSession,
-    workspace_id: &Uuid,
-) -> Result<Vec<Channel>, AppError> {
+pub async fn list_channels(db: &DbSession, workspace_id: &Uuid) -> Result<Vec<Channel>, AppError> {
     let result = db
         .query_unpaged(
             "SELECT workspace_id, id, name, description, type, created_by, created_at, updated_at FROM inertial_eclipse.channels WHERE workspace_id = ?",
@@ -71,7 +70,19 @@ pub async fn list_channels(
     let rows = result.into_rows_result()?;
 
     let mut channels = Vec::new();
-    for row in rows.rows::<(Uuid, Uuid, String, Option<String>, String, Uuid, DateTime<Utc>, DateTime<Utc>)>()?.flatten() {
+    for row in rows
+        .rows::<(
+            Uuid,
+            Uuid,
+            String,
+            Option<String>,
+            String,
+            Uuid,
+            DateTime<Utc>,
+            DateTime<Utc>,
+        )>()?
+        .flatten()
+    {
         channels.push(Channel {
             workspace_id: row.0,
             id: row.1,
@@ -100,9 +111,16 @@ pub async fn get_channel(
         .await
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
-    let row = result
-        .into_rows_result()?
-        .single_row::<(Uuid, Uuid, String, Option<String>, String, Uuid, DateTime<Utc>, DateTime<Utc>)>()?;
+    let row = result.into_rows_result()?.single_row::<(
+        Uuid,
+        Uuid,
+        String,
+        Option<String>,
+        String,
+        Uuid,
+        DateTime<Utc>,
+        DateTime<Utc>,
+    )>()?;
 
     Ok(Channel {
         workspace_id: row.0,
@@ -238,7 +256,12 @@ async fn delete_user_channel(
 
     if let Some(result) = rows {
         if let Ok(typed) = result.into_rows_result() {
-            for row in typed.rows::<(Uuid, Option<DateTime<Utc>>)>().into_iter().flatten().flatten() {
+            for row in typed
+                .rows::<(Uuid, Option<DateTime<Utc>>)>()
+                .into_iter()
+                .flatten()
+                .flatten()
+            {
                 if row.0 == *channel_id {
                     if let Some(ts) = row.1 {
                         let ts_cql = CqlTimestamp(ts.timestamp_millis());
@@ -268,7 +291,17 @@ pub async fn list_members(
     let rows = result.into_rows_result()?;
 
     let mut members = Vec::new();
-    for row in rows.rows::<(Uuid, Uuid, Uuid, String, Option<DateTime<Utc>>, DateTime<Utc>)>()?.flatten() {
+    for row in rows
+        .rows::<(
+            Uuid,
+            Uuid,
+            Uuid,
+            String,
+            Option<DateTime<Utc>>,
+            DateTime<Utc>,
+        )>()?
+        .flatten()
+    {
         let user_info = db
             .query_unpaged(
                 "SELECT name, email FROM inertial_eclipse.users WHERE id = ?",
@@ -312,7 +345,10 @@ pub async fn is_member(
         .await
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
-    Ok(result.into_rows_result()?.maybe_first_row::<(Uuid,)>()?.is_some())
+    Ok(result
+        .into_rows_result()?
+        .maybe_first_row::<(Uuid,)>()?
+        .is_some())
 }
 
 // ─── Messages ───
@@ -401,7 +437,19 @@ pub async fn list_messages(
     let rows = result.into_rows_result()?;
 
     let mut messages = Vec::new();
-    for row in rows.rows::<(Uuid, CqlTimeuuid, Uuid, String, String, String, Option<DateTime<Utc>>, DateTime<Utc>)>()?.flatten() {
+    for row in rows
+        .rows::<(
+            Uuid,
+            CqlTimeuuid,
+            Uuid,
+            String,
+            String,
+            String,
+            Option<DateTime<Utc>>,
+            DateTime<Utc>,
+        )>()?
+        .flatten()
+    {
         messages.push(ChannelMessage {
             channel_id: row.0,
             id: row.1.into(),
@@ -449,11 +497,7 @@ pub async fn delete_message(
     Ok(())
 }
 
-pub async fn mark_read(
-    db: &DbSession,
-    channel_id: &Uuid,
-    user_id: &Uuid,
-) -> Result<(), AppError> {
+pub async fn mark_read(db: &DbSession, channel_id: &Uuid, user_id: &Uuid) -> Result<(), AppError> {
     let now = ts_now();
 
     // Update last_read_at in channel_members
@@ -568,7 +612,18 @@ pub async fn list_user_channels(
     let rows = result.into_rows_result()?;
 
     let mut channels = Vec::new();
-    for row in rows.rows::<(Uuid, Uuid, Uuid, String, String, Option<i32>, Option<DateTime<Utc>>)>()?.flatten() {
+    for row in rows
+        .rows::<(
+            Uuid,
+            Uuid,
+            Uuid,
+            String,
+            String,
+            Option<i32>,
+            Option<DateTime<Utc>>,
+        )>()?
+        .flatten()
+    {
         channels.push(UserChannel {
             user_id: row.0,
             workspace_id: row.1,
@@ -613,10 +668,7 @@ pub async fn create_note(
     })
 }
 
-pub async fn list_notes(
-    db: &DbSession,
-    channel_id: &Uuid,
-) -> Result<Vec<ChannelNote>, AppError> {
+pub async fn list_notes(db: &DbSession, channel_id: &Uuid) -> Result<Vec<ChannelNote>, AppError> {
     let result = db
         .query_unpaged(
             "SELECT channel_id, id, title, content, created_by, updated_by, created_at, updated_at FROM inertial_eclipse.channel_notes WHERE channel_id = ?",
@@ -628,7 +680,19 @@ pub async fn list_notes(
     let rows = result.into_rows_result()?;
 
     let mut notes = Vec::new();
-    for row in rows.rows::<(Uuid, Uuid, String, String, Uuid, Uuid, DateTime<Utc>, DateTime<Utc>)>()?.flatten() {
+    for row in rows
+        .rows::<(
+            Uuid,
+            Uuid,
+            String,
+            String,
+            Uuid,
+            Uuid,
+            DateTime<Utc>,
+            DateTime<Utc>,
+        )>()?
+        .flatten()
+    {
         notes.push(ChannelNote {
             channel_id: row.0,
             id: row.1,
@@ -657,9 +721,16 @@ pub async fn get_note(
         .await
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
-    let row = result
-        .into_rows_result()?
-        .single_row::<(Uuid, Uuid, String, String, Uuid, Uuid, DateTime<Utc>, DateTime<Utc>)>()?;
+    let row = result.into_rows_result()?.single_row::<(
+        Uuid,
+        Uuid,
+        String,
+        String,
+        Uuid,
+        Uuid,
+        DateTime<Utc>,
+        DateTime<Utc>,
+    )>()?;
 
     Ok(ChannelNote {
         channel_id: row.0,
@@ -760,7 +831,18 @@ pub async fn list_canvases(
     let rows = result.into_rows_result()?;
 
     let mut canvases = Vec::new();
-    for row in rows.rows::<(Uuid, Uuid, Option<String>, Option<Uuid>, Option<Uuid>, Option<DateTime<Utc>>, Option<DateTime<Utc>>)>()?.flatten() {
+    for row in rows
+        .rows::<(
+            Uuid,
+            Uuid,
+            Option<String>,
+            Option<Uuid>,
+            Option<Uuid>,
+            Option<DateTime<Utc>>,
+            Option<DateTime<Utc>>,
+        )>()?
+        .flatten()
+    {
         canvases.push(ChannelCanvas {
             channel_id: row.0,
             id: row.1,
@@ -789,9 +871,16 @@ pub async fn get_canvas(
         .await
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
-    let row = result
-        .into_rows_result()?
-        .single_row::<(Uuid, Uuid, Option<String>, Option<String>, Option<Uuid>, Option<Uuid>, Option<DateTime<Utc>>, Option<DateTime<Utc>>)>()?;
+    let row = result.into_rows_result()?.single_row::<(
+        Uuid,
+        Uuid,
+        Option<String>,
+        Option<String>,
+        Option<Uuid>,
+        Option<Uuid>,
+        Option<DateTime<Utc>>,
+        Option<DateTime<Utc>>,
+    )>()?;
 
     Ok(ChannelCanvas {
         channel_id: row.0,

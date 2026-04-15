@@ -1,6 +1,6 @@
 use axum::extract::{Extension, Path, Query};
 use axum::Json;
-use serde::{Deserialize};
+use serde::Deserialize;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
@@ -86,13 +86,7 @@ pub async fn update(
                 "Permissão insuficiente para editar este assistente".into(),
             ));
         }
-        let assistant = assistant_service::update_assistant(
-            &db,
-            &asst.user_id,
-            &id,
-            req,
-        )
-        .await?;
+        let assistant = assistant_service::update_assistant(&db, &asst.user_id, &id, req).await?;
         return Ok(Json(assistant));
     }
     Err(AppError::NotFound("Assistant not found".into()))

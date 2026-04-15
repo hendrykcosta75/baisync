@@ -8,9 +8,10 @@ use crate::db::DbSession;
 use crate::errors::AppError;
 use crate::models::strategy_map::{StrategyMapEdge, StrategyMapNode};
 use crate::services::assistant as assistant_service;
-use crate::services::okr as okr_service;
-use crate::services::team as team_service;
 use crate::services::channel as channel_service;
+use crate::services::okr as okr_service;
+use crate::services::swot as swot_service;
+use crate::services::team as team_service;
 use crate::services::workspace as workspace_service;
 
 fn ts_now() -> CqlTimestamp {
@@ -72,9 +73,19 @@ pub async fn list_nodes(
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     type NodeRow = (
-        Uuid, Uuid, Option<String>, Option<Uuid>, Option<String>, Option<f32>, Option<f32>,
-        Option<f32>, Option<f32>, Option<String>, Option<String>,
-        Option<DateTime<Utc>>, Option<DateTime<Utc>>,
+        Uuid,
+        Uuid,
+        Option<String>,
+        Option<Uuid>,
+        Option<String>,
+        Option<f32>,
+        Option<f32>,
+        Option<f32>,
+        Option<f32>,
+        Option<String>,
+        Option<String>,
+        Option<DateTime<Utc>>,
+        Option<DateTime<Utc>>,
     );
 
     let rows = result.into_rows_result()?;
@@ -252,7 +263,19 @@ pub async fn list_edges(
     let rows = result.into_rows_result()?;
 
     let mut edges = Vec::new();
-    for row in rows.rows::<(Uuid, Uuid, Option<Uuid>, Option<Uuid>, Option<String>, Option<String>, Option<String>, Option<DateTime<Utc>>)>()?.flatten() {
+    for row in rows
+        .rows::<(
+            Uuid,
+            Uuid,
+            Option<Uuid>,
+            Option<Uuid>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<DateTime<Utc>>,
+        )>()?
+        .flatten()
+    {
         edges.push(StrategyMapEdge {
             workspace_id: row.0,
             id: row.1,
@@ -296,7 +319,8 @@ pub async fn sync_from_okr_data(
 ) -> Result<(Vec<StrategyMapNode>, Vec<StrategyMapEdge>), AppError> {
     // ─── 1. Load existing state ───
     let existing_nodes = list_nodes(db, workspace_id).await?;
-    let existing_entity_ids: HashSet<Uuid> = existing_nodes.iter().filter_map(|n| n.entity_id).collect();
+    let existing_entity_ids: HashSet<Uuid> =
+        existing_nodes.iter().filter_map(|n| n.entity_id).collect();
     let mut entity_to_node: HashMap<Uuid, Uuid> = existing_nodes
         .iter()
         .filter_map(|n| n.entity_id.map(|eid| (eid, n.id)))
@@ -305,10 +329,12 @@ pub async fn sync_from_okr_data(
     // Delete old auto-generated edges (we rebuild them from real relationships)
     let existing_edges = list_edges(db, workspace_id).await?;
     for edge in &existing_edges {
-        let _ = db.query_unpaged(
-            "DELETE FROM inertial_eclipse.strategy_map_edges WHERE workspace_id = ? AND id = ?",
-            (workspace_id, &edge.id),
-        ).await;
+        let _ = db
+            .query_unpaged(
+                "DELETE FROM inertial_eclipse.strategy_map_edges WHERE workspace_id = ? AND id = ?",
+                (workspace_id, &edge.id),
+            )
+            .await;
     }
 
     let mut new_nodes: Vec<StrategyMapNode> = Vec::new();
@@ -345,9 +371,19 @@ pub async fn sync_from_okr_data(
                 entity_to_node.get(&$entity_id).copied()
             } else {
                 let node = create_node(
-                    db, workspace_id, $ntype, Some(&$entity_id), $label,
-                    px, py, 220.0, 100.0, $style, None,
-                ).await?;
+                    db,
+                    workspace_id,
+                    $ntype,
+                    Some(&$entity_id),
+                    $label,
+                    px,
+                    py,
+                    220.0,
+                    100.0,
+                    $style,
+                    None,
+                )
+                .await?;
                 entity_to_node.insert($entity_id, node.id);
                 let nid = node.id;
                 new_nodes.push(node);
@@ -357,27 +393,77 @@ pub async fn sync_from_okr_data(
     }
 
     // ─── 2. Workspace center node ───
+    let ws_name = workspace_service::get_workspace(db, workspace_id)
+        .await
+        .map(|w| w.name)
+        .unwrap_or_else(|_| "Workspace".to_string());
     let ws_node_exists = existing_nodes.iter().any(|n| n.node_type == "workspace");
     let ws_node_id = if !ws_node_exists {
-        let ws_name = workspace_service::get_workspace(db, workspace_id).await
-            .map(|w| w.name).unwrap_or_else(|_| "Workspace".to_string());
-        let node = create_node(db, workspace_id, "workspace", Some(workspace_id), &ws_name, 0.0, 0.0, 280.0, 100.0, None, None).await?;
+        let node = create_node(
+            db,
+            workspace_id,
+            "workspace",
+            Some(workspace_id),
+            &ws_name,
+            0.0,
+            0.0,
+            280.0,
+            100.0,
+            None,
+            None,
+        )
+        .await?;
         let nid = node.id;
         entity_to_node.insert(*workspace_id, nid);
         new_nodes.push(node);
         nid
     } else {
-        existing_nodes.iter().find(|n| n.node_type == "workspace").map(|n| n.id).unwrap_or(Uuid::nil())
+        let nid = existing_nodes
+            .iter()
+            .find(|n| n.node_type == "workspace")
+            .map(|n| n.id)
+            .unwrap_or(Uuid::nil());
+        refresh_node(db, workspace_id, &nid, &ws_name, None).await;
+        nid
     };
 
     // ─── 3. Load all domain data ───
     let objectives = okr_service::list_all_objectives(db, workspace_id).await?;
-    let teams = team_service::list_teams(db, workspace_id).await.unwrap_or_default();
-    let channels = channel_service::list_channels(db, workspace_id).await.unwrap_or_default();
-    let ws = workspace_service::get_workspace(db, workspace_id).await.ok();
+    let teams = team_service::list_teams(db, workspace_id)
+        .await
+        .unwrap_or_default();
+    let channels = channel_service::list_channels(db, workspace_id)
+        .await
+        .unwrap_or_default();
+    let ws = workspace_service::get_workspace(db, workspace_id)
+        .await
+        .ok();
     let owner_id = ws.map(|w| w.owner_id).unwrap_or(*workspace_id);
-    let assistants = assistant_service::list_assistants(db, &owner_id).await.unwrap_or_default();
-    let members = workspace_service::list_members(db, workspace_id).await.unwrap_or_default();
+    let assistants = assistant_service::list_assistants(db, &owner_id)
+        .await
+        .unwrap_or_default();
+    let members = workspace_service::list_members(db, workspace_id)
+        .await
+        .unwrap_or_default();
+    let swot_analyses = swot_service::list_analyses(db, workspace_id)
+        .await
+        .unwrap_or_default();
+
+    let mut tasks_by_team = HashMap::new();
+    for team in &teams {
+        let tasks = team_service::list_tasks(db, &team.id)
+            .await
+            .unwrap_or_default();
+        tasks_by_team.insert(team.id, tasks);
+    }
+
+    let mut swot_items_by_analysis = HashMap::new();
+    for analysis in &swot_analyses {
+        let items = swot_service::list_items(db, &analysis.id)
+            .await
+            .unwrap_or_default();
+        swot_items_by_analysis.insert(analysis.id, items);
+    }
 
     // Build team membership map: user_id → [team_id, ...]
     let mut user_teams: HashMap<Uuid, Vec<Uuid>> = HashMap::new();
@@ -415,18 +501,83 @@ pub async fn sync_from_okr_data(
             "progress": obj.progress, "confidence": obj.confidence,
             "status": obj.status, "objective_type": obj.objective_type,
             "cycle": obj.cycle, "description": obj.description,
-        }).to_string();
+        })
+        .to_string();
         ensure_node!(obj.id, "objective", &obj.title, Some(meta.as_str()));
 
-        let krs = okr_service::list_key_results(db, &obj.id).await.unwrap_or_default();
+        let krs = okr_service::list_key_results(db, &obj.id)
+            .await
+            .unwrap_or_default();
         for kr in &krs {
             let kr_meta = serde_json::json!({
                 "current_value": kr.current_value, "target_value": kr.target_value,
                 "start_value": kr.start_value, "unit": kr.unit,
                 "confidence": kr.confidence, "status": kr.status, "kr_type": kr.kr_type,
-            }).to_string();
+            })
+            .to_string();
             ensure_node!(kr.id, "key_result", &kr.title, Some(kr_meta.as_str()));
         }
+    }
+    // Tasks
+    for team in &teams {
+        if let Some(tasks) = tasks_by_team.get(&team.id) {
+            for task in tasks {
+                let meta = serde_json::json!({
+                    "description": task.description,
+                    "status": task.status,
+                    "priority": task.priority,
+                    "assignee_name": task.assignee_name,
+                    "due_date": task.due_date.map(|d| d.to_rfc3339()),
+                    "checklist_total": task.checklist_total,
+                    "checklist_done": task.checklist_done,
+                })
+                .to_string();
+                ensure_node!(task.id, "task", &task.title, Some(meta.as_str()));
+            }
+        }
+    }
+    // SWOT analyses
+    for analysis in &swot_analyses {
+        let items = swot_items_by_analysis.get(&analysis.id);
+        let strengths = items
+            .map(|list| {
+                list.iter()
+                    .filter(|item| item.quadrant == "strengths")
+                    .count()
+            })
+            .unwrap_or(0);
+        let weaknesses = items
+            .map(|list| {
+                list.iter()
+                    .filter(|item| item.quadrant == "weaknesses")
+                    .count()
+            })
+            .unwrap_or(0);
+        let opportunities = items
+            .map(|list| {
+                list.iter()
+                    .filter(|item| item.quadrant == "opportunities")
+                    .count()
+            })
+            .unwrap_or(0);
+        let threats = items
+            .map(|list| {
+                list.iter()
+                    .filter(|item| item.quadrant == "threats")
+                    .count()
+            })
+            .unwrap_or(0);
+        let meta = serde_json::json!({
+            "description": analysis.description,
+            "cycle": analysis.cycle,
+            "items_total": items.map(|list| list.len()).unwrap_or(0),
+            "strengths": strengths,
+            "weaknesses": weaknesses,
+            "opportunities": opportunities,
+            "threats": threats,
+        })
+        .to_string();
+        ensure_node!(analysis.id, "swot", &analysis.title, Some(meta.as_str()));
     }
 
     // ─── 5. Build edges based on real relationships ───
@@ -437,9 +588,13 @@ pub async fn sync_from_okr_data(
 
     // KRs → their objective
     for obj in &objectives {
-        let krs = okr_service::list_key_results(db, &obj.id).await.unwrap_or_default();
+        let krs = okr_service::list_key_results(db, &obj.id)
+            .await
+            .unwrap_or_default();
         for kr in &krs {
-            if let (Some(src), Some(tgt)) = (entity_to_node.get(&obj.id), entity_to_node.get(&kr.id)) {
+            if let (Some(src), Some(tgt)) =
+                (entity_to_node.get(&obj.id), entity_to_node.get(&kr.id))
+            {
                 let edge = create_edge(db, workspace_id, src, tgt, "hierarchy", None, None).await?;
                 new_edges.push(edge);
                 has_parent.insert(kr.id);
@@ -450,7 +605,9 @@ pub async fn sync_from_okr_data(
 
     // Objectives with team_ids → their teams
     for obj in &objectives {
-        let obj_teams: Vec<Uuid> = obj.team_ids.as_ref()
+        let obj_teams: Vec<Uuid> = obj
+            .team_ids
+            .as_ref()
             .map(|ids| ids.clone())
             .unwrap_or_else(|| obj.team_id.into_iter().collect());
         for tid in &obj_teams {
@@ -467,8 +624,11 @@ pub async fn sync_from_okr_data(
     for member in &members {
         if let Some(team_ids) = user_teams.get(&member.user_id) {
             for tid in team_ids {
-                if let (Some(src), Some(tgt)) = (entity_to_node.get(tid), entity_to_node.get(&member.user_id)) {
-                    let edge = create_edge(db, workspace_id, src, tgt, "hierarchy", None, None).await?;
+                if let (Some(src), Some(tgt)) =
+                    (entity_to_node.get(tid), entity_to_node.get(&member.user_id))
+                {
+                    let edge =
+                        create_edge(db, workspace_id, src, tgt, "hierarchy", None, None).await?;
                     new_edges.push(edge);
                     has_parent.insert(member.user_id);
                     children_map.entry(*src).or_default().push(*tgt);
@@ -477,15 +637,83 @@ pub async fn sync_from_okr_data(
         }
     }
 
+    // Tasks → their teams (hierarchy), plus optional alignment to objective/KR
+    for team in &teams {
+        if let Some(tasks) = tasks_by_team.get(&team.id) {
+            for task in tasks {
+                if let (Some(src), Some(tgt)) =
+                    (entity_to_node.get(&team.id), entity_to_node.get(&task.id))
+                {
+                    let edge =
+                        create_edge(db, workspace_id, src, tgt, "hierarchy", None, None).await?;
+                    new_edges.push(edge);
+                    has_parent.insert(task.id);
+                    children_map.entry(*src).or_default().push(*tgt);
+                }
+
+                if let Some(kr_id) = task.okr_key_result_id {
+                    if let (Some(src), Some(tgt)) =
+                        (entity_to_node.get(&kr_id), entity_to_node.get(&task.id))
+                    {
+                        let edge = create_edge(db, workspace_id, src, tgt, "alignment", None, None)
+                            .await?;
+                        new_edges.push(edge);
+                    }
+                } else if let Some(obj_id) = task.okr_objective_id {
+                    if let (Some(src), Some(tgt)) =
+                        (entity_to_node.get(&obj_id), entity_to_node.get(&task.id))
+                    {
+                        let edge = create_edge(db, workspace_id, src, tgt, "alignment", None, None)
+                            .await?;
+                        new_edges.push(edge);
+                    }
+                }
+            }
+        }
+    }
+
+    // SWOT analyses align to linked objectives through their items
+    for analysis in &swot_analyses {
+        if let Some(swot_node_id) = entity_to_node.get(&analysis.id) {
+            let linked_objectives: HashSet<Uuid> = swot_items_by_analysis
+                .get(&analysis.id)
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(|item| item.linked_objective_id)
+                        .collect()
+                })
+                .unwrap_or_default();
+
+            for objective_id in linked_objectives {
+                if let Some(objective_node_id) = entity_to_node.get(&objective_id) {
+                    let edge = create_edge(
+                        db,
+                        workspace_id,
+                        swot_node_id,
+                        objective_node_id,
+                        "alignment",
+                        None,
+                        None,
+                    )
+                    .await?;
+                    new_edges.push(edge);
+                }
+            }
+        }
+    }
+
     // Entities without a parent → workspace
-    let all_entity_ids: Vec<Uuid> = entity_to_node.keys()
+    let all_entity_ids: Vec<Uuid> = entity_to_node
+        .keys()
         .filter(|eid| **eid != *workspace_id)
         .copied()
         .collect();
     for eid in &all_entity_ids {
         if !has_parent.contains(eid) {
             if let Some(tgt) = entity_to_node.get(eid) {
-                let edge = create_edge(db, workspace_id, &ws_node_id, tgt, "hierarchy", None, None).await?;
+                let edge = create_edge(db, workspace_id, &ws_node_id, tgt, "hierarchy", None, None)
+                    .await?;
                 new_edges.push(edge);
                 children_map.entry(ws_node_id).or_default().push(*tgt);
             }
@@ -501,14 +729,28 @@ pub async fn sync_from_okr_data(
 
     // Sort children of each parent by node_type so same categories are grouped
     let type_order: HashMap<&str, u8> = [
-        ("team", 0), ("objective", 1), ("channel", 2), ("assistant", 3),
-        ("member", 4), ("key_result", 5), ("task", 6), ("swot", 7),
-    ].into_iter().collect();
+        ("team", 0),
+        ("objective", 1),
+        ("channel", 2),
+        ("assistant", 3),
+        ("member", 4),
+        ("key_result", 5),
+        ("task", 6),
+        ("swot", 7),
+    ]
+    .into_iter()
+    .collect();
 
     for children in children_map.values_mut() {
         children.sort_by(|a, b| {
-            let ta = node_type_map.get(a).map(|t| *type_order.get(t.as_str()).unwrap_or(&99)).unwrap_or(99);
-            let tb = node_type_map.get(b).map(|t| *type_order.get(t.as_str()).unwrap_or(&99)).unwrap_or(99);
+            let ta = node_type_map
+                .get(a)
+                .map(|t| *type_order.get(t.as_str()).unwrap_or(&99))
+                .unwrap_or(99);
+            let tb = node_type_map
+                .get(b)
+                .map(|t| *type_order.get(t.as_str()).unwrap_or(&99))
+                .unwrap_or(99);
             ta.cmp(&tb)
         });
     }
@@ -538,27 +780,59 @@ pub async fn sync_from_okr_data(
 
         if children.is_empty() {
             let width = spacing_x;
-            positions.insert(node_id, LayoutInfo { x: x_offset + width / 2.0, y, width });
+            positions.insert(
+                node_id,
+                LayoutInfo {
+                    x: x_offset + width / 2.0,
+                    y,
+                    width,
+                },
+            );
             return width;
         }
 
         // Recursively layout children
         let mut total_width = 0.0_f32;
         for child in &children {
-            if positions.contains_key(child) { continue; }
-            let child_width = layout_tree(*child, depth + 1, x_offset + total_width, children_map, spacing_x, spacing_y, positions);
+            if positions.contains_key(child) {
+                continue;
+            }
+            let child_width = layout_tree(
+                *child,
+                depth + 1,
+                x_offset + total_width,
+                children_map,
+                spacing_x,
+                spacing_y,
+                positions,
+            );
             total_width += child_width;
         }
         total_width = total_width.max(spacing_x);
 
         // Center this node above its children
         let center_x = x_offset + total_width / 2.0;
-        positions.insert(node_id, LayoutInfo { x: center_x, y, width: total_width });
+        positions.insert(
+            node_id,
+            LayoutInfo {
+                x: center_x,
+                y,
+                width: total_width,
+            },
+        );
         total_width
     }
 
     let mut positions: HashMap<Uuid, LayoutInfo> = HashMap::new();
-    layout_tree(ws_node_id, 0, 0.0, &children_map, spacing_x, spacing_y, &mut positions);
+    layout_tree(
+        ws_node_id,
+        0,
+        0.0,
+        &children_map,
+        spacing_x,
+        spacing_y,
+        &mut positions,
+    );
 
     // Apply positions to nodes (both new and existing)
     let now = ts_now();

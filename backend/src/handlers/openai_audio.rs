@@ -67,9 +67,15 @@ pub async fn preview_voice(
     Json(body): Json<PreviewRequest>,
 ) -> Result<Json<PreviewResponse>, AppError> {
     let user_id = assistant_service::resolve_api_key_user(
-        &db, &auth_user.workspace_id, query.assistant_id.as_ref(), query.share_token.as_deref(),
-    ).await?;
-    let api_key = crate::services::workspace::get_decrypted_api_key(&db, &encryption, &user_id, "openai").await?;
+        &db,
+        &auth_user.workspace_id,
+        query.assistant_id.as_ref(),
+        query.share_token.as_deref(),
+    )
+    .await?;
+    let api_key =
+        crate::services::workspace::get_decrypted_api_key(&db, &encryption, &user_id, "openai")
+            .await?;
 
     let text = body
         .text

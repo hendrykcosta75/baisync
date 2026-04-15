@@ -20,8 +20,13 @@ pub async fn list(
     Query(query): Query<ShareTokenQuery>,
 ) -> Result<Json<Vec<AssistantTool>>, AppError> {
     assistant_service::resolve_assistant_access(
-        &db, &auth_user.workspace_id, &assistant_id, query.share_token.as_deref(), "read",
-    ).await?;
+        &db,
+        &auth_user.workspace_id,
+        &assistant_id,
+        query.share_token.as_deref(),
+        "read",
+    )
+    .await?;
     let tools = assistant_service::list_tools(&db, &assistant_id).await?;
     Ok(Json(tools))
 }
@@ -37,8 +42,13 @@ pub async fn create(
         ws_service::require_editor_role(&db, &auth_user.workspace_id, &auth_user.user_id).await?;
     }
     assistant_service::resolve_assistant_access(
-        &db, &auth_user.workspace_id, &assistant_id, query.share_token.as_deref(), "admin",
-    ).await?;
+        &db,
+        &auth_user.workspace_id,
+        &assistant_id,
+        query.share_token.as_deref(),
+        "admin",
+    )
+    .await?;
     let tool = assistant_service::create_tool(&db, &assistant_id, req).await?;
     Ok(Json(tool))
 }
@@ -54,8 +64,13 @@ pub async fn update(
         ws_service::require_editor_role(&db, &auth_user.workspace_id, &auth_user.user_id).await?;
     }
     assistant_service::resolve_assistant_access(
-        &db, &auth_user.workspace_id, &assistant_id, query.share_token.as_deref(), "admin",
-    ).await?;
+        &db,
+        &auth_user.workspace_id,
+        &assistant_id,
+        query.share_token.as_deref(),
+        "admin",
+    )
+    .await?;
     let tool = assistant_service::update_tool(&db, &assistant_id, &tool_id, req).await?;
     Ok(Json(tool))
 }
@@ -70,8 +85,13 @@ pub async fn delete(
         ws_service::require_editor_role(&db, &auth_user.workspace_id, &auth_user.user_id).await?;
     }
     assistant_service::resolve_assistant_access(
-        &db, &auth_user.workspace_id, &assistant_id, query.share_token.as_deref(), "admin",
-    ).await?;
+        &db,
+        &auth_user.workspace_id,
+        &assistant_id,
+        query.share_token.as_deref(),
+        "admin",
+    )
+    .await?;
     assistant_service::delete_tool(&db, &assistant_id, &tool_id).await?;
     Ok(Json(json!({"message": "Tool deleted"})))
 }
@@ -90,10 +110,22 @@ pub async fn list_calls(
     Query(query): Query<CallLogsQuery>,
 ) -> Result<Json<crate::models::pagination::PaginatedResponse<ToolCallLog>>, AppError> {
     assistant_service::resolve_assistant_access(
-        &db, &auth_user.workspace_id, &assistant_id, query.share_token.as_deref(), "read",
-    ).await?;
+        &db,
+        &auth_user.workspace_id,
+        &assistant_id,
+        query.share_token.as_deref(),
+        "read",
+    )
+    .await?;
     let limit = query.limit.unwrap_or(50).min(200);
-    let paginated = assistant_service::list_tool_call_logs_paged(&db, &assistant_id, &tool_id, limit, query.cursor.as_deref()).await?;
+    let paginated = assistant_service::list_tool_call_logs_paged(
+        &db,
+        &assistant_id,
+        &tool_id,
+        limit,
+        query.cursor.as_deref(),
+    )
+    .await?;
     Ok(Json(paginated))
 }
 
@@ -132,11 +164,13 @@ pub async fn test_url(
     match result {
         Ok(resp) => {
             let status = resp.status().as_u16();
-            let content_type = resp.headers()
+            let content_type = resp
+                .headers()
                 .get("content-type")
                 .and_then(|v| v.to_str().ok())
                 .map(|s| s.to_string());
-            let content_length = resp.headers()
+            let content_length = resp
+                .headers()
                 .get("content-length")
                 .and_then(|v| v.to_str().ok())
                 .and_then(|s| s.parse::<u64>().ok());
@@ -149,14 +183,12 @@ pub async fn test_url(
                 error: None,
             })
         }
-        Err(e) => {
-            Json(TestUrlResponse {
-                ok: false,
-                status: 0,
-                content_type: None,
-                content_length: None,
-                error: Some(e.to_string()),
-            })
-        }
+        Err(e) => Json(TestUrlResponse {
+            ok: false,
+            status: 0,
+            content_type: None,
+            content_length: None,
+            error: Some(e.to_string()),
+        }),
     }
 }

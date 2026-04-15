@@ -44,9 +44,15 @@ pub async fn list_voices(
     Query(query): Query<OwnerResolveQuery>,
 ) -> Result<Json<VoicesResponse>, AppError> {
     let user_id = assistant_service::resolve_api_key_user(
-        &db, &auth_user.workspace_id, query.assistant_id.as_ref(), query.share_token.as_deref(),
-    ).await?;
-    let api_key = crate::services::workspace::get_decrypted_api_key(&db, &encryption, &user_id, "elevenlabs").await?;
+        &db,
+        &auth_user.workspace_id,
+        query.assistant_id.as_ref(),
+        query.share_token.as_deref(),
+    )
+    .await?;
+    let api_key =
+        crate::services::workspace::get_decrypted_api_key(&db, &encryption, &user_id, "elevenlabs")
+            .await?;
 
     let client = reqwest::Client::new();
     let resp = client
@@ -65,10 +71,9 @@ pub async fn list_voices(
         )));
     }
 
-    let data: serde_json::Value = resp
-        .json()
-        .await
-        .map_err(|e| AppError::InternalError(format!("Failed to parse ElevenLabs response: {e}")))?;
+    let data: serde_json::Value = resp.json().await.map_err(|e| {
+        AppError::InternalError(format!("Failed to parse ElevenLabs response: {e}"))
+    })?;
 
     let voices = data["voices"]
         .as_array()
@@ -96,9 +101,15 @@ pub async fn preview_voice(
     Json(body): Json<PreviewRequest>,
 ) -> Result<Json<PreviewResponse>, AppError> {
     let user_id = assistant_service::resolve_api_key_user(
-        &db, &auth_user.workspace_id, query.assistant_id.as_ref(), query.share_token.as_deref(),
-    ).await?;
-    let api_key = crate::services::workspace::get_decrypted_api_key(&db, &encryption, &user_id, "elevenlabs").await?;
+        &db,
+        &auth_user.workspace_id,
+        query.assistant_id.as_ref(),
+        query.share_token.as_deref(),
+    )
+    .await?;
+    let api_key =
+        crate::services::workspace::get_decrypted_api_key(&db, &encryption, &user_id, "elevenlabs")
+            .await?;
 
     let text = body
         .text

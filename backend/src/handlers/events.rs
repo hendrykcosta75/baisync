@@ -1,7 +1,7 @@
 use std::convert::Infallible;
 
-use axum::Extension;
 use axum::response::sse::{Event, KeepAlive, Sse};
+use axum::Extension;
 use futures::stream::Stream;
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::StreamExt;

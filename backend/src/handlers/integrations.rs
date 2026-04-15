@@ -37,10 +37,14 @@ pub async fn list(
     Query(query): Query<ShareTokenQuery>,
 ) -> Result<Json<Vec<AssistantIntegration>>, AppError> {
     let owner_id = assistant_service::resolve_assistant_access(
-        &db, &auth_user.workspace_id, &assistant_id, query.share_token.as_deref(), "read",
-    ).await?;
-    let integrations =
-        assistant_service::list_integrations(&db, &assistant_id, &owner_id).await?;
+        &db,
+        &auth_user.workspace_id,
+        &assistant_id,
+        query.share_token.as_deref(),
+        "read",
+    )
+    .await?;
+    let integrations = assistant_service::list_integrations(&db, &assistant_id, &owner_id).await?;
     Ok(Json(integrations))
 }
 
@@ -55,8 +59,13 @@ pub async fn create(
         ws_service::require_editor_role(&db, &auth_user.workspace_id, &auth_user.user_id).await?;
     }
     let owner_id = assistant_service::resolve_assistant_access(
-        &db, &auth_user.workspace_id, &assistant_id, query.share_token.as_deref(), "admin",
-    ).await?;
+        &db,
+        &auth_user.workspace_id,
+        &assistant_id,
+        query.share_token.as_deref(),
+        "admin",
+    )
+    .await?;
     let integration =
         assistant_service::create_integration(&db, &assistant_id, &owner_id, req).await?;
     Ok(Json(integration))
@@ -73,16 +82,16 @@ pub async fn update(
         ws_service::require_editor_role(&db, &auth_user.workspace_id, &auth_user.user_id).await?;
     }
     let owner_id = assistant_service::resolve_assistant_access(
-        &db, &auth_user.workspace_id, &assistant_id, query.share_token.as_deref(), "admin",
-    ).await?;
-    let integration = assistant_service::update_integration(
         &db,
+        &auth_user.workspace_id,
         &assistant_id,
-        &owner_id,
-        &integration_id,
-        req,
+        query.share_token.as_deref(),
+        "admin",
     )
     .await?;
+    let integration =
+        assistant_service::update_integration(&db, &assistant_id, &owner_id, &integration_id, req)
+            .await?;
     Ok(Json(integration))
 }
 
@@ -96,15 +105,14 @@ pub async fn delete(
         ws_service::require_editor_role(&db, &auth_user.workspace_id, &auth_user.user_id).await?;
     }
     let owner_id = assistant_service::resolve_assistant_access(
-        &db, &auth_user.workspace_id, &assistant_id, query.share_token.as_deref(), "admin",
-    ).await?;
-    assistant_service::delete_integration(
         &db,
+        &auth_user.workspace_id,
         &assistant_id,
-        &owner_id,
-        &integration_id,
+        query.share_token.as_deref(),
+        "admin",
     )
     .await?;
+    assistant_service::delete_integration(&db, &assistant_id, &owner_id, &integration_id).await?;
     Ok(Json(json!({"message": "Integration deleted"})))
 }
 
@@ -119,16 +127,22 @@ pub async fn connect(
         ws_service::require_editor_role(&db, &auth_user.workspace_id, &auth_user.user_id).await?;
     }
     let owner_id = assistant_service::resolve_assistant_access(
-        &db, &auth_user.workspace_id, &assistant_id, query.share_token.as_deref(), "admin",
-    ).await?;
-    let integration =
-        get_integration(&db, &assistant_id, &owner_id, &integration_id).await?;
+        &db,
+        &auth_user.workspace_id,
+        &assistant_id,
+        query.share_token.as_deref(),
+        "admin",
+    )
+    .await?;
+    let integration = get_integration(&db, &assistant_id, &owner_id, &integration_id).await?;
 
     let phone = integration
         .config_phone_number
         .as_deref()
         .filter(|s| !s.is_empty())
-        .ok_or_else(|| AppError::BadRequest("No phone number configured for this integration".into()))?;
+        .ok_or_else(|| {
+            AppError::BadRequest("No phone number configured for this integration".into())
+        })?;
 
     match integration.provider.as_str() {
         "baileys" => {
@@ -136,7 +150,9 @@ pub async fn connect(
             let phone_clean = phone.replace('+', "");
             // When BAILEYS_URL points to localhost, the backend is running outside Docker
             // so Baileys (inside Docker) must reach us via host.docker.internal
-            let webhook_host = if config.baileys_url.contains("localhost") || config.baileys_url.contains("127.0.0.1") {
+            let webhook_host = if config.baileys_url.contains("localhost")
+                || config.baileys_url.contains("127.0.0.1")
+            {
                 "host.docker.internal:3001"
             } else {
                 "backend:3001"
@@ -163,17 +179,30 @@ pub async fn connect(
             }
 
             assistant_service::update_integration(
-                &db, &assistant_id, &owner_id, &integration_id,
+                &db,
+                &assistant_id,
+                &owner_id,
+                &integration_id,
                 UpdateIntegrationRequest {
                     status: Some("connecting".into()),
-                    channel: None, provider: None, config_token: None, config_phone_number: None,
-                    config_chatwoot_url: None, config_rate_limit_per_day: None, config_max_message_length: None,
-                    config_audio_response_mode: None, config_interpret_documents: None, config_split_messages: None,
+                    channel: None,
+                    provider: None,
+                    config_token: None,
+                    config_phone_number: None,
+                    config_chatwoot_url: None,
+                    config_rate_limit_per_day: None,
+                    config_max_message_length: None,
+                    config_audio_response_mode: None,
+                    config_interpret_documents: None,
+                    config_split_messages: None,
                     config_webhook_verify_token: None,
                 },
-            ).await?;
+            )
+            .await?;
 
-            Ok(Json(json!({"status": "connecting", "message": "Waiting for QR code via webhook"})))
+            Ok(Json(
+                json!({"status": "connecting", "message": "Waiting for QR code via webhook"}),
+            ))
         }
         "meta_official" => {
             // Meta Official: validate access token by calling the Graph API
@@ -184,29 +213,53 @@ pub async fn connect(
 
             let client = Client::new();
             let url = format!("https://graph.facebook.com/v21.0/{phone}/phone_numbers");
-            let resp = client.get(&url).bearer_auth(access_token).send().await
+            let resp = client
+                .get(&url)
+                .bearer_auth(access_token)
+                .send()
+                .await
                 .map_err(|e| AppError::InternalError(format!("Meta API call failed: {e}")))?;
 
-            let new_status = if resp.status().is_success() { "connected" } else { "disconnected" };
+            let new_status = if resp.status().is_success() {
+                "connected"
+            } else {
+                "disconnected"
+            };
 
             assistant_service::update_integration(
-                &db, &assistant_id, &owner_id, &integration_id,
+                &db,
+                &assistant_id,
+                &owner_id,
+                &integration_id,
                 UpdateIntegrationRequest {
                     status: Some(new_status.into()),
-                    channel: None, provider: None, config_token: None, config_phone_number: None,
-                    config_chatwoot_url: None, config_rate_limit_per_day: None, config_max_message_length: None,
-                    config_audio_response_mode: None, config_interpret_documents: None, config_split_messages: None,
+                    channel: None,
+                    provider: None,
+                    config_token: None,
+                    config_phone_number: None,
+                    config_chatwoot_url: None,
+                    config_rate_limit_per_day: None,
+                    config_max_message_length: None,
+                    config_audio_response_mode: None,
+                    config_interpret_documents: None,
+                    config_split_messages: None,
                     config_webhook_verify_token: None,
                 },
-            ).await?;
+            )
+            .await?;
 
             if new_status == "connected" {
-                Ok(Json(json!({"status": "connected", "message": "Meta Official WhatsApp connected. Configure the webhook URL in Meta Dashboard to: /api/webhooks/meta"})))
+                Ok(Json(
+                    json!({"status": "connected", "message": "Meta Official WhatsApp connected. Configure the webhook URL in Meta Dashboard to: /api/webhooks/meta"}),
+                ))
             } else {
                 Err(AppError::BadRequest("Access Token is invalid or Phone Number ID is incorrect. Check your Meta Dashboard credentials.".into()))
             }
         }
-        _ => Err(AppError::BadRequest(format!("Unknown provider: {}", integration.provider))),
+        _ => Err(AppError::BadRequest(format!(
+            "Unknown provider: {}",
+            integration.provider
+        ))),
     }
 }
 
@@ -218,10 +271,14 @@ pub async fn status(
     Query(query): Query<ShareTokenQuery>,
 ) -> Result<Json<Value>, AppError> {
     let owner_id = assistant_service::resolve_assistant_access(
-        &db, &auth_user.workspace_id, &assistant_id, query.share_token.as_deref(), "read",
-    ).await?;
-    let integration =
-        get_integration(&db, &assistant_id, &owner_id, &integration_id).await?;
+        &db,
+        &auth_user.workspace_id,
+        &assistant_id,
+        query.share_token.as_deref(),
+        "read",
+    )
+    .await?;
+    let integration = get_integration(&db, &assistant_id, &owner_id, &integration_id).await?;
 
     let phone = integration
         .config_phone_number
@@ -240,15 +297,26 @@ pub async fn status(
             let is_connected = data["status"].as_str() == Some("connected");
             if is_connected && integration.status != "connected" {
                 assistant_service::update_integration(
-                    &db, &assistant_id, &owner_id, &integration_id,
+                    &db,
+                    &assistant_id,
+                    &owner_id,
+                    &integration_id,
                     UpdateIntegrationRequest {
                         status: Some("connected".into()),
-                        channel: None, provider: None, config_token: None, config_phone_number: None,
-                        config_chatwoot_url: None, config_rate_limit_per_day: None, config_max_message_length: None,
-                        config_audio_response_mode: None, config_interpret_documents: None, config_split_messages: None,
+                        channel: None,
+                        provider: None,
+                        config_token: None,
+                        config_phone_number: None,
+                        config_chatwoot_url: None,
+                        config_rate_limit_per_day: None,
+                        config_max_message_length: None,
+                        config_audio_response_mode: None,
+                        config_interpret_documents: None,
+                        config_split_messages: None,
                         config_webhook_verify_token: None,
                     },
-                ).await?;
+                )
+                .await?;
             }
 
             Ok(Json(data))
@@ -269,10 +337,14 @@ pub async fn disconnect(
         ws_service::require_editor_role(&db, &auth_user.workspace_id, &auth_user.user_id).await?;
     }
     let owner_id = assistant_service::resolve_assistant_access(
-        &db, &auth_user.workspace_id, &assistant_id, query.share_token.as_deref(), "admin",
-    ).await?;
-    let integration =
-        get_integration(&db, &assistant_id, &owner_id, &integration_id).await?;
+        &db,
+        &auth_user.workspace_id,
+        &assistant_id,
+        query.share_token.as_deref(),
+        "admin",
+    )
+    .await?;
+    let integration = get_integration(&db, &assistant_id, &owner_id, &integration_id).await?;
 
     let phone = integration.config_phone_number.clone().unwrap_or_default();
 
@@ -280,7 +352,11 @@ pub async fn disconnect(
     if integration.provider == "baileys" && !phone.is_empty() {
         let client = Client::new();
         let url = format!("{}/connections/{}", config.baileys_url, phone);
-        let _ = client.delete(&url).header("x-api-key", &config.baileys_api_key).send().await;
+        let _ = client
+            .delete(&url)
+            .header("x-api-key", &config.baileys_api_key)
+            .send()
+            .await;
         conn_store.remove(&phone);
     }
 

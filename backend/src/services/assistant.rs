@@ -88,13 +88,9 @@ fn row_to_assistant(r: AssistantRow) -> Assistant {
 
 const ASSISTANT_COLS: &str = "user_id, id, name, description, llm_provider, model, temperature, max_tokens, system_prompt, is_team_lead, parent_assistant_id, share_token, share_permissions, config_split_messages, config_typing_indicator, config_rate_limit_per_day, config_max_message_length, config_rate_limit_message, config_max_length_message, config_interpret_documents, config_unsupported_media_message, config_audio_provider, config_audio_mode, config_audio_transcribe, config_audio_fallback_to_text, config_audio_transcription_failure_message, config_audio_voice_id, created_at, updated_at";
 
-pub async fn list_assistants(
-    db: &DbSession,
-    user_id: &Uuid,
-) -> Result<Vec<Assistant>, AppError> {
-    let query = format!(
-        "SELECT {ASSISTANT_COLS} FROM inertial_eclipse.assistants WHERE user_id = ?"
-    );
+pub async fn list_assistants(db: &DbSession, user_id: &Uuid) -> Result<Vec<Assistant>, AppError> {
+    let query =
+        format!("SELECT {ASSISTANT_COLS} FROM inertial_eclipse.assistants WHERE user_id = ?");
     let result = db
         .query_unpaged(query, (user_id,))
         .await
@@ -170,60 +166,74 @@ pub async fn update_assistant(
     let system_prompt = req.system_prompt.or(existing.system_prompt);
     let is_team_lead = req.is_team_lead.unwrap_or(existing.is_team_lead);
     let parent_assistant_id = req.parent_assistant_id.or(existing.parent_assistant_id);
-    let config_split_messages = req.integration_settings
+    let config_split_messages = req
+        .integration_settings
         .as_ref()
         .and_then(|s| s.split_on_double_newline)
         .unwrap_or(existing.config_split_messages);
-    let config_typing_indicator = req.integration_settings
+    let config_typing_indicator = req
+        .integration_settings
         .as_ref()
         .and_then(|s| s.typing_indicator)
         .unwrap_or(existing.config_typing_indicator);
-    let config_rate_limit_per_day = req.integration_settings
+    let config_rate_limit_per_day = req
+        .integration_settings
         .as_ref()
         .and_then(|s| s.rate_limit_per_day)
         .or(existing.config_rate_limit_per_day);
-    let config_max_message_length = req.integration_settings
+    let config_max_message_length = req
+        .integration_settings
         .as_ref()
         .and_then(|s| s.max_message_length)
         .or(existing.config_max_message_length);
-    let config_rate_limit_message = req.integration_settings
+    let config_rate_limit_message = req
+        .integration_settings
         .as_ref()
         .and_then(|s| s.rate_limit_message.clone())
         .or(existing.config_rate_limit_message);
-    let config_max_length_message = req.integration_settings
+    let config_max_length_message = req
+        .integration_settings
         .as_ref()
         .and_then(|s| s.max_length_message.clone())
         .or(existing.config_max_length_message);
-    let config_interpret_documents = req.integration_settings
+    let config_interpret_documents = req
+        .integration_settings
         .as_ref()
         .and_then(|s| s.interpret_documents)
         .unwrap_or(existing.config_interpret_documents);
-    let config_unsupported_media_message = req.integration_settings
+    let config_unsupported_media_message = req
+        .integration_settings
         .as_ref()
         .and_then(|s| s.unsupported_media_message.clone())
         .or(existing.config_unsupported_media_message.clone());
 
-    let config_audio_provider = req.audio_settings
+    let config_audio_provider = req
+        .audio_settings
         .as_ref()
         .and_then(|s| s.provider.clone())
         .or(existing.config_audio_provider);
-    let config_audio_mode = req.audio_settings
+    let config_audio_mode = req
+        .audio_settings
         .as_ref()
         .and_then(|s| s.mode.clone())
         .or(existing.config_audio_mode);
-    let config_audio_transcribe = req.audio_settings
+    let config_audio_transcribe = req
+        .audio_settings
         .as_ref()
         .and_then(|s| s.transcribe)
         .unwrap_or(existing.config_audio_transcribe);
-    let config_audio_fallback_to_text = req.audio_settings
+    let config_audio_fallback_to_text = req
+        .audio_settings
         .as_ref()
         .and_then(|s| s.fallback_to_text)
         .unwrap_or(existing.config_audio_fallback_to_text);
-    let config_audio_transcription_failure_message = req.audio_settings
+    let config_audio_transcription_failure_message = req
+        .audio_settings
         .as_ref()
         .and_then(|s| s.transcription_failure_message.clone())
         .or(existing.config_audio_transcription_failure_message);
-    let config_audio_voice_id = req.audio_settings
+    let config_audio_voice_id = req
+        .audio_settings
         .as_ref()
         .and_then(|s| s.voice_id.clone())
         .or(existing.config_audio_voice_id);
@@ -278,48 +288,63 @@ pub async fn delete_assistant(
     db.query_unpaged(
         "DELETE FROM inertial_eclipse.assistant_tools WHERE assistant_id = ?",
         (assistant_id,),
-    ).await.map_err(|e| AppError::DatabaseError(e.to_string()))?;
+    )
+    .await
+    .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     // Delete files (PK: (assistant_id, user_id), id)
     db.query_unpaged(
         "DELETE FROM inertial_eclipse.assistant_files WHERE assistant_id = ? AND user_id = ?",
         (assistant_id, user_id),
-    ).await.map_err(|e| AppError::DatabaseError(e.to_string()))?;
+    )
+    .await
+    .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     // Delete conversations and their messages (conversations PK: (assistant_id, user_id), id)
-    let convs = db.query_unpaged(
-        "SELECT id FROM inertial_eclipse.conversations WHERE assistant_id = ? AND user_id = ?",
-        (assistant_id, user_id),
-    ).await.map_err(|e| AppError::DatabaseError(e.to_string()))?;
+    let convs = db
+        .query_unpaged(
+            "SELECT id FROM inertial_eclipse.conversations WHERE assistant_id = ? AND user_id = ?",
+            (assistant_id, user_id),
+        )
+        .await
+        .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     let convs = convs.into_rows_result()?;
     for row in convs.rows::<(Uuid,)>()?.flatten() {
         let (conv_id,) = row;
         {
             // Delete messages for this conversation (PK: conversation_id, id)
-            let _ = db.query_unpaged(
-                "DELETE FROM inertial_eclipse.messages WHERE conversation_id = ?",
-                (&conv_id,),
-            ).await;
+            let _ = db
+                .query_unpaged(
+                    "DELETE FROM inertial_eclipse.messages WHERE conversation_id = ?",
+                    (&conv_id,),
+                )
+                .await;
         }
     }
 
     db.query_unpaged(
         "DELETE FROM inertial_eclipse.conversations WHERE assistant_id = ? AND user_id = ?",
         (assistant_id, user_id),
-    ).await.map_err(|e| AppError::DatabaseError(e.to_string()))?;
+    )
+    .await
+    .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     // Delete usage stats (PK: (user_id, assistant_id), period)
     db.query_unpaged(
         "DELETE FROM inertial_eclipse.usage_stats WHERE user_id = ? AND assistant_id = ?",
         (user_id, assistant_id),
-    ).await.map_err(|e| AppError::DatabaseError(e.to_string()))?;
+    )
+    .await
+    .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     // Delete access tokens (PK: (user_id, assistant_id), id)
     db.query_unpaged(
         "DELETE FROM inertial_eclipse.access_tokens WHERE user_id = ? AND assistant_id = ?",
         (user_id, assistant_id),
-    ).await.map_err(|e| AppError::DatabaseError(e.to_string()))?;
+    )
+    .await
+    .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     // Delete tool call logs (PK: (assistant_id, tool_id), called_at, id) — delete all tools' logs
     // Note: we can't easily delete without tool_id, but tools are already deleted above
@@ -328,13 +353,17 @@ pub async fn delete_assistant(
     db.query_unpaged(
         "DELETE FROM inertial_eclipse.assistant_availability WHERE assistant_id = ?",
         (assistant_id,),
-    ).await.map_err(|e| AppError::DatabaseError(e.to_string()))?;
+    )
+    .await
+    .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     // Delete accepted shares by assistant (PK: assistant_id, accepted_at, user_id)
     db.query_unpaged(
         "DELETE FROM inertial_eclipse.accepted_shares_by_assistant WHERE assistant_id = ?",
         (assistant_id,),
-    ).await.map_err(|e| AppError::DatabaseError(e.to_string()))?;
+    )
+    .await
+    .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     // Finally, delete the assistant itself
     db.query_unpaged(
@@ -383,9 +412,8 @@ pub async fn list_tools(
     db: &DbSession,
     assistant_id: &Uuid,
 ) -> Result<Vec<AssistantTool>, AppError> {
-    let query = format!(
-        "SELECT {TOOL_COLS} FROM inertial_eclipse.assistant_tools WHERE assistant_id = ?"
-    );
+    let query =
+        format!("SELECT {TOOL_COLS} FROM inertial_eclipse.assistant_tools WHERE assistant_id = ?");
     let result = db
         .query_unpaged(query, (assistant_id,))
         .await
@@ -410,7 +438,10 @@ pub async fn create_tool(
     // Singleton validation for notify_human only
     if tool_type == "notify_human" {
         let existing = list_tools(db, assistant_id).await?;
-        if existing.iter().any(|t| t.tool_type.as_deref() == Some("notify_human")) {
+        if existing
+            .iter()
+            .any(|t| t.tool_type.as_deref() == Some("notify_human"))
+        {
             return Err(AppError::BadRequest(
                 "Já existe uma ferramenta desse tipo neste assistente".into(),
             ));
@@ -469,7 +500,10 @@ pub async fn update_tool(
     let schema_json = req.schema_json.or(existing.6);
     let headers_json = req.headers_json.or(existing.7);
     let is_enabled = req.is_enabled.unwrap_or(existing.8.unwrap_or(true));
-    let tool_type = req.tool_type.or(existing.9).unwrap_or_else(|| "http_request".to_string());
+    let tool_type = req
+        .tool_type
+        .or(existing.9)
+        .unwrap_or_else(|| "http_request".to_string());
 
     db.query_unpaged(
         "UPDATE inertial_eclipse.assistant_tools SET name = ?, description = ?, endpoint = ?, method = ?, schema_json = ?, headers_json = ?, is_enabled = ?, tool_type = ? WHERE assistant_id = ? AND id = ?",
@@ -512,16 +546,16 @@ pub async fn delete_tool(
 use crate::models::assistant::ToolCallLog;
 
 type ToolCallLogRow = (
-    Uuid,                       // assistant_id
-    Uuid,                       // tool_id
-    Uuid,                       // id
-    Option<String>,             // tool_name
-    Option<String>,             // arguments
-    Option<i32>,                // status_code
-    Option<String>,             // response_body
-    Option<String>,             // error
-    Option<i32>,                // duration_ms
-    Option<CqlTimestamp>,       // called_at
+    Uuid,                 // assistant_id
+    Uuid,                 // tool_id
+    Uuid,                 // id
+    Option<String>,       // tool_name
+    Option<String>,       // arguments
+    Option<i32>,          // status_code
+    Option<String>,       // response_body
+    Option<String>,       // error
+    Option<i32>,          // duration_ms
+    Option<CqlTimestamp>, // called_at
 );
 
 pub async fn save_tool_call_log(
@@ -565,8 +599,12 @@ pub async fn list_tool_call_logs(
     let mut logs = Vec::new();
     let result = result.into_rows_result()?;
     for r in result.rows::<ToolCallLogRow>()?.flatten() {
-        let called_at = r.9
-            .map(|ts| chrono::DateTime::<chrono::Utc>::from(std::time::UNIX_EPOCH + std::time::Duration::from_millis(ts.0 as u64)))
+        let called_at =
+            r.9.map(|ts| {
+                chrono::DateTime::<chrono::Utc>::from(
+                    std::time::UNIX_EPOCH + std::time::Duration::from_millis(ts.0 as u64),
+                )
+            })
             .unwrap_or_else(chrono::Utc::now);
         logs.push(ToolCallLog {
             assistant_id: r.0,
@@ -605,8 +643,12 @@ pub async fn list_tool_call_logs_paged(
     let mut logs = Vec::new();
     let result = result.into_rows_result()?;
     for r in result.rows::<ToolCallLogRow>()?.flatten() {
-        let called_at = r.9
-            .map(|ts| chrono::DateTime::<chrono::Utc>::from(std::time::UNIX_EPOCH + std::time::Duration::from_millis(ts.0 as u64)))
+        let called_at =
+            r.9.map(|ts| {
+                chrono::DateTime::<chrono::Utc>::from(
+                    std::time::UNIX_EPOCH + std::time::Duration::from_millis(ts.0 as u64),
+                )
+            })
             .unwrap_or_else(chrono::Utc::now);
         logs.push(ToolCallLog {
             assistant_id: r.0,
@@ -702,16 +744,23 @@ pub async fn create_integration(
 ) -> Result<AssistantIntegration, AppError> {
     // Check for existing integration with same channel+provider for this assistant
     let existing = list_integrations(db, assistant_id, user_id).await?;
-    if let Some(found) = existing.iter().find(|i| i.channel == req.channel && i.provider == req.provider) {
+    if let Some(found) = existing
+        .iter()
+        .find(|i| i.channel == req.channel && i.provider == req.provider)
+    {
         return Ok(found.clone());
     }
 
     // Prevent duplicate phone numbers across integrations
     if let Some(ref phone) = req.config_phone_number {
         if !phone.is_empty() {
-            if let Ok(existing_integration) = crate::services::messaging::find_any_integration_by_phone(db, phone).await {
+            if let Ok(existing_integration) =
+                crate::services::messaging::find_any_integration_by_phone(db, phone).await
+            {
                 // Allow if it's the same assistant (re-creation), reject otherwise
-                if existing_integration.assistant_id != *assistant_id || existing_integration.user_id != *user_id {
+                if existing_integration.assistant_id != *assistant_id
+                    || existing_integration.user_id != *user_id
+                {
                     // If the existing integration is disconnected, clean it up and allow
                     if existing_integration.status == "disconnected" {
                         let _ = db.query_unpaged(
@@ -720,15 +769,20 @@ pub async fn create_integration(
                         ).await;
                         tracing::info!(
                             "Cleaned up disconnected integration {} to free phone {} for new user",
-                            existing_integration.id, phone
+                            existing_integration.id,
+                            phone
                         );
                     } else {
                         let is_same_user = existing_integration.user_id == *user_id;
                         let assistant_name = if is_same_user {
-                            get_assistant(db, &existing_integration.user_id, &existing_integration.assistant_id)
-                                .await
-                                .map(|a| a.name)
-                                .unwrap_or_else(|_| "outro assistente".into())
+                            get_assistant(
+                                db,
+                                &existing_integration.user_id,
+                                &existing_integration.assistant_id,
+                            )
+                            .await
+                            .map(|a| a.name)
+                            .unwrap_or_else(|_| "outro assistente".into())
                         } else {
                             "assistente de outro usuário".into()
                         };
@@ -799,21 +853,35 @@ pub async fn update_integration(
     let provider = req.provider.unwrap_or(existing.provider);
     let status = req.status.unwrap_or(existing.status);
     let config_token = req.config_token.or(existing.config_token);
-    let config_phone_number = req.config_phone_number.or(existing.config_phone_number.clone());
+    let config_phone_number = req
+        .config_phone_number
+        .or(existing.config_phone_number.clone());
     let config_chatwoot_url = req.config_chatwoot_url.or(existing.config_chatwoot_url);
-    let config_rate_limit_per_day = req.config_rate_limit_per_day.or(existing.config_rate_limit_per_day);
-    let config_max_message_length = req.config_max_message_length.or(existing.config_max_message_length);
-    let config_audio_response_mode = req.config_audio_response_mode.or(existing.config_audio_response_mode);
-    let config_interpret_documents = req.config_interpret_documents.or(existing.config_interpret_documents);
+    let config_rate_limit_per_day = req
+        .config_rate_limit_per_day
+        .or(existing.config_rate_limit_per_day);
+    let config_max_message_length = req
+        .config_max_message_length
+        .or(existing.config_max_message_length);
+    let config_audio_response_mode = req
+        .config_audio_response_mode
+        .or(existing.config_audio_response_mode);
+    let config_interpret_documents = req
+        .config_interpret_documents
+        .or(existing.config_interpret_documents);
     let config_split_messages = req.config_split_messages.or(existing.config_split_messages);
-    let config_webhook_verify_token = req.config_webhook_verify_token.or(existing.config_webhook_verify_token.clone());
+    let config_webhook_verify_token = req
+        .config_webhook_verify_token
+        .or(existing.config_webhook_verify_token.clone());
 
     // Prevent duplicate phone numbers across integrations (only check when phone actually changed)
     let phone_changed = phone_requested && config_phone_number != existing.config_phone_number;
     if phone_changed {
         if let Some(ref phone) = config_phone_number {
             if !phone.is_empty() {
-                if let Ok(existing_integration) = crate::services::messaging::find_any_integration_by_phone(db, phone).await {
+                if let Ok(existing_integration) =
+                    crate::services::messaging::find_any_integration_by_phone(db, phone).await
+                {
                     // Allow if it's the same integration being updated, reject otherwise
                     if existing_integration.id != *integration_id {
                         if existing_integration.status == "disconnected" {
@@ -828,10 +896,14 @@ pub async fn update_integration(
                         } else {
                             let is_same_user = existing_integration.user_id == *user_id;
                             let assistant_name = if is_same_user {
-                                get_assistant(db, &existing_integration.user_id, &existing_integration.assistant_id)
-                                    .await
-                                    .map(|a| a.name)
-                                    .unwrap_or_else(|_| "outro assistente".into())
+                                get_assistant(
+                                    db,
+                                    &existing_integration.user_id,
+                                    &existing_integration.assistant_id,
+                                )
+                                .await
+                                .map(|a| a.name)
+                                .unwrap_or_else(|_| "outro assistente".into())
                             } else {
                                 "assistente de outro usuário".into()
                             };
@@ -853,7 +925,6 @@ pub async fn update_integration(
             }
         }
     }
-
 
     db.query_unpaged(
         "UPDATE inertial_eclipse.assistant_integrations SET channel = ?, provider = ?, status = ?, config_token = ?, config_phone_number = ?, config_chatwoot_url = ?, config_rate_limit_per_day = ?, config_max_message_length = ?, config_audio_response_mode = ?, config_interpret_documents = ?, config_split_messages = ?, config_webhook_verify_token = ? WHERE assistant_id = ? AND user_id = ? AND id = ?",
@@ -915,10 +986,7 @@ pub async fn set_share_token(
     Ok(())
 }
 
-pub async fn get_by_share_token(
-    db: &DbSession,
-    token: &str,
-) -> Result<Assistant, AppError> {
+pub async fn get_by_share_token(db: &DbSession, token: &str) -> Result<Assistant, AppError> {
     let query = format!(
         "SELECT {ASSISTANT_COLS} FROM inertial_eclipse.assistants WHERE share_token = ? ALLOW FILTERING"
     );
@@ -988,8 +1056,7 @@ pub async fn resolve_assistant_access(
     }
 
     // 2. Fall back to share token
-    let token = share_token
-        .ok_or_else(|| AppError::NotFound("Assistant not found".into()))?;
+    let token = share_token.ok_or_else(|| AppError::NotFound("Assistant not found".into()))?;
     let (asst, perms) = get_by_any_token(db, token).await?;
     if asst.id != *assistant_id {
         return Err(AppError::NotFound("Assistant not found".into()));
@@ -1120,7 +1187,15 @@ pub async fn list_token_users(
     let mut users = Vec::new();
     let result = result.into_rows_result()?;
     for (_aid, uid, token, email, name, perms, ts) in result
-        .rows::<(Uuid, Uuid, String, String, String, Vec<String>, CqlTimestamp)>()?
+        .rows::<(
+            Uuid,
+            Uuid,
+            String,
+            String,
+            String,
+            Vec<String>,
+            CqlTimestamp,
+        )>()?
         .flatten()
     {
         users.push(TokenUser {
@@ -1150,7 +1225,15 @@ pub async fn list_accepted_shares(
     let mut shares = Vec::new();
     let result = result.into_rows_result()?;
     for (uid, aid, token, name, desc, perms, ts) in result
-        .rows::<(Uuid, Uuid, String, String, Option<String>, Vec<String>, CqlTimestamp)>()?
+        .rows::<(
+            Uuid,
+            Uuid,
+            String,
+            String,
+            Option<String>,
+            Vec<String>,
+            CqlTimestamp,
+        )>()?
         .flatten()
     {
         shares.push(AcceptedShare {
@@ -1179,19 +1262,27 @@ pub async fn get_accepted_share(
         .await
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
-    let row = result
-        .into_rows_result()?
-        .maybe_first_row::<(Uuid, Uuid, String, String, Option<String>, Vec<String>, CqlTimestamp)>()?;
+    let row = result.into_rows_result()?.maybe_first_row::<(
+        Uuid,
+        Uuid,
+        String,
+        String,
+        Option<String>,
+        Vec<String>,
+        CqlTimestamp,
+    )>()?;
 
-    Ok(row.map(|(uid, aid, token, name, desc, perms, ts)| AcceptedShare {
-        user_id: uid,
-        assistant_id: aid,
-        share_token: token,
-        assistant_name: name,
-        assistant_description: desc,
-        permissions: perms,
-        accepted_at: DateTime::from_timestamp_millis(ts.0).unwrap_or_default(),
-    }))
+    Ok(
+        row.map(|(uid, aid, token, name, desc, perms, ts)| AcceptedShare {
+            user_id: uid,
+            assistant_id: aid,
+            share_token: token,
+            assistant_name: name,
+            assistant_description: desc,
+            permissions: perms,
+            accepted_at: DateTime::from_timestamp_millis(ts.0).unwrap_or_default(),
+        }),
+    )
 }
 
 pub async fn remove_accepted_share(

@@ -81,7 +81,12 @@ fn get_logo_url(config: &Config) -> String {
     format!("{}/Logo%20(7).png", config.app_url)
 }
 
-pub fn wrap_invite_email(config: &Config, workspace_name: &str, role: &str, invite_url: &str) -> String {
+pub fn wrap_invite_email(
+    config: &Config,
+    workspace_name: &str,
+    role: &str,
+    invite_url: &str,
+) -> String {
     let logo_url = get_logo_url(config);
     let content = format!(
         r#"<p style="margin:0 0 8px 0;color:#f0f0f0;font-size:18px;font-weight:700;">Convite para Workspace</p>
@@ -221,7 +226,10 @@ pub async fn send_appointment_email(
     }
     rows.push_str(&styled_table_row("Telefone", client_phone));
     rows.push_str(&styled_table_row("Data/Hora", date_time));
-    rows.push_str(&styled_table_row("Duração", &format!("{duration_minutes} min")));
+    rows.push_str(&styled_table_row(
+        "Duração",
+        &format!("{duration_minutes} min"),
+    ));
     if !appointment_type.is_empty() {
         rows.push_str(&styled_table_row("Tipo", appointment_type));
     }

@@ -38,7 +38,10 @@ const STATUS_LABELS: Record<string, { label: string; color: string }> = {
   active: { label: 'Ativo', color: '#22c55e' },
   done: { label: 'Concluído', color: '#3b82f6' },
   open: { label: 'Aberto', color: '#f59e0b' },
+  backlog: { label: 'Backlog', color: '#6b7280' },
+  todo: { label: 'A fazer', color: '#14b8a6' },
   in_progress: { label: 'Em progresso', color: '#3b82f6' },
+  in_review: { label: 'Em revisão', color: '#8b5cf6' },
   completed: { label: 'Completo', color: '#22c55e' },
 }
 
@@ -55,8 +58,19 @@ interface StyleMeta {
   unit?: string
   kr_type?: string
   channel_type?: string
+  assignee_name?: string
+  due_date?: string
+  priority?: string
+  items_total?: number
   // sticky note
   color?: string
+}
+
+const TASK_PRIORITY_LABELS: Record<string, { label: string; color: string }> = {
+  urgent: { label: 'Urgente', color: '#ef4444' },
+  high: { label: 'Alta', color: '#f59e0b' },
+  medium: { label: 'Média', color: '#3b82f6' },
+  low: { label: 'Baixa', color: '#6b7280' },
 }
 
 function ProgressBar({ value, color, height = 3 }: { value: number; color: string; height?: number }) {
@@ -94,10 +108,18 @@ function StrategyNodeInner({ data, id, selected }: NodeProps) {
   const Icon = cfg.icon
   const bscColor = bscPerspective ? BSC_COLORS[bscPerspective] : null
   const statusInfo = meta.status ? STATUS_LABELS[meta.status] : null
+  const taskPriority = meta.priority ? TASK_PRIORITY_LABELS[meta.priority] : null
+  const dueDateLabel = useMemo(() => {
+    if (nodeType !== 'task' || !meta.due_date) return null
+    const date = new Date(meta.due_date)
+    if (Number.isNaN(date.getTime())) return null
+    return date.toLocaleDateString('pt-BR')
+  }, [nodeType, meta.due_date])
 
   const [isEditing, setIsEditing] = useState(false)
   const [editValue, setEditValue] = useState(label)
   const [showActions, setShowActions] = useState(false)
+  const [showColorPicker, setShowColorPicker] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -136,6 +158,13 @@ function StrategyNodeInner({ data, id, selected }: NodeProps) {
     if (onDelete) onDelete(id)
   }, [onDelete, id])
 
+  const handleColorChange = useCallback((color: string) => {
+    if (onUpdateStyle) {
+      onUpdateStyle(id, JSON.stringify({ ...meta, color }))
+    }
+    setShowColorPicker(false)
+  }, [id, meta, onUpdateStyle])
+
   // Compute KR progress from values
   const krProgress = useMemo(() => {
     if (nodeType !== 'key_result' || meta.target_value === undefined) return null
@@ -159,14 +188,6 @@ function StrategyNodeInner({ data, id, selected }: NodeProps) {
   if (isStickyNote) {
     const colorIdx = STICKY_COLORS.findIndex((c) => c.border === meta.color)
     const sc = colorIdx >= 0 ? STICKY_COLORS[colorIdx] : STICKY_COLORS[0]
-    const [showColorPicker, setShowColorPicker] = useState(false)
-
-    const handleColorChange = useCallback((color: string) => {
-      if (onUpdateStyle) {
-        onUpdateStyle(id, JSON.stringify({ ...meta, color }))
-      }
-      setShowColorPicker(false)
-    }, [id, meta, onUpdateStyle])
 
     return (
       <div
@@ -398,6 +419,68 @@ function StrategyNodeInner({ data, id, selected }: NodeProps) {
         >
           {meta.channel_type}
         </span>
+      )}
+
+      {/* Task metadata */}
+      {nodeType === 'task' && (
+        <div className="mt-1 space-y-1">
+          <div className="flex items-center gap-1 flex-wrap">
+            {taskPriority && (
+              <span
+                className="text-[7px] uppercase tracking-wider px-1.5 py-0.5 rounded"
+                style={{ background: `${taskPriority.color}12`, color: `${taskPriority.color}cc` }}
+              >
+                {taskPriority.label}
+              </span>
+            )}
+            {meta.assignee_name && (
+              <span
+                className="text-[7px] px-1.5 py-0.5 rounded"
+                style={{ background: 'rgba(255,255,255,0.04)', color: 'rgba(255,255,255,0.5)' }}
+              >
+                {meta.assignee_name}
+              </span>
+            )}
+            {dueDateLabel && (
+              <span
+                className="text-[7px] px-1.5 py-0.5 rounded"
+                style={{ background: 'rgba(20,184,166,0.12)', color: 'rgba(20,184,166,0.85)' }}
+              >
+                {dueDateLabel}
+              </span>
+            )}
+          </div>
+          {meta.description && (
+            <p className="text-[8px] text-subtle line-clamp-2">{meta.description}</p>
+          )}
+        </div>
+      )}
+
+      {/* SWOT metadata */}
+      {nodeType === 'swot' && (
+        <div className="mt-1 space-y-1">
+          <div className="flex items-center gap-1 flex-wrap">
+            {meta.cycle && (
+              <span
+                className="text-[7px] uppercase tracking-wider px-1.5 py-0.5 rounded"
+                style={{ background: `${cfg.color}12`, color: `${cfg.color}cc` }}
+              >
+                {meta.cycle}
+              </span>
+            )}
+            {typeof meta.items_total === 'number' && (
+              <span
+                className="text-[7px] px-1.5 py-0.5 rounded"
+                style={{ background: 'rgba(255,255,255,0.04)', color: 'rgba(255,255,255,0.5)' }}
+              >
+                {meta.items_total} itens
+              </span>
+            )}
+          </div>
+          {meta.description && (
+            <p className="text-[8px] text-subtle line-clamp-2">{meta.description}</p>
+          )}
+        </div>
       )}
 
       <Handle

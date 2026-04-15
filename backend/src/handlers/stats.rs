@@ -84,8 +84,7 @@ pub async fn user_usage(
             .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
         let rows = result.into_rows_result()?;
-        for row in rows.rows::<(String, Option<i64>, Option<i64>)>()?.flatten()
-        {
+        for row in rows.rows::<(String, Option<i64>, Option<i64>)>()?.flatten() {
             let (period, messages, tokens) = row;
             if let Some(entry) = daily.get_mut(&period) {
                 entry.0 += messages.unwrap_or(0);
@@ -100,7 +99,11 @@ pub async fn user_usage(
         .rev()
         .map(|date| {
             let (requests, tokens) = daily.get(date).copied().unwrap_or((0, 0));
-            DailyUsage { date: date.clone(), requests, tokens }
+            DailyUsage {
+                date: date.clone(),
+                requests,
+                tokens,
+            }
         })
         .collect();
 
@@ -145,8 +148,13 @@ pub async fn assistant_stats(
 
     // Verify ownership or share_token access
     let owner_id = assistant::resolve_assistant_access(
-        &db, &auth_user.workspace_id, &assistant_id, params.share_token.as_deref(), "read",
-    ).await?;
+        &db,
+        &auth_user.workspace_id,
+        &assistant_id,
+        params.share_token.as_deref(),
+        "read",
+    )
+    .await?;
 
     let periods = resolve_periods(params.dates.as_deref(), days);
 
@@ -167,8 +175,7 @@ pub async fn assistant_stats(
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     let rows = result.into_rows_result()?;
-    for row in rows.rows::<(String, Option<i64>, Option<i64>)>()?.flatten()
-    {
+    for row in rows.rows::<(String, Option<i64>, Option<i64>)>()?.flatten() {
         let (period, messages, tokens) = row;
         let messages = messages.unwrap_or(0);
         let tokens = tokens.unwrap_or(0);
@@ -186,7 +193,11 @@ pub async fn assistant_stats(
         .rev()
         .map(|date| {
             let (requests, tokens) = daily_data.get(date).copied().unwrap_or((0, 0));
-            DailyPoint { date: date.clone(), requests, tokens }
+            DailyPoint {
+                date: date.clone(),
+                requests,
+                tokens,
+            }
         })
         .collect();
 
@@ -200,7 +211,8 @@ pub async fn assistant_stats(
         .collect();
 
     // Conversations: last interaction + channel breakdown (fetch all for stats)
-    let convs_page = messaging::list_conversations(&db, &assistant_id, &owner_id, 10000, None, None).await?;
+    let convs_page =
+        messaging::list_conversations(&db, &assistant_id, &owner_id, 10000, None, None).await?;
     let convs = &convs_page.items;
 
     let last_interaction_at = convs
@@ -209,8 +221,7 @@ pub async fn assistant_stats(
         .max_by_key(|c| c.last_message_at)
         .map(|c| c.last_message_at.to_rfc3339());
 
-    let mut channel_map: std::collections::HashMap<String, i64> =
-        std::collections::HashMap::new();
+    let mut channel_map: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
     for conv in convs {
         if conv.channel != "playground" {
             *channel_map.entry(conv.channel.clone()).or_insert(0) += 1;
@@ -274,8 +285,13 @@ pub async fn assistant_logs(
 
     // Verify ownership or share_token access
     assistant::resolve_assistant_access(
-        &db, &auth_user.workspace_id, &assistant_id, params.share_token.as_deref(), "read",
-    ).await?;
+        &db,
+        &auth_user.workspace_id,
+        &assistant_id,
+        params.share_token.as_deref(),
+        "read",
+    )
+    .await?;
 
     // Get all tools, then batch-fetch their logs
     let tools = assistant::list_tools(&db, &assistant_id).await?;
@@ -293,7 +309,12 @@ pub async fn assistant_logs(
 
     all_logs.sort_by(|a, b| b.0.cmp(&a.0));
     let offset = params.offset.unwrap_or(0);
-    let page: Vec<AssistantLog> = all_logs.into_iter().skip(offset).take(limit).map(|(_, l)| l).collect();
+    let page: Vec<AssistantLog> = all_logs
+        .into_iter()
+        .skip(offset)
+        .take(limit)
+        .map(|(_, l)| l)
+        .collect();
     let has_more = page.len() == limit;
 
     Ok(Json(serde_json::json!({
@@ -326,8 +347,15 @@ pub async fn user_activity(
     let mut events: Vec<(chrono::DateTime<Utc>, ActivityEvent)> = Vec::new();
 
     for asst in &assistants {
-        let convs_page =
-            messaging::list_conversations(&db, &asst.id, &auth_user.workspace_id, 10000, None, None).await?;
+        let convs_page = messaging::list_conversations(
+            &db,
+            &asst.id,
+            &auth_user.workspace_id,
+            10000,
+            None,
+            None,
+        )
+        .await?;
         for conv in convs_page.items {
             events.push((
                 conv.last_message_at,
@@ -347,8 +375,7 @@ pub async fn user_activity(
 
     // Sort newest first, take limit
     events.sort_by(|a, b| b.0.cmp(&a.0));
-    let result: Vec<ActivityEvent> =
-        events.into_iter().take(limit).map(|(_, e)| e).collect();
+    let result: Vec<ActivityEvent> = events.into_iter().take(limit).map(|(_, e)| e).collect();
 
     Ok(Json(result))
 }

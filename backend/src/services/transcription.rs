@@ -133,4 +133,3 @@ pub async fn transcribe_by_provider(
         _ => transcribe_openai(api_key, audio_bytes, filename).await,
     }
 }
-

@@ -83,12 +83,17 @@ pub fn validate_pix_key(key: &str, key_type: &str) -> Result<(), String> {
         "phone" => {
             let clean: String = key.chars().filter(|c| c.is_ascii_digit()).collect();
             if clean.len() < 10 || clean.len() > 14 {
-                return Err("Telefone deve ter entre 10 e 14 dígitos (com DDD e código do país)".into());
+                return Err(
+                    "Telefone deve ter entre 10 e 14 dígitos (com DDD e código do país)".into(),
+                );
             }
         }
         "random" => {
             // Chave aleatória EVP é um UUID v4 (36 chars com hyphens, 32 sem)
-            let clean: String = key.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-').collect();
+            let clean: String = key
+                .chars()
+                .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
+                .collect();
             if clean.len() < 32 {
                 return Err("Chave aleatória deve ter pelo menos 32 caracteres".into());
             }

@@ -47,19 +47,41 @@ fn ts_now() -> CqlTimestamp {
 }
 
 type IntegrationRow = (
-    Uuid, Uuid, Uuid, String, String, Option<String>, Option<String>, Option<String>,
-    Option<String>, Option<i32>, Option<i32>, Option<String>, Option<bool>, Option<bool>,
-    Option<String>, DateTime<Utc>,
+    Uuid,
+    Uuid,
+    Uuid,
+    String,
+    String,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<i32>,
+    Option<i32>,
+    Option<String>,
+    Option<bool>,
+    Option<bool>,
+    Option<String>,
+    DateTime<Utc>,
 );
 
 fn row_to_integration(r: IntegrationRow) -> AssistantIntegration {
     AssistantIntegration {
-        assistant_id: r.0, user_id: r.1, id: r.2, channel: r.3, provider: r.4,
+        assistant_id: r.0,
+        user_id: r.1,
+        id: r.2,
+        channel: r.3,
+        provider: r.4,
         status: r.5.unwrap_or_else(|| "active".into()),
-        config_token: r.6, config_phone_number: r.7, config_chatwoot_url: r.8,
-        config_rate_limit_per_day: r.9, config_max_message_length: r.10,
-        config_audio_response_mode: r.11, config_interpret_documents: r.12,
-        config_split_messages: r.13, config_webhook_verify_token: r.14,
+        config_token: r.6,
+        config_phone_number: r.7,
+        config_chatwoot_url: r.8,
+        config_rate_limit_per_day: r.9,
+        config_max_message_length: r.10,
+        config_audio_response_mode: r.11,
+        config_interpret_documents: r.12,
+        config_split_messages: r.13,
+        config_webhook_verify_token: r.14,
         created_at: r.15,
     }
 }
@@ -84,11 +106,15 @@ pub async fn process_incoming_message(
     let user_id = integration.user_id;
     let assistant_id = integration.assistant_id;
 
-    let assistant = match crate::services::assistant::get_assistant(db, &user_id, &assistant_id).await {
+    let assistant = match crate::services::assistant::get_assistant(db, &user_id, &assistant_id)
+        .await
+    {
         Ok(a) => a,
         Err(_) => {
             // Assistant was deleted but integration remains — clean up orphan
-            tracing::warn!("Orphan integration found for deleted assistant {assistant_id}, cleaning up");
+            tracing::warn!(
+                "Orphan integration found for deleted assistant {assistant_id}, cleaning up"
+            );
             let _ = db.query_unpaged(
                 "DELETE FROM inertial_eclipse.assistant_integrations WHERE assistant_id = ? AND user_id = ? AND id = ?",
                 (&assistant_id, &user_id, &integration.id),
@@ -98,69 +124,125 @@ pub async fn process_incoming_message(
     };
 
     // Check rate limit — use assistant-level config, falling back to integration-level
-    let rate_limit = assistant.config_rate_limit_per_day.or(integration.config_rate_limit_per_day);
+    let rate_limit = assistant
+        .config_rate_limit_per_day
+        .or(integration.config_rate_limit_per_day);
     if let Some(limit) = rate_limit {
         if is_rate_limited(db, &integration, limit).await? {
-            let default_msg = format!("You have reached the daily message limit of {limit}. Please try again tomorrow.");
-            let reply = assistant.config_rate_limit_message
+            let default_msg = format!(
+                "You have reached the daily message limit of {limit}. Please try again tomorrow."
+            );
+            let reply = assistant
+                .config_rate_limit_message
                 .as_deref()
                 .filter(|s| !s.is_empty())
                 .unwrap_or(&default_msg);
             send_message_via_provider(config, &integration, &webhook.phone, reply).await?;
-            return Ok(WebhookResponse { status: "rate_limited".into(), message_id: None });
+            return Ok(WebhookResponse {
+                status: "rate_limited".into(),
+                message_id: None,
+            });
         }
     }
 
     // Check max message length — use assistant-level config, falling back to integration-level
-    let max_len = assistant.config_max_message_length.or(integration.config_max_message_length);
+    let max_len = assistant
+        .config_max_message_length
+        .or(integration.config_max_message_length);
     if let Some(max_len) = max_len {
         if webhook.message.len() > max_len as usize {
             let default_msg = format!("Your message exceeds the maximum allowed length of {max_len} characters. Please send a shorter message.");
-            let reply = assistant.config_max_length_message
+            let reply = assistant
+                .config_max_length_message
                 .as_deref()
                 .filter(|s| !s.is_empty())
                 .unwrap_or(&default_msg);
             send_message_via_provider(config, &integration, &webhook.phone, reply).await?;
-            return Ok(WebhookResponse { status: "message_too_long".into(), message_id: None });
+            return Ok(WebhookResponse {
+                status: "message_too_long".into(),
+                message_id: None,
+            });
         }
     }
 
-    let conversation =
-        get_or_create_conversation(db, &assistant_id, &user_id, &webhook.phone, &integration.channel, webhook.contact_name.as_deref()).await?;
+    let conversation = get_or_create_conversation(
+        db,
+        &assistant_id,
+        &user_id,
+        &webhook.phone,
+        &integration.channel,
+        webhook.contact_name.as_deref(),
+    )
+    .await?;
 
     // Resolve the effective user message (transcribe audio if needed)
-    let is_audio = webhook.media_type.as_deref()
+    let is_audio = webhook
+        .media_type
+        .as_deref()
         .map(|t| t.starts_with("audio"))
         .unwrap_or(false);
 
     let effective_message: String = if is_audio && webhook.message.is_empty() {
         if !assistant.config_audio_transcribe {
             // Transcription disabled — skip processing this audio message
-            return Ok(WebhookResponse { status: "ok".into(), message_id: Some(conversation.id.to_string()) });
+            return Ok(WebhookResponse {
+                status: "ok".into(),
+                message_id: Some(conversation.id.to_string()),
+            });
         }
 
         // Get audio bytes from the appropriate source
-        let audio_bytes_opt = resolve_audio_bytes(
-            &webhook, &integration, encryption
-        ).await;
+        let audio_bytes_opt = resolve_audio_bytes(&webhook, &integration, encryption).await;
 
         match audio_bytes_opt {
             Some(bytes) => {
-                let audio_provider = assistant.config_audio_provider.as_deref().unwrap_or("openai");
-                let stt_provider_key = if audio_provider == "elevenlabs" { "elevenlabs" } else { "openai" };
-                let stt_key_opt = crate::services::workspace::get_decrypted_api_key(db, encryption, &user_id, stt_provider_key).await.ok();
+                let audio_provider = assistant
+                    .config_audio_provider
+                    .as_deref()
+                    .unwrap_or("openai");
+                let stt_provider_key = if audio_provider == "elevenlabs" {
+                    "elevenlabs"
+                } else {
+                    "openai"
+                };
+                let stt_key_opt = crate::services::workspace::get_decrypted_api_key(
+                    db,
+                    encryption,
+                    &user_id,
+                    stt_provider_key,
+                )
+                .await
+                .ok();
                 match stt_key_opt {
                     Some(stt_key) => {
-                        let filename = audio_filename_for_mime(webhook.media_type.as_deref().unwrap_or("audio/ogg"));
-                        match crate::services::transcription::transcribe_by_provider(audio_provider, &stt_key, bytes, &filename).await {
+                        let filename = audio_filename_for_mime(
+                            webhook.media_type.as_deref().unwrap_or("audio/ogg"),
+                        );
+                        match crate::services::transcription::transcribe_by_provider(
+                            audio_provider,
+                            &stt_key,
+                            bytes,
+                            &filename,
+                        )
+                        .await
+                        {
                             Ok(text) if !text.is_empty() => text,
                             Ok(_) => {
                                 let msg = assistant.config_audio_transcription_failure_message
                                     .as_deref()
                                     .filter(|s| !s.is_empty())
                                     .unwrap_or("Não consegui entender o áudio. Pode enviar sua mensagem em texto?");
-                                send_message_via_provider(config, &integration, &webhook.phone, msg).await?;
-                                return Ok(WebhookResponse { status: "ok".into(), message_id: None });
+                                send_message_via_provider(
+                                    config,
+                                    &integration,
+                                    &webhook.phone,
+                                    msg,
+                                )
+                                .await?;
+                                return Ok(WebhookResponse {
+                                    status: "ok".into(),
+                                    message_id: None,
+                                });
                             }
                             Err(e) => {
                                 tracing::warn!(error = %e, "Audio transcription failed");
@@ -168,20 +250,38 @@ pub async fn process_incoming_message(
                                     .as_deref()
                                     .filter(|s| !s.is_empty())
                                     .unwrap_or("Não consegui entender o áudio. Pode enviar sua mensagem em texto?");
-                                send_message_via_provider(config, &integration, &webhook.phone, msg).await?;
-                                return Ok(WebhookResponse { status: "ok".into(), message_id: None });
+                                send_message_via_provider(
+                                    config,
+                                    &integration,
+                                    &webhook.phone,
+                                    msg,
+                                )
+                                .await?;
+                                return Ok(WebhookResponse {
+                                    status: "ok".into(),
+                                    message_id: None,
+                                });
                             }
                         }
                     }
                     None => {
-                        tracing::warn!(audio_provider, "STT API key not configured, cannot transcribe audio");
-                        return Ok(WebhookResponse { status: "ok".into(), message_id: None });
+                        tracing::warn!(
+                            audio_provider,
+                            "STT API key not configured, cannot transcribe audio"
+                        );
+                        return Ok(WebhookResponse {
+                            status: "ok".into(),
+                            message_id: None,
+                        });
                     }
                 }
             }
             None => {
                 tracing::warn!(provider = %integration.provider, "Could not retrieve audio bytes for transcription");
-                return Ok(WebhookResponse { status: "ok".into(), message_id: None });
+                return Ok(WebhookResponse {
+                    status: "ok".into(),
+                    message_id: None,
+                });
             }
         }
     } else {
@@ -189,44 +289,75 @@ pub async fn process_incoming_message(
     };
 
     // Check for non-audio media (images, documents, videos)
-    let is_non_audio_media = webhook.media_type.as_deref()
+    let is_non_audio_media = webhook
+        .media_type
+        .as_deref()
         .map(|t| !t.starts_with("audio") && !t.is_empty())
         .unwrap_or(false)
         && (webhook.media_base64.is_some() || webhook.media_url.is_some());
 
     if is_non_audio_media && !assistant.config_interpret_documents {
         // Document interpretation disabled — send error message
-        let default_msg = "Formato de mensagem não suportado. Por favor, envie sua mensagem em texto.";
-        let reply = assistant.config_unsupported_media_message
+        let default_msg =
+            "Formato de mensagem não suportado. Por favor, envie sua mensagem em texto.";
+        let reply = assistant
+            .config_unsupported_media_message
             .as_deref()
             .filter(|s| !s.is_empty())
             .unwrap_or(default_msg);
 
-        save_message(db, &conversation.id, "user", &effective_message, webhook.media_url.as_deref(), webhook.media_type.as_deref(), None).await?;
+        save_message(
+            db,
+            &conversation.id,
+            "user",
+            &effective_message,
+            webhook.media_url.as_deref(),
+            webhook.media_type.as_deref(),
+            None,
+        )
+        .await?;
         send_message_via_provider(config, &integration, &webhook.phone, reply).await?;
         save_message(db, &conversation.id, "assistant", reply, None, None, None).await?;
 
-        return Ok(WebhookResponse { status: "unsupported_media".into(), message_id: Some(conversation.id.to_string()) });
+        return Ok(WebhookResponse {
+            status: "unsupported_media".into(),
+            message_id: Some(conversation.id.to_string()),
+        });
     }
 
     // For non-audio media with interpret_documents enabled: check video provider support
     if is_non_audio_media {
-        let is_video = webhook.media_type.as_deref()
+        let is_video = webhook
+            .media_type
+            .as_deref()
             .map(|t| t.starts_with("video"))
             .unwrap_or(false);
         if is_video && assistant.llm_provider != "gemini" {
             let reply = "Este assistente não suporta processamento de vídeos.";
-            save_message(db, &conversation.id, "user", &effective_message, webhook.media_url.as_deref(), webhook.media_type.as_deref(), None).await?;
+            save_message(
+                db,
+                &conversation.id,
+                "user",
+                &effective_message,
+                webhook.media_url.as_deref(),
+                webhook.media_type.as_deref(),
+                None,
+            )
+            .await?;
             send_message_via_provider(config, &integration, &webhook.phone, reply).await?;
             save_message(db, &conversation.id, "assistant", reply, None, None, None).await?;
-            return Ok(WebhookResponse { status: "unsupported_media".into(), message_id: Some(conversation.id.to_string()) });
+            return Ok(WebhookResponse {
+                status: "unsupported_media".into(),
+                message_id: Some(conversation.id.to_string()),
+            });
         }
 
         // Resolve media bytes if not already available (Meta Official sends media_id)
         let media_b64 = if let Some(ref b64) = webhook.media_base64 {
             Some(b64.clone())
         } else {
-            resolve_audio_bytes(&webhook, &integration, encryption).await
+            resolve_audio_bytes(&webhook, &integration, encryption)
+                .await
                 .map(|bytes| base64::engine::general_purpose::STANDARD.encode(&bytes))
         };
 
@@ -235,15 +366,36 @@ pub async fn process_incoming_message(
             let estimated_size = b64.len() * 3 / 4;
             if estimated_size > 10 * 1024 * 1024 {
                 let reply = "O arquivo enviado é muito grande para processamento. Limite: 10MB.";
-                save_message(db, &conversation.id, "user", &effective_message, webhook.media_url.as_deref(), webhook.media_type.as_deref(), None).await?;
+                save_message(
+                    db,
+                    &conversation.id,
+                    "user",
+                    &effective_message,
+                    webhook.media_url.as_deref(),
+                    webhook.media_type.as_deref(),
+                    None,
+                )
+                .await?;
                 send_message_via_provider(config, &integration, &webhook.phone, reply).await?;
                 save_message(db, &conversation.id, "assistant", reply, None, None, None).await?;
-                return Ok(WebhookResponse { status: "media_too_large".into(), message_id: Some(conversation.id.to_string()) });
+                return Ok(WebhookResponse {
+                    status: "media_too_large".into(),
+                    message_id: Some(conversation.id.to_string()),
+                });
             }
         }
     }
 
-    save_message(db, &conversation.id, "user", &effective_message, webhook.media_url.as_deref(), webhook.media_type.as_deref(), None).await?;
+    save_message(
+        db,
+        &conversation.id,
+        "user",
+        &effective_message,
+        webhook.media_url.as_deref(),
+        webhook.media_type.as_deref(),
+        None,
+    )
+    .await?;
 
     // If AI is disabled for this conversation, save the message but skip LLM response
     if !conversation.ai_enabled {
@@ -252,22 +404,44 @@ pub async fn process_incoming_message(
             "UPDATE inertial_eclipse.conversations SET last_message_at = ? WHERE assistant_id = ? AND user_id = ? AND id = ?",
             (now, &assistant_id, &user_id, &conversation.id),
         ).await.map_err(|e| AppError::DatabaseError(e.to_string()))?;
-        return Ok(WebhookResponse { status: "ok".into(), message_id: Some(conversation.id.to_string()) });
+        return Ok(WebhookResponse {
+            status: "ok".into(),
+            message_id: Some(conversation.id.to_string()),
+        });
     }
 
     // Show typing indicator while processing and generating the LLM response (if enabled)
     if assistant.config_typing_indicator {
-        send_typing_indicator(config, &integration, &webhook.phone, webhook.message_id.as_deref()).await?;
+        send_typing_indicator(
+            config,
+            &integration,
+            &webhook.phone,
+            webhook.message_id.as_deref(),
+        )
+        .await?;
     }
 
     let history = get_recent_messages(db, &conversation.id, 20).await?;
 
-    let api_key = crate::services::workspace::get_decrypted_api_key(db, encryption, &user_id, &assistant.llm_provider).await?;
+    let api_key = crate::services::workspace::get_decrypted_api_key(
+        db,
+        encryption,
+        &user_id,
+        &assistant.llm_provider,
+    )
+    .await?;
 
     // RAG: retrieve relevant context from knowledge base
     let rag_contexts = crate::services::rag::retrieve_context(
-        db, encryption, &user_id, &assistant_id, &effective_message, 3,
-    ).await.unwrap_or_default();
+        db,
+        encryption,
+        &user_id,
+        &assistant_id,
+        &effective_message,
+        3,
+    )
+    .await
+    .unwrap_or_default();
 
     let mut llm_messages = Vec::new();
     let conversation_context = format!(
@@ -284,7 +458,12 @@ pub async fn process_incoming_message(
             }
         }
         prompt.push_str(&conversation_context);
-        llm_messages.push(LlmMessage { role: "system".into(), content: prompt, media_base64: None, media_mime_type: None });
+        llm_messages.push(LlmMessage {
+            role: "system".into(),
+            content: prompt,
+            media_base64: None,
+            media_mime_type: None,
+        });
     } else if !rag_contexts.is_empty() {
         let mut prompt = "Use the following knowledge base context to help answer:\n\n".to_string();
         for ctx in &rag_contexts {
@@ -292,13 +471,28 @@ pub async fn process_incoming_message(
             prompt.push_str("\n---\n");
         }
         prompt.push_str(&conversation_context);
-        llm_messages.push(LlmMessage { role: "system".into(), content: prompt, media_base64: None, media_mime_type: None });
+        llm_messages.push(LlmMessage {
+            role: "system".into(),
+            content: prompt,
+            media_base64: None,
+            media_mime_type: None,
+        });
     } else {
         let prompt = format!("You are a helpful assistant.{}", conversation_context);
-        llm_messages.push(LlmMessage { role: "system".into(), content: prompt, media_base64: None, media_mime_type: None });
+        llm_messages.push(LlmMessage {
+            role: "system".into(),
+            content: prompt,
+            media_base64: None,
+            media_mime_type: None,
+        });
     }
     for msg in &history {
-        llm_messages.push(LlmMessage { role: msg.role.clone(), content: msg.content.clone().unwrap_or_default(), media_base64: None, media_mime_type: None });
+        llm_messages.push(LlmMessage {
+            role: msg.role.clone(),
+            content: msg.content.clone().unwrap_or_default(),
+            media_base64: None,
+            media_mime_type: None,
+        });
     }
 
     // Attach media to the last user message if this is a media message with interpretation enabled
@@ -306,14 +500,16 @@ pub async fn process_incoming_message(
         let media_b64 = if let Some(ref b64) = webhook.media_base64 {
             Some(b64.clone())
         } else {
-            resolve_audio_bytes(&webhook, &integration, encryption).await
+            resolve_audio_bytes(&webhook, &integration, encryption)
+                .await
                 .map(|bytes| base64::engine::general_purpose::STANDARD.encode(&bytes))
         };
 
         if let Some(b64) = media_b64 {
             if let Some(last_user) = llm_messages.iter_mut().rev().find(|m| m.role == "user") {
                 if last_user.content.is_empty() {
-                    last_user.content = "O usuário enviou este arquivo. Analise o conteúdo e responda.".to_string();
+                    last_user.content =
+                        "O usuário enviou este arquivo. Analise o conteúdo e responda.".to_string();
                 }
                 last_user.media_base64 = Some(b64);
                 last_user.media_mime_type = webhook.media_type.clone();
@@ -338,9 +534,16 @@ pub async fn process_incoming_message(
         encryption: Some(encryption),
     };
     let llm_response = llm::call_llm_with_tools_ctx(
-        &assistant.llm_provider, &assistant.model, &api_key,
-        llm_messages, assistant.temperature, assistant.max_tokens, &llm_tools, &tool_ctx,
-    ).await?;
+        &assistant.llm_provider,
+        &assistant.model,
+        &api_key,
+        llm_messages,
+        assistant.temperature,
+        assistant.max_tokens,
+        &llm_tools,
+        &tool_ctx,
+    )
+    .await?;
 
     // Save tool call logs (fire-and-forget, don't block the response)
     for record in &llm_response.tool_call_records {
@@ -356,7 +559,9 @@ pub async fn process_incoming_message(
                 record.response_body.as_deref(),
                 record.error.as_deref(),
                 record.duration_ms,
-            ).await {
+            )
+            .await
+            {
                 tracing::error!(tool = %record.tool_name, error = %e, "Failed to save tool call log");
             }
         }
@@ -368,55 +573,91 @@ pub async fn process_incoming_message(
             "send_document" => {
                 // Look up the tool config to get the configured URL (stored in endpoint)
                 let doc_url = record.tool_id.and_then(|tid| {
-                    tools.iter().find(|t| t.id == tid).map(|t| t.endpoint.clone())
+                    tools
+                        .iter()
+                        .find(|t| t.id == tid)
+                        .map(|t| t.endpoint.clone())
                 });
                 if let Some(url) = doc_url {
                     if !url.is_empty() {
                         let caption = record.arguments.get("caption").and_then(|v| v.as_str());
                         let filename: Option<&str> = None;
                         if let Err(e) = send_document_via_provider(
-                            config, &integration, &webhook.phone, &url, caption, filename,
-                        ).await {
+                            config,
+                            &integration,
+                            &webhook.phone,
+                            &url,
+                            caption,
+                            filename,
+                        )
+                        .await
+                        {
                             tracing::error!(error = %e, url = %url, "Failed to send document via tool");
                         }
                     }
                 }
             }
             "notify_human" => {
-                let reason = record.arguments.get("reason")
+                let reason = record
+                    .arguments
+                    .get("reason")
                     .and_then(|v| v.as_str())
                     .unwrap_or("IA solicitou assistência humana");
                 if let Err(e) = notify_human_agent(
-                    db, config, &user_id, &assistant_id, &assistant.name, reason, &webhook.phone,
-                ).await {
+                    db,
+                    config,
+                    &user_id,
+                    &assistant_id,
+                    &assistant.name,
+                    reason,
+                    &webhook.phone,
+                )
+                .await
+                {
                     tracing::error!(error = %e, "Failed to notify human agent");
                 }
             }
             "pix_payment" => {
-                let action = record.arguments.get("action")
+                let action = record
+                    .arguments
+                    .get("action")
                     .and_then(|v| v.as_str())
                     .unwrap_or("");
                 if action == "create_charge" {
-                    let amount = record.arguments.get("amount")
-                        .and_then(|v| v.as_f64()).unwrap_or(0.0);
-                    let desc = record.arguments.get("description")
-                        .and_then(|v| v.as_str()).unwrap_or("Cobrança PIX");
-                    let customer_name = record.arguments.get("customer_name")
+                    let amount = record
+                        .arguments
+                        .get("amount")
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(0.0);
+                    let desc = record
+                        .arguments
+                        .get("description")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("Cobrança PIX");
+                    let customer_name = record
+                        .arguments
+                        .get("customer_name")
                         .and_then(|v| v.as_str());
-                    let customer_cpf = record.arguments.get("customer_cpf")
+                    let customer_cpf = record
+                        .arguments
+                        .get("customer_cpf")
                         .and_then(|v| v.as_str());
 
                     // Extract tool config: pix_mode, pix_key, pix_key_type
                     let tool_config = record.tool_id.and_then(|tid| {
                         tools.iter().find(|t| t.id == tid).map(|t| {
-                            let headers: serde_json::Value = t.headers_json.as_deref()
+                            let headers: serde_json::Value = t
+                                .headers_json
+                                .as_deref()
                                 .and_then(|h| serde_json::from_str(h).ok())
                                 .unwrap_or(serde_json::json!({}));
-                            let pix_mode = headers.get("pix_mode")
+                            let pix_mode = headers
+                                .get("pix_mode")
                                 .and_then(|v| v.as_str())
                                 .unwrap_or("direct")
                                 .to_string();
-                            let key_type = headers.get("pix_key_type")
+                            let key_type = headers
+                                .get("pix_key_type")
                                 .and_then(|v| v.as_str())
                                 .unwrap_or("random")
                                 .to_string();
@@ -424,17 +665,24 @@ pub async fn process_incoming_message(
                         })
                     });
 
-                    let (pix_key, pix_key_type, pix_mode) = tool_config
-                        .unwrap_or_else(|| (String::new(), "random".to_string(), "direct".to_string()));
+                    let (pix_key, pix_key_type, pix_mode) = tool_config.unwrap_or_else(|| {
+                        (String::new(), "random".to_string(), "direct".to_string())
+                    });
 
                     if amount > 0.0 {
                         // For MP/Stripe mode, decrypt user's access token
                         let mp_token = match pix_mode.as_str() {
                             "mercadopago" => {
-                                match crate::services::pix::get_user_mp_token(db, encryption, &user_id).await {
+                                match crate::services::pix::get_user_mp_token(
+                                    db, encryption, &user_id,
+                                )
+                                .await
+                                {
                                     Ok(Some(token)) => Some(token),
                                     Ok(None) => {
-                                        tracing::error!("User has no Mercado Pago token configured");
+                                        tracing::error!(
+                                            "User has no Mercado Pago token configured"
+                                        );
                                         None
                                     }
                                     Err(e) => {
@@ -444,7 +692,11 @@ pub async fn process_incoming_message(
                                 }
                             }
                             "stripe" => {
-                                match crate::services::pix::get_user_stripe_token(db, encryption, &user_id).await {
+                                match crate::services::pix::get_user_stripe_token(
+                                    db, encryption, &user_id,
+                                )
+                                .await
+                                {
                                     Ok(Some(token)) => Some(token),
                                     Ok(None) => {
                                         tracing::error!("User has no Stripe key configured");
@@ -460,24 +712,38 @@ pub async fn process_incoming_message(
                         };
 
                         // Build notification URL for MP webhooks
-                        let notification_url = if pix_mode == "mercadopago" && config.app_url.starts_with("https://") {
+                        let notification_url = if pix_mode == "mercadopago"
+                            && config.app_url.starts_with("https://")
+                        {
                             Some(format!("{}/api/webhooks/mercadopago", config.app_url))
                         } else {
                             None
                         };
 
                         // Skip if provider mode but no token
-                        let should_create = (pix_mode != "mercadopago" && pix_mode != "stripe") || mp_token.is_some();
+                        let should_create = (pix_mode != "mercadopago" && pix_mode != "stripe")
+                            || mp_token.is_some();
 
                         if should_create {
                             match crate::services::pix::create_charge(
-                                db, &user_id, &assistant_id, Some(&conversation.id),
-                                &webhook.phone, amount, desc, &pix_key, &pix_key_type,
-                                &integration.channel, &pix_mode,
+                                db,
+                                &user_id,
+                                &assistant_id,
+                                Some(&conversation.id),
+                                &webhook.phone,
+                                amount,
+                                desc,
+                                &pix_key,
+                                &pix_key_type,
+                                &integration.channel,
+                                &pix_mode,
                                 mp_token.as_deref(),
-                                customer_name, customer_cpf,
+                                customer_name,
+                                customer_cpf,
                                 notification_url.as_deref(),
-                            ).await {
+                            )
+                            .await
+                            {
                                 Ok(charge) => {
                                     // Save charge info to conversation so the agent remembers it
                                     let charge_memo = format!(
@@ -485,43 +751,73 @@ pub async fn process_incoming_message(
                                         charge.id, charge.amount, charge.pix_mode,
                                         charge.customer_name.as_deref().unwrap_or("--"),
                                     );
-                                    let _ = save_message(db, &conversation.id, "system", &charge_memo, None, None, None).await;
+                                    let _ = save_message(
+                                        db,
+                                        &conversation.id,
+                                        "system",
+                                        &charge_memo,
+                                        None,
+                                        None,
+                                        None,
+                                    )
+                                    .await;
 
                                     // Publish SSE event for new charge
-                                    event_bus.publish(&user_id, crate::services::events::SseEvent {
-                                        event_type: "pix_charge_created".into(),
-                                        data: serde_json::json!({
-                                            "chargeId": charge.id.to_string(),
-                                            "assistantId": assistant_id.to_string(),
-                                            "amount": charge.amount,
-                                            "customerName": charge.customer_name,
-                                        }).to_string(),
-                                    }).await;
+                                    event_bus
+                                        .publish(
+                                            &user_id,
+                                            crate::services::events::SseEvent {
+                                                event_type: "pix_charge_created".into(),
+                                                data: serde_json::json!({
+                                                    "chargeId": charge.id.to_string(),
+                                                    "assistantId": assistant_id.to_string(),
+                                                    "amount": charge.amount,
+                                                    "customerName": charge.customer_name,
+                                                })
+                                                .to_string(),
+                                            },
+                                        )
+                                        .await;
 
                                     // Spawn background poller for MP charges
                                     if pix_mode == "mercadopago" {
                                         if let Some(ref mp_id) = charge.mp_payment_id {
                                             crate::services::pix::spawn_mp_payment_poller(
-                                                db.clone(), config.clone(), encryption.clone(),
+                                                db.clone(),
+                                                config.clone(),
+                                                encryption.clone(),
                                                 event_bus.clone(),
-                                                user_id, charge.id, assistant_id,
+                                                user_id,
+                                                charge.id,
+                                                assistant_id,
                                                 mp_id.clone(),
                                             );
                                         }
                                     }
 
                                     // Build caption with copia-e-cola for easy copy on mobile
-                                    let caption = charge.mp_copia_e_cola.as_deref()
-                                        .map(|copia| format!(
-                                            "Valor: R$ {:.2}\n\nCopia e cola:\n{}", amount, copia
-                                        ))
+                                    let caption = charge
+                                        .mp_copia_e_cola
+                                        .as_deref()
+                                        .map(|copia| {
+                                            format!(
+                                                "Valor: R$ {:.2}\n\nCopia e cola:\n{}",
+                                                amount, copia
+                                            )
+                                        })
                                         .unwrap_or_else(|| format!("PIX - R$ {:.2}", amount));
 
                                     // Send QR code image with copia-e-cola as caption
                                     if let Some(qr_b64) = &charge.mp_qr_code_base64 {
                                         if let Err(e) = send_pix_qr_via_provider(
-                                            config, &integration, &webhook.phone, qr_b64, &caption,
-                                        ).await {
+                                            config,
+                                            &integration,
+                                            &webhook.phone,
+                                            qr_b64,
+                                            &caption,
+                                        )
+                                        .await
+                                        {
                                             tracing::error!(error = %e, "Failed to send PIX QR code");
                                         }
                                     } else if let Some(copia) = &charge.mp_copia_e_cola {
@@ -529,7 +825,14 @@ pub async fn process_incoming_message(
                                             "Aqui está o código PIX copia e cola:\n\n{}\n\nValor: R$ {:.2}",
                                             copia, amount
                                         );
-                                        if let Err(e) = send_message_via_provider(config, &integration, &webhook.phone, &msg).await {
+                                        if let Err(e) = send_message_via_provider(
+                                            config,
+                                            &integration,
+                                            &webhook.phone,
+                                            &msg,
+                                        )
+                                        .await
+                                        {
                                             tracing::error!(error = %e, "Failed to send PIX copia-e-cola");
                                         }
                                     }
@@ -544,30 +847,51 @@ pub async fn process_incoming_message(
                 // check_status is handled entirely in execute_tool, no post-processing needed
             }
             "card_payment" => {
-                let action = record.arguments.get("action")
+                let action = record
+                    .arguments
+                    .get("action")
                     .and_then(|v| v.as_str())
                     .unwrap_or("");
                 if action == "create_charge" {
-                    let amount = record.arguments.get("amount")
-                        .and_then(|v| v.as_f64()).unwrap_or(0.0);
-                    let desc = record.arguments.get("description")
-                        .and_then(|v| v.as_str()).unwrap_or("Cobrança por cartão");
-                    let customer_name = record.arguments.get("customer_name")
+                    let amount = record
+                        .arguments
+                        .get("amount")
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(0.0);
+                    let desc = record
+                        .arguments
+                        .get("description")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("Cobrança por cartão");
+                    let customer_name = record
+                        .arguments
+                        .get("customer_name")
                         .and_then(|v| v.as_str());
-                    let customer_cpf = record.arguments.get("customer_cpf")
+                    let customer_cpf = record
+                        .arguments
+                        .get("customer_cpf")
                         .and_then(|v| v.as_str());
-                    let payment_type = record.arguments.get("payment_type")
-                        .and_then(|v| v.as_str()).unwrap_or("credit");
-                    let installments = record.arguments.get("installments")
-                        .and_then(|v| v.as_i64()).unwrap_or(1) as i32;
+                    let payment_type = record
+                        .arguments
+                        .get("payment_type")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("credit");
+                    let installments = record
+                        .arguments
+                        .get("installments")
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or(1) as i32;
 
                     // Extract tool config: card_mode
                     let tool_config = record.tool_id.and_then(|tid| {
                         tools.iter().find(|t| t.id == tid).map(|t| {
-                            let headers: serde_json::Value = t.headers_json.as_deref()
+                            let headers: serde_json::Value = t
+                                .headers_json
+                                .as_deref()
                                 .and_then(|h| serde_json::from_str(h).ok())
                                 .unwrap_or(serde_json::json!({}));
-                            let card_mode = headers.get("card_mode")
+                            let card_mode = headers
+                                .get("card_mode")
                                 .and_then(|v| v.as_str())
                                 .unwrap_or("stripe")
                                 .to_string();
@@ -581,10 +905,16 @@ pub async fn process_incoming_message(
                         // Decrypt provider token
                         let provider_token = match card_mode.as_str() {
                             "stripe" => {
-                                match crate::services::pix::get_user_stripe_token(db, encryption, &user_id).await {
+                                match crate::services::pix::get_user_stripe_token(
+                                    db, encryption, &user_id,
+                                )
+                                .await
+                                {
                                     Ok(Some(token)) => Some(token),
                                     Ok(None) => {
-                                        tracing::error!("User has no Stripe key configured for card payment");
+                                        tracing::error!(
+                                            "User has no Stripe key configured for card payment"
+                                        );
                                         None
                                     }
                                     Err(e) => {
@@ -594,7 +924,11 @@ pub async fn process_incoming_message(
                                 }
                             }
                             "mercadopago" => {
-                                match crate::services::pix::get_user_mp_token(db, encryption, &user_id).await {
+                                match crate::services::pix::get_user_mp_token(
+                                    db, encryption, &user_id,
+                                )
+                                .await
+                                {
                                     Ok(Some(token)) => Some(token),
                                     Ok(None) => {
                                         tracing::error!("User has no Mercado Pago token configured for card payment");
@@ -610,7 +944,9 @@ pub async fn process_incoming_message(
                         };
 
                         // Build notification URL for MP card webhooks
-                        let notification_url = if card_mode == "mercadopago" && config.app_url.starts_with("https://") {
+                        let notification_url = if card_mode == "mercadopago"
+                            && config.app_url.starts_with("https://")
+                        {
                             Some(format!("{}/api/webhooks/mercadopago/card", config.app_url))
                         } else {
                             None
@@ -618,16 +954,32 @@ pub async fn process_incoming_message(
 
                         if let Some(token) = provider_token {
                             match crate::services::card_payment::create_charge(
-                                db, &user_id, &assistant_id, Some(&conversation.id),
-                                &webhook.phone, amount, desc, &card_mode,
-                                &token, customer_name, customer_cpf,
-                                payment_type, installments,
-                                &config.app_url, notification_url.as_deref(),
-                            ).await {
+                                db,
+                                &user_id,
+                                &assistant_id,
+                                Some(&conversation.id),
+                                &webhook.phone,
+                                amount,
+                                desc,
+                                &card_mode,
+                                &token,
+                                customer_name,
+                                customer_cpf,
+                                payment_type,
+                                installments,
+                                &config.app_url,
+                                notification_url.as_deref(),
+                            )
+                            .await
+                            {
                                 Ok(charge) => {
                                     // Save charge info to conversation
                                     let parcelas_info = if charge.installments > 1 {
-                                        format!("{}x de R$ {:.2}", charge.installments, charge.amount / charge.installments as f64)
+                                        format!(
+                                            "{}x de R$ {:.2}",
+                                            charge.installments,
+                                            charge.amount / charge.installments as f64
+                                        )
                                     } else {
                                         "à vista".to_string()
                                     };
@@ -638,37 +990,65 @@ pub async fn process_incoming_message(
                                         charge.card_mode, parcelas_info,
                                         charge.customer_name.as_deref().unwrap_or("--"),
                                     );
-                                    let _ = save_message(db, &conversation.id, "system", &charge_memo, None, None, None).await;
+                                    let _ = save_message(
+                                        db,
+                                        &conversation.id,
+                                        "system",
+                                        &charge_memo,
+                                        None,
+                                        None,
+                                        None,
+                                    )
+                                    .await;
 
                                     // Publish SSE event
-                                    event_bus.publish(&user_id, crate::services::events::SseEvent {
-                                        event_type: "card_charge_created".into(),
-                                        data: serde_json::json!({
-                                            "chargeId": charge.id.to_string(),
-                                            "assistantId": assistant_id.to_string(),
-                                            "amount": charge.amount,
-                                            "customerName": charge.customer_name,
-                                        }).to_string(),
-                                    }).await;
+                                    event_bus
+                                        .publish(
+                                            &user_id,
+                                            crate::services::events::SseEvent {
+                                                event_type: "card_charge_created".into(),
+                                                data: serde_json::json!({
+                                                    "chargeId": charge.id.to_string(),
+                                                    "assistantId": assistant_id.to_string(),
+                                                    "amount": charge.amount,
+                                                    "customerName": charge.customer_name,
+                                                })
+                                                .to_string(),
+                                            },
+                                        )
+                                        .await;
 
                                     // Spawn background poller
                                     if let Some(ref session_id) = charge.provider_session_id {
                                         crate::services::card_payment::spawn_card_payment_poller(
-                                            db.clone(), config.clone(), encryption.clone(),
+                                            db.clone(),
+                                            config.clone(),
+                                            encryption.clone(),
                                             event_bus.clone(),
-                                            user_id, charge.id, assistant_id,
-                                            session_id.clone(), card_mode.clone(),
+                                            user_id,
+                                            charge.id,
+                                            assistant_id,
+                                            session_id.clone(),
+                                            card_mode.clone(),
                                         );
                                     }
 
                                     // Send own-domain payment link to customer
                                     {
-                                        let pay_link = format!("{}/pay/{}", config.app_url, charge.id);
+                                        let pay_link =
+                                            format!("{}/pay/{}", config.app_url, charge.id);
                                         let msg = format!(
                                             "Aqui está o link para pagamento seguro por cartão:\n\n{}\n\nValor: R$ {:.2}\n{}",
                                             pay_link, amount, desc
                                         );
-                                        if let Err(e) = send_message_via_provider(config, &integration, &webhook.phone, &msg).await {
+                                        if let Err(e) = send_message_via_provider(
+                                            config,
+                                            &integration,
+                                            &webhook.phone,
+                                            &msg,
+                                        )
+                                        .await
+                                        {
                                             tracing::error!(error = %e, "Failed to send card checkout link");
                                         }
                                     }
@@ -683,30 +1063,58 @@ pub async fn process_incoming_message(
                 // check_status is handled entirely in execute_tool, no post-processing needed
             }
             "schedule_appointment" => {
-                let action = record.arguments.get("action")
+                let action = record
+                    .arguments
+                    .get("action")
                     .and_then(|v| v.as_str())
                     .unwrap_or("create");
 
                 match action {
                     "create" => {
-                        let client_name = record.arguments.get("client_name")
-                            .and_then(|v| v.as_str()).unwrap_or("").to_string();
-                        let client_email = record.arguments.get("client_email")
-                            .and_then(|v| v.as_str()).map(|s| s.to_string());
-                        let client_phone = record.arguments.get("client_phone")
-                            .and_then(|v| v.as_str()).unwrap_or(&webhook.phone).to_string();
-                        let date_time_str = record.arguments.get("date_time")
-                            .and_then(|v| v.as_str()).unwrap_or("");
-                        let duration = record.arguments.get("duration_minutes")
-                            .and_then(|v| v.as_i64()).map(|v| v as i32);
-                        let appointment_type = record.arguments.get("appointment_type")
-                            .and_then(|v| v.as_str()).map(|s| s.to_string());
-                        let notes = record.arguments.get("notes")
-                            .and_then(|v| v.as_str()).map(|s| s.to_string());
+                        let client_name = record
+                            .arguments
+                            .get("client_name")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let client_email = record
+                            .arguments
+                            .get("client_email")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string());
+                        let client_phone = record
+                            .arguments
+                            .get("client_phone")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or(&webhook.phone)
+                            .to_string();
+                        let date_time_str = record
+                            .arguments
+                            .get("date_time")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+                        let duration = record
+                            .arguments
+                            .get("duration_minutes")
+                            .and_then(|v| v.as_i64())
+                            .map(|v| v as i32);
+                        let appointment_type = record
+                            .arguments
+                            .get("appointment_type")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string());
+                        let notes = record
+                            .arguments
+                            .get("notes")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string());
 
                         // Parse date_time in assistant's timezone
-                        let tz = crate::services::appointment::resolve_assistant_tz(db, &assistant_id).await;
-                        let date_time = crate::services::appointment::parse_datetime_in_tz(date_time_str, &tz);
+                        let tz =
+                            crate::services::appointment::resolve_assistant_tz(db, &assistant_id)
+                                .await;
+                        let date_time =
+                            crate::services::appointment::parse_datetime_in_tz(date_time_str, &tz);
 
                         match date_time {
                             Some(dt_utc) => {
@@ -723,11 +1131,23 @@ pub async fn process_incoming_message(
                                     conversation_id: Some(conversation.id),
                                     is_manual: Some(false),
                                 };
-                                match crate::services::appointment::create_appointment(db, &user_id, req).await {
+                                match crate::services::appointment::create_appointment(
+                                    db, &user_id, req,
+                                )
+                                .await
+                                {
                                     Ok(appointment) => {
                                         if let Err(e) = notify_appointment_event(
-                                            db, config, &user_id, &assistant_id, &assistant.name, &appointment, "created",
-                                        ).await {
+                                            db,
+                                            config,
+                                            &user_id,
+                                            &assistant_id,
+                                            &assistant.name,
+                                            &appointment,
+                                            "created",
+                                        )
+                                        .await
+                                        {
                                             tracing::error!(error = %e, "Failed to notify appointment creation");
                                         }
                                     }
@@ -742,14 +1162,29 @@ pub async fn process_incoming_message(
                         }
                     }
                     "cancel" => {
-                        let appointment_id_str = record.arguments.get("appointment_id")
-                            .and_then(|v| v.as_str()).unwrap_or("");
+                        let appointment_id_str = record
+                            .arguments
+                            .get("appointment_id")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
                         if let Ok(appt_id) = Uuid::parse_str(appointment_id_str) {
-                            match crate::services::appointment::cancel_appointment(db, &user_id, &appt_id).await {
+                            match crate::services::appointment::cancel_appointment(
+                                db, &user_id, &appt_id,
+                            )
+                            .await
+                            {
                                 Ok(appointment) => {
                                     if let Err(e) = notify_appointment_event(
-                                        db, config, &user_id, &assistant_id, &assistant.name, &appointment, "cancelled",
-                                    ).await {
+                                        db,
+                                        config,
+                                        &user_id,
+                                        &assistant_id,
+                                        &assistant.name,
+                                        &appointment,
+                                        "cancelled",
+                                    )
+                                    .await
+                                    {
                                         tracing::error!(error = %e, "Failed to notify appointment cancellation");
                                     }
                                 }
@@ -760,27 +1195,55 @@ pub async fn process_incoming_message(
                         }
                     }
                     "reschedule" => {
-                        let appointment_id_str = record.arguments.get("appointment_id")
-                            .and_then(|v| v.as_str()).unwrap_or("");
-                        let new_date_time_str = record.arguments.get("date_time")
-                            .and_then(|v| v.as_str()).unwrap_or("");
-                        let tz_r = crate::services::appointment::resolve_assistant_tz(db, &assistant_id).await;
-                        let new_dt = crate::services::appointment::parse_datetime_in_tz(new_date_time_str, &tz_r);
+                        let appointment_id_str = record
+                            .arguments
+                            .get("appointment_id")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+                        let new_date_time_str = record
+                            .arguments
+                            .get("date_time")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+                        let tz_r =
+                            crate::services::appointment::resolve_assistant_tz(db, &assistant_id)
+                                .await;
+                        let new_dt = crate::services::appointment::parse_datetime_in_tz(
+                            new_date_time_str,
+                            &tz_r,
+                        );
 
-                        if let (Ok(appt_id), Some(dt_utc)) = (Uuid::parse_str(appointment_id_str), new_dt) {
+                        if let (Ok(appt_id), Some(dt_utc)) =
+                            (Uuid::parse_str(appointment_id_str), new_dt)
+                        {
                             let req = crate::models::appointment::UpdateAppointmentRequest {
                                 status: Some("rescheduled".into()),
                                 date_time: Some(dt_utc),
                                 notes: None,
-                                duration_minutes: record.arguments.get("duration_minutes")
-                                    .and_then(|v| v.as_i64()).map(|v| v as i32),
+                                duration_minutes: record
+                                    .arguments
+                                    .get("duration_minutes")
+                                    .and_then(|v| v.as_i64())
+                                    .map(|v| v as i32),
                                 appointment_type: None,
                             };
-                            match crate::services::appointment::update_appointment(db, &user_id, &appt_id, req).await {
+                            match crate::services::appointment::update_appointment(
+                                db, &user_id, &appt_id, req,
+                            )
+                            .await
+                            {
                                 Ok(appointment) => {
                                     if let Err(e) = notify_appointment_event(
-                                        db, config, &user_id, &assistant_id, &assistant.name, &appointment, "rescheduled",
-                                    ).await {
+                                        db,
+                                        config,
+                                        &user_id,
+                                        &assistant_id,
+                                        &assistant.name,
+                                        &appointment,
+                                        "rescheduled",
+                                    )
+                                    .await
+                                    {
                                         tracing::error!(error = %e, "Failed to notify appointment reschedule");
                                     }
                                 }
@@ -797,16 +1260,25 @@ pub async fn process_incoming_message(
         }
     }
 
-    let should_split = integration.config_split_messages.unwrap_or(assistant.config_split_messages);
+    let should_split = integration
+        .config_split_messages
+        .unwrap_or(assistant.config_split_messages);
     let responses = if should_split {
-        llm_response.content.split("\n\n").filter(|s| !s.trim().is_empty()).map(|s| s.to_string()).collect()
+        llm_response
+            .content
+            .split("\n\n")
+            .filter(|s| !s.trim().is_empty())
+            .map(|s| s.to_string())
+            .collect()
     } else {
         vec![llm_response.content.clone()]
     };
 
     // Determine if we should respond with audio
     let audio_mode = assistant.config_audio_mode.as_deref().unwrap_or("disabled");
-    let incoming_is_audio = webhook.media_type.as_deref()
+    let incoming_is_audio = webhook
+        .media_type
+        .as_deref()
         .map(|t| t.starts_with("audio"))
         .unwrap_or(false);
     let wants_audio = match audio_mode {
@@ -818,8 +1290,23 @@ pub async fn process_incoming_message(
     let audio_sent = if wants_audio {
         if let Some(voice_id) = &assistant.config_audio_voice_id {
             let full_text = responses.join("\n");
-            let audio_provider = assistant.config_audio_provider.as_deref().unwrap_or("elevenlabs");
-            match send_responses_as_audio(db, encryption, config, &user_id, audio_provider, voice_id, &integration, &webhook.phone, &full_text).await {
+            let audio_provider = assistant
+                .config_audio_provider
+                .as_deref()
+                .unwrap_or("elevenlabs");
+            match send_responses_as_audio(
+                db,
+                encryption,
+                config,
+                &user_id,
+                audio_provider,
+                voice_id,
+                &integration,
+                &webhook.phone,
+                &full_text,
+            )
+            .await
+            {
                 Ok(_) => true,
                 Err(e) => {
                     tracing::warn!(provider = %integration.provider, error = %e, "Audio response failed, falling back to text");
@@ -839,7 +1326,16 @@ pub async fn process_incoming_message(
         }
     }
 
-    save_message(db, &conversation.id, "assistant", &llm_response.content, None, None, Some(llm_response.tokens_used)).await?;
+    save_message(
+        db,
+        &conversation.id,
+        "assistant",
+        &llm_response.content,
+        None,
+        None,
+        Some(llm_response.tokens_used),
+    )
+    .await?;
 
     let now = ts_now();
     db.query_unpaged(
@@ -847,7 +1343,14 @@ pub async fn process_incoming_message(
         (now, &assistant_id, &user_id, &conversation.id),
     ).await.map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
-    update_usage_stats(db, &user_id, &assistant_id, llm_response.tokens_used, rate_limit.is_some()).await?;
+    update_usage_stats(
+        db,
+        &user_id,
+        &assistant_id,
+        llm_response.tokens_used,
+        rate_limit.is_some(),
+    )
+    .await?;
 
     // Publish SSE event for conversation update (includes contact name for live refresh)
     event_bus.publish(&user_id, crate::services::events::SseEvent {
@@ -859,11 +1362,17 @@ pub async fn process_incoming_message(
         }).to_string(),
     }).await;
 
-    Ok(WebhookResponse { status: "ok".into(), message_id: Some(conversation.id.to_string()) })
+    Ok(WebhookResponse {
+        status: "ok".into(),
+        message_id: Some(conversation.id.to_string()),
+    })
 }
 
 /// Find ANY integration by phone (regardless of status). Used for uniqueness checks.
-pub async fn find_any_integration_by_phone(db: &DbSession, phone: &str) -> Result<AssistantIntegration, AppError> {
+pub async fn find_any_integration_by_phone(
+    db: &DbSession,
+    phone: &str,
+) -> Result<AssistantIntegration, AppError> {
     let result = db
         .query_unpaged(
             "SELECT assistant_id, user_id, id, channel, provider, status, config_token, config_phone_number, config_chatwoot_url, config_rate_limit_per_day, config_max_message_length, config_audio_response_mode, config_interpret_documents, config_split_messages, config_webhook_verify_token, created_at FROM inertial_eclipse.assistant_integrations WHERE config_phone_number = ? ALLOW FILTERING",
@@ -873,14 +1382,18 @@ pub async fn find_any_integration_by_phone(db: &DbSession, phone: &str) -> Resul
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     let row = result
-        .into_rows_result()?.maybe_first_row::<IntegrationRow>()?
+        .into_rows_result()?
+        .maybe_first_row::<IntegrationRow>()?
         .ok_or_else(|| AppError::NotFound("No integration found for this phone number".into()))?;
 
     Ok(row_to_integration(row))
 }
 
 /// Find active (non-disconnected) integration by phone. Used for message routing.
-pub async fn find_integration_by_phone(db: &DbSession, phone: &str) -> Result<AssistantIntegration, AppError> {
+pub async fn find_integration_by_phone(
+    db: &DbSession,
+    phone: &str,
+) -> Result<AssistantIntegration, AppError> {
     let result = db
         .query_unpaged(
             "SELECT assistant_id, user_id, id, channel, provider, status, config_token, config_phone_number, config_chatwoot_url, config_rate_limit_per_day, config_max_message_length, config_audio_response_mode, config_interpret_documents, config_split_messages, config_webhook_verify_token, created_at FROM inertial_eclipse.assistant_integrations WHERE config_phone_number = ? ALLOW FILTERING",
@@ -892,15 +1405,15 @@ pub async fn find_integration_by_phone(db: &DbSession, phone: &str) -> Result<As
     // Collect ALL integrations with this phone number
     let mut all: Vec<AssistantIntegration> = Vec::new();
     let rows = result.into_rows_result()?;
-    for row in rows
-        .rows::<IntegrationRow>()?
-    {
+    for row in rows.rows::<IntegrationRow>()? {
         let r = row.map_err(|e| AppError::DatabaseError(e.to_string()))?;
         all.push(row_to_integration(r));
     }
 
     if all.is_empty() {
-        return Err(AppError::NotFound("No integration found for this phone number".into()));
+        return Err(AppError::NotFound(
+            "No integration found for this phone number".into(),
+        ));
     }
 
     // Prefer connected integrations whose assistant still exists
@@ -913,7 +1426,13 @@ pub async fn find_integration_by_phone(db: &DbSession, phone: &str) -> Result<As
             continue;
         }
         // Verify the assistant still exists
-        match crate::services::assistant::get_assistant(db, &integration.user_id, &integration.assistant_id).await {
+        match crate::services::assistant::get_assistant(
+            db,
+            &integration.user_id,
+            &integration.assistant_id,
+        )
+        .await
+        {
             Ok(_) => {
                 if valid.is_none() {
                     valid = Some(integration);
@@ -929,7 +1448,8 @@ pub async fn find_integration_by_phone(db: &DbSession, phone: &str) -> Result<As
     for orphan in &orphans {
         tracing::warn!(
             "Cleaning up orphan integration {} for deleted assistant {}",
-            orphan.id, orphan.assistant_id
+            orphan.id,
+            orphan.assistant_id
         );
         let _ = db.query_unpaged(
             "DELETE FROM inertial_eclipse.assistant_integrations WHERE assistant_id = ? AND user_id = ? AND id = ?",
@@ -937,10 +1457,15 @@ pub async fn find_integration_by_phone(db: &DbSession, phone: &str) -> Result<As
         ).await;
     }
 
-    valid.ok_or_else(|| AppError::NotFound("No active integration found for this phone number".into()))
+    valid.ok_or_else(|| {
+        AppError::NotFound("No active integration found for this phone number".into())
+    })
 }
 
-pub async fn find_integration_by_token(db: &DbSession, token: &str) -> Result<AssistantIntegration, AppError> {
+pub async fn find_integration_by_token(
+    db: &DbSession,
+    token: &str,
+) -> Result<AssistantIntegration, AppError> {
     let result = db
         .query_unpaged(
             "SELECT assistant_id, user_id, id, channel, provider, status, config_token, config_phone_number, config_chatwoot_url, config_rate_limit_per_day, config_max_message_length, config_audio_response_mode, config_interpret_documents, config_split_messages, config_webhook_verify_token, created_at FROM inertial_eclipse.assistant_integrations WHERE config_token = ? ALLOW FILTERING",
@@ -952,15 +1477,15 @@ pub async fn find_integration_by_token(db: &DbSession, token: &str) -> Result<As
     // Collect ALL integrations with this token
     let mut all: Vec<AssistantIntegration> = Vec::new();
     let rows = result.into_rows_result()?;
-    for row in rows
-        .rows::<IntegrationRow>()?
-    {
+    for row in rows.rows::<IntegrationRow>()? {
         let r = row.map_err(|e| AppError::DatabaseError(e.to_string()))?;
         all.push(row_to_integration(r));
     }
 
     if all.is_empty() {
-        return Err(AppError::NotFound("No integration found for this token".into()));
+        return Err(AppError::NotFound(
+            "No integration found for this token".into(),
+        ));
     }
 
     // Prefer connected integrations whose assistant still exists
@@ -971,7 +1496,13 @@ pub async fn find_integration_by_token(db: &DbSession, token: &str) -> Result<As
         if integration.status.as_str() == "disconnected" {
             continue;
         }
-        match crate::services::assistant::get_assistant(db, &integration.user_id, &integration.assistant_id).await {
+        match crate::services::assistant::get_assistant(
+            db,
+            &integration.user_id,
+            &integration.assistant_id,
+        )
+        .await
+        {
             Ok(_) => {
                 if valid.is_none() {
                     valid = Some(integration);
@@ -987,7 +1518,8 @@ pub async fn find_integration_by_token(db: &DbSession, token: &str) -> Result<As
     for orphan in &orphans {
         tracing::warn!(
             "Cleaning up orphan integration {} for deleted assistant {}",
-            orphan.id, orphan.assistant_id
+            orphan.id,
+            orphan.assistant_id
         );
         let _ = db.query_unpaged(
             "DELETE FROM inertial_eclipse.assistant_integrations WHERE assistant_id = ? AND user_id = ? AND id = ?",
@@ -1000,7 +1532,11 @@ pub async fn find_integration_by_token(db: &DbSession, token: &str) -> Result<As
 
 /// Check rate limit and atomically reserve a message slot using CAS (compare-and-swap).
 /// This prevents race conditions where concurrent requests both pass the limit check.
-async fn is_rate_limited(db: &DbSession, integration: &AssistantIntegration, limit: i32) -> Result<bool, AppError> {
+async fn is_rate_limited(
+    db: &DbSession,
+    integration: &AssistantIntegration,
+    limit: i32,
+) -> Result<bool, AppError> {
     let today = Utc::now().format("%Y-%m-%d").to_string();
     let max_retries = 3;
 
@@ -1014,7 +1550,8 @@ async fn is_rate_limited(db: &DbSession, integration: &AssistantIntegration, lim
             .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
         let (current_tokens, current_messages) = result
-            .into_rows_result()?.maybe_first_row::<(i64, i64)>()?
+            .into_rows_result()?
+            .maybe_first_row::<(i64, i64)>()?
             .unwrap_or((0, 0));
 
         if current_messages >= limit as i64 {
@@ -1039,7 +1576,11 @@ async fn is_rate_limited(db: &DbSession, integration: &AssistantIntegration, lim
         match cas_result {
             Ok(res) => {
                 // LWT returns [applied] as the first column
-                if let Some((applied,)) = res.into_rows_result().ok().and_then(|r| r.maybe_first_row::<(bool,)>().ok().flatten()) {
+                if let Some((applied,)) = res
+                    .into_rows_result()
+                    .ok()
+                    .and_then(|r| r.maybe_first_row::<(bool,)>().ok().flatten())
+                {
                     if applied {
                         return Ok(false); // Successfully reserved slot
                     }
@@ -1054,16 +1595,32 @@ async fn is_rate_limited(db: &DbSession, integration: &AssistantIntegration, lim
     }
 
     // After max retries, be safe and allow the message (don't block legitimate traffic)
-    tracing::warn!("Rate limit CAS failed after {max_retries} retries for assistant {}", integration.assistant_id);
+    tracing::warn!(
+        "Rate limit CAS failed after {max_retries} retries for assistant {}",
+        integration.assistant_id
+    );
     Ok(false)
 }
 
-type ConversationRow = (Uuid, Uuid, Uuid, Option<String>, Option<String>, Option<DateTime<Utc>>, Option<DateTime<Utc>>, Option<String>, Option<bool>, Option<String>);
+type ConversationRow = (
+    Uuid,
+    Uuid,
+    Uuid,
+    Option<String>,
+    Option<String>,
+    Option<DateTime<Utc>>,
+    Option<DateTime<Utc>>,
+    Option<String>,
+    Option<bool>,
+    Option<String>,
+);
 
 fn row_to_conversation(r: ConversationRow) -> Conversation {
     let fallback = Utc::now();
     Conversation {
-        assistant_id: r.0, user_id: r.1, id: r.2,
+        assistant_id: r.0,
+        user_id: r.1,
+        id: r.2,
         contact_number: r.3.unwrap_or_default(),
         contact_name: r.9,
         channel: r.4.unwrap_or_default(),
@@ -1075,7 +1632,11 @@ fn row_to_conversation(r: ConversationRow) -> Conversation {
 }
 
 async fn get_or_create_conversation(
-    db: &DbSession, assistant_id: &Uuid, user_id: &Uuid, contact_number: &str, channel: &str,
+    db: &DbSession,
+    assistant_id: &Uuid,
+    user_id: &Uuid,
+    contact_number: &str,
+    channel: &str,
     contact_name: Option<&str>,
 ) -> Result<Conversation, AppError> {
     let result = db
@@ -1087,7 +1648,8 @@ async fn get_or_create_conversation(
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     if let Some(row) = result
-        .into_rows_result()?.maybe_first_row::<ConversationRow>()?
+        .into_rows_result()?
+        .maybe_first_row::<ConversationRow>()?
     {
         let mut conv = row_to_conversation(row);
         // Update contact_name if a new non-empty value is provided and different
@@ -1112,18 +1674,27 @@ async fn get_or_create_conversation(
     ).await.map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     Ok(Conversation {
-        assistant_id: *assistant_id, user_id: *user_id, id,
+        assistant_id: *assistant_id,
+        user_id: *user_id,
+        id,
         contact_number: contact_number.to_string(),
         contact_name: contact_name.map(|s| s.to_string()),
         channel: channel.to_string(),
-        started_at: Utc::now(), last_message_at: Utc::now(), summary: None,
+        started_at: Utc::now(),
+        last_message_at: Utc::now(),
+        summary: None,
         ai_enabled: true,
     })
 }
 
 async fn save_message(
-    db: &DbSession, conversation_id: &Uuid, role: &str, content: &str,
-    media_url: Option<&str>, media_type: Option<&str>, tokens_used: Option<i32>,
+    db: &DbSession,
+    conversation_id: &Uuid,
+    role: &str,
+    content: &str,
+    media_url: Option<&str>,
+    media_type: Option<&str>,
+    tokens_used: Option<i32>,
 ) -> Result<(), AppError> {
     let now = ts_now();
 
@@ -1135,7 +1706,11 @@ async fn save_message(
     Ok(())
 }
 
-pub async fn get_recent_messages(db: &DbSession, conversation_id: &Uuid, limit: i32) -> Result<Vec<Message>, AppError> {
+pub async fn get_recent_messages(
+    db: &DbSession,
+    conversation_id: &Uuid,
+    limit: i32,
+) -> Result<Vec<Message>, AppError> {
     let result = db
         .query_unpaged(
             "SELECT conversation_id, id, role, content, media_url, media_type, tokens_used, sub_agent_id, created_at FROM inertial_eclipse.messages WHERE conversation_id = ? ORDER BY id DESC LIMIT ?",
@@ -1146,15 +1721,28 @@ pub async fn get_recent_messages(db: &DbSession, conversation_id: &Uuid, limit: 
 
     let rows = result.into_rows_result()?;
     let mut messages = Vec::new();
-    for row in rows
-        .rows::<(Uuid, CqlTimeuuid, Option<String>, Option<String>, Option<String>, Option<String>, Option<i32>, Option<Uuid>, Option<DateTime<Utc>>)>()?
-    {
+    for row in rows.rows::<(
+        Uuid,
+        CqlTimeuuid,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<i32>,
+        Option<Uuid>,
+        Option<DateTime<Utc>>,
+    )>()? {
         let r = row.map_err(|e| AppError::DatabaseError(e.to_string()))?;
         messages.push(Message {
-            conversation_id: r.0, id: r.1.into(),
-            role: r.2.unwrap_or_default(), content: r.3,
-            media_url: r.4, media_type: r.5, tokens_used: r.6,
-            sub_agent_id: r.7, created_at: r.8.unwrap_or_else(Utc::now),
+            conversation_id: r.0,
+            id: r.1.into(),
+            role: r.2.unwrap_or_default(),
+            content: r.3,
+            media_url: r.4,
+            media_type: r.5,
+            tokens_used: r.6,
+            sub_agent_id: r.7,
+            created_at: r.8.unwrap_or_else(Utc::now),
         });
     }
 
@@ -1163,7 +1751,10 @@ pub async fn get_recent_messages(db: &DbSession, conversation_id: &Uuid, limit: 
 }
 
 pub async fn get_messages_paged(
-    db: &DbSession, conversation_id: &Uuid, limit: i32, cursor: Option<&str>,
+    db: &DbSession,
+    conversation_id: &Uuid,
+    limit: i32,
+    cursor: Option<&str>,
 ) -> Result<crate::models::pagination::PaginatedResponse<Message>, AppError> {
     let (result, next_cursor) = crate::db::query_paged(
         db,
@@ -1177,15 +1768,28 @@ pub async fn get_messages_paged(
 
     let rows = result.into_rows_result()?;
     let mut messages = Vec::new();
-    for row in rows
-        .rows::<(Uuid, CqlTimeuuid, Option<String>, Option<String>, Option<String>, Option<String>, Option<i32>, Option<Uuid>, Option<DateTime<Utc>>)>()?
-    {
+    for row in rows.rows::<(
+        Uuid,
+        CqlTimeuuid,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<i32>,
+        Option<Uuid>,
+        Option<DateTime<Utc>>,
+    )>()? {
         let r = row.map_err(|e| AppError::DatabaseError(e.to_string()))?;
         messages.push(Message {
-            conversation_id: r.0, id: r.1.into(),
-            role: r.2.unwrap_or_default(), content: r.3,
-            media_url: r.4, media_type: r.5, tokens_used: r.6,
-            sub_agent_id: r.7, created_at: r.8.unwrap_or_else(Utc::now),
+            conversation_id: r.0,
+            id: r.1.into(),
+            role: r.2.unwrap_or_default(),
+            content: r.3,
+            media_url: r.4,
+            media_type: r.5,
+            tokens_used: r.6,
+            sub_agent_id: r.7,
+            created_at: r.8.unwrap_or_else(Utc::now),
         });
     }
 
@@ -1199,8 +1803,12 @@ pub async fn get_messages_paged(
 }
 
 pub async fn list_conversations(
-    db: &DbSession, assistant_id: &Uuid, user_id: &Uuid,
-    limit: i32, cursor: Option<&str>, search: Option<&str>,
+    db: &DbSession,
+    assistant_id: &Uuid,
+    user_id: &Uuid,
+    limit: i32,
+    cursor: Option<&str>,
+    search: Option<&str>,
 ) -> Result<crate::models::pagination::PaginatedResponse<Conversation>, AppError> {
     let (result, next_cursor) = crate::db::query_paged(
         db,
@@ -1214,16 +1822,16 @@ pub async fn list_conversations(
 
     let rows = result.into_rows_result()?;
     let mut conversations = Vec::new();
-    for row in rows
-        .rows::<ConversationRow>()?
-    {
+    for row in rows.rows::<ConversationRow>()? {
         let r = row.map_err(|e| AppError::DatabaseError(e.to_string()))?;
         let conv = row_to_conversation(r);
         // Application-level search filter (Cassandra can't efficiently filter text fields)
         if let Some(q) = search {
             if !q.is_empty() {
                 let q_lower = q.to_lowercase();
-                let matches_name = conv.contact_name.as_ref()
+                let matches_name = conv
+                    .contact_name
+                    .as_ref()
                     .map(|n| n.to_lowercase().contains(&q_lower))
                     .unwrap_or(false);
                 let matches_number = conv.contact_number.to_lowercase().contains(&q_lower);
@@ -1251,7 +1859,8 @@ pub async fn count_messages(db: &DbSession, conversation_id: &Uuid) -> Result<i6
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     let count = result
-        .into_rows_result()?.maybe_first_row::<(i64,)>()?
+        .into_rows_result()?
+        .maybe_first_row::<(i64,)>()?
         .map(|r| r.0)
         .unwrap_or(0);
 
@@ -1269,9 +1878,7 @@ pub async fn sum_tokens(db: &DbSession, conversation_id: &Uuid) -> Result<i64, A
 
     let rows = result.into_rows_result()?;
     let mut total: i64 = 0;
-    for row in rows
-        .rows::<(Option<i32>,)>()?
-    {
+    for row in rows.rows::<(Option<i32>,)>()? {
         if let Ok((Some(t),)) = row {
             total += t as i64;
         }
@@ -1292,7 +1899,16 @@ pub async fn send_direct_message(
     let conv = get_conversation(db, assistant_id, user_id, conversation_id).await?;
 
     // Save the manual message as "assistant" role
-    save_message(db, conversation_id, "assistant", message_text, None, None, None).await?;
+    save_message(
+        db,
+        conversation_id,
+        "assistant",
+        message_text,
+        None,
+        None,
+        None,
+    )
+    .await?;
 
     // Send via messaging provider if it's a real channel (not playground)
     if conv.channel != "playground" {
@@ -1300,13 +1916,18 @@ pub async fn send_direct_message(
             Ok(integration) => {
                 // Backfill empty channel/contact_number from legacy conversations
                 if conv.channel.is_empty() || conv.contact_number.is_empty() {
-                    let ch = if conv.channel.is_empty() { &integration.channel } else { &conv.channel };
+                    let ch = if conv.channel.is_empty() {
+                        &integration.channel
+                    } else {
+                        &conv.channel
+                    };
                     let _ = db.query_unpaged(
                         "UPDATE inertial_eclipse.conversations SET channel = ? WHERE assistant_id = ? AND user_id = ? AND id = ?",
                         (ch, assistant_id, user_id, conversation_id),
                     ).await;
                 }
-                send_message_via_provider(config, &integration, &conv.contact_number, message_text).await?;
+                send_message_via_provider(config, &integration, &conv.contact_number, message_text)
+                    .await?;
             }
             Err(e) => {
                 tracing::warn!("No integration found for conversation {conversation_id}, message saved but not sent via provider: {e}");
@@ -1322,22 +1943,33 @@ pub async fn send_direct_message(
     ).await.map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     // Publish SSE event (includes contact name for live refresh)
-    crate::services::events::publish_global(user_id, crate::services::events::SseEvent {
-        event_type: "conversation_updated".into(),
-        data: serde_json::json!({
-            "conversationId": conversation_id.to_string(),
-            "assistantId": assistant_id.to_string(),
-            "contactName": conv.contact_name.as_deref().unwrap_or(&conv.contact_number),
-        }).to_string(),
-    }).await;
+    crate::services::events::publish_global(
+        user_id,
+        crate::services::events::SseEvent {
+            event_type: "conversation_updated".into(),
+            data: serde_json::json!({
+                "conversationId": conversation_id.to_string(),
+                "assistantId": assistant_id.to_string(),
+                "contactName": conv.contact_name.as_deref().unwrap_or(&conv.contact_number),
+            })
+            .to_string(),
+        },
+    )
+    .await;
 
     // Return the saved message
     let messages = get_recent_messages(db, conversation_id, 1).await?;
-    messages.into_iter().last().ok_or_else(|| AppError::InternalError("Failed to retrieve saved message".into()))
+    messages
+        .into_iter()
+        .last()
+        .ok_or_else(|| AppError::InternalError("Failed to retrieve saved message".into()))
 }
 
 pub async fn get_conversation(
-    db: &DbSession, assistant_id: &Uuid, user_id: &Uuid, conversation_id: &Uuid,
+    db: &DbSession,
+    assistant_id: &Uuid,
+    user_id: &Uuid,
+    conversation_id: &Uuid,
 ) -> Result<Conversation, AppError> {
     let result = db
         .query_unpaged(
@@ -1348,14 +1980,18 @@ pub async fn get_conversation(
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     let row = result
-        .into_rows_result()?.maybe_first_row::<ConversationRow>()?
+        .into_rows_result()?
+        .maybe_first_row::<ConversationRow>()?
         .ok_or_else(|| AppError::NotFound("Conversation not found".into()))?;
 
     Ok(row_to_conversation(row))
 }
 
 async fn find_integration_for_conversation(
-    db: &DbSession, assistant_id: &Uuid, user_id: &Uuid, channel: &str,
+    db: &DbSession,
+    assistant_id: &Uuid,
+    user_id: &Uuid,
+    channel: &str,
 ) -> Result<crate::models::integration::AssistantIntegration, AppError> {
     let result = db
         .query_unpaged(
@@ -1367,9 +2003,7 @@ async fn find_integration_for_conversation(
 
     let rows = result.into_rows_result()?;
     let mut fallback: Option<AssistantIntegration> = None;
-    for row in rows
-        .rows::<IntegrationRow>()?
-    {
+    for row in rows.rows::<IntegrationRow>()? {
         let r = row.map_err(|e| AppError::DatabaseError(e.to_string()))?;
         let integration = row_to_integration(r);
         if !channel.is_empty() && integration.channel == channel {
@@ -1383,7 +2017,9 @@ async fn find_integration_for_conversation(
         }
     }
 
-    fallback.ok_or_else(|| AppError::NotFound(format!("No {channel} integration found for this assistant")))
+    fallback.ok_or_else(|| {
+        AppError::NotFound(format!("No {channel} integration found for this assistant"))
+    })
 }
 
 pub async fn playground_chat(
@@ -1395,29 +2031,38 @@ pub async fn playground_chat(
     user_message: &str,
 ) -> Result<PlaygroundResponse, AppError> {
     // Resolve assistant — ownership first, then any token fallback
-    let assistant = match crate::services::assistant::get_assistant(db, requesting_user_id, assistant_id).await {
-        Ok(a) => a,
-        Err(_) => {
-            let token = share_token
-                .ok_or_else(|| AppError::NotFound("Assistant not found".into()))?;
-            let (a, _perms) = crate::services::assistant::get_by_any_token(db, token).await?;
-            if a.id != *assistant_id {
-                return Err(AppError::NotFound("Assistant not found".into()));
+    let assistant =
+        match crate::services::assistant::get_assistant(db, requesting_user_id, assistant_id).await
+        {
+            Ok(a) => a,
+            Err(_) => {
+                let token =
+                    share_token.ok_or_else(|| AppError::NotFound("Assistant not found".into()))?;
+                let (a, _perms) = crate::services::assistant::get_by_any_token(db, token).await?;
+                if a.id != *assistant_id {
+                    return Err(AppError::NotFound("Assistant not found".into()));
+                }
+                a
             }
-            a
-        }
-    };
+        };
 
     // Always use the OWNER's (workspace's) credentials — never the requesting user's
     let owner_id = assistant.user_id;
-    let api_key = crate::services::workspace::get_decrypted_api_key(db, encryption, &owner_id, &assistant.llm_provider).await?;
+    let api_key = crate::services::workspace::get_decrypted_api_key(
+        db,
+        encryption,
+        &owner_id,
+        &assistant.llm_provider,
+    )
+    .await?;
 
     // Contact distinguishes who is chatting; use hashed ID to avoid exposing the real UUID
     use sha2::Digest;
     let hash = sha2::Sha256::digest(requesting_user_id.as_bytes());
     let contact = format!("playground-{}", &hex::encode(hash)[..12]);
     let conversation =
-        get_or_create_conversation(db, assistant_id, &owner_id, &contact, "playground", None).await?;
+        get_or_create_conversation(db, assistant_id, &owner_id, &contact, "playground", None)
+            .await?;
 
     save_message(db, &conversation.id, "user", user_message, None, None, None).await?;
 
@@ -1425,8 +2070,15 @@ pub async fn playground_chat(
 
     // RAG: retrieve relevant context (use owner's files)
     let rag_contexts = crate::services::rag::retrieve_context(
-        db, encryption, &owner_id, assistant_id, user_message, 3,
-    ).await.unwrap_or_default();
+        db,
+        encryption,
+        &owner_id,
+        assistant_id,
+        user_message,
+        3,
+    )
+    .await
+    .unwrap_or_default();
 
     let mut llm_messages = Vec::new();
     if let Some(system_prompt) = &assistant.system_prompt {
@@ -1438,17 +2090,32 @@ pub async fn playground_chat(
                 prompt.push_str("\n---\n");
             }
         }
-        llm_messages.push(LlmMessage { role: "system".into(), content: prompt, media_base64: None, media_mime_type: None });
+        llm_messages.push(LlmMessage {
+            role: "system".into(),
+            content: prompt,
+            media_base64: None,
+            media_mime_type: None,
+        });
     } else if !rag_contexts.is_empty() {
         let mut prompt = "Use the following knowledge base context to help answer:\n\n".to_string();
         for ctx in &rag_contexts {
             prompt.push_str(ctx);
             prompt.push_str("\n---\n");
         }
-        llm_messages.push(LlmMessage { role: "system".into(), content: prompt, media_base64: None, media_mime_type: None });
+        llm_messages.push(LlmMessage {
+            role: "system".into(),
+            content: prompt,
+            media_base64: None,
+            media_mime_type: None,
+        });
     }
     for msg in &history {
-        llm_messages.push(LlmMessage { role: msg.role.clone(), content: msg.content.clone().unwrap_or_default(), media_base64: None, media_mime_type: None });
+        llm_messages.push(LlmMessage {
+            role: msg.role.clone(),
+            content: msg.content.clone().unwrap_or_default(),
+            media_base64: None,
+            media_mime_type: None,
+        });
     }
 
     // Load enabled tools
@@ -1468,9 +2135,16 @@ pub async fn playground_chat(
         encryption: None,
     };
     let llm_response = llm::call_llm_with_tools_ctx(
-        &assistant.llm_provider, &assistant.model, &api_key,
-        llm_messages, assistant.temperature, assistant.max_tokens, &llm_tools, &tool_ctx,
-    ).await?;
+        &assistant.llm_provider,
+        &assistant.model,
+        &api_key,
+        llm_messages,
+        assistant.temperature,
+        assistant.max_tokens,
+        &llm_tools,
+        &tool_ctx,
+    )
+    .await?;
 
     // Save tool call logs
     for record in &llm_response.tool_call_records {
@@ -1486,13 +2160,24 @@ pub async fn playground_chat(
                 record.response_body.as_deref(),
                 record.error.as_deref(),
                 record.duration_ms,
-            ).await {
+            )
+            .await
+            {
                 tracing::error!(tool = %record.tool_name, error = %e, "Failed to save tool call log");
             }
         }
     }
 
-    save_message(db, &conversation.id, "assistant", &llm_response.content, None, None, Some(llm_response.tokens_used)).await?;
+    save_message(
+        db,
+        &conversation.id,
+        "assistant",
+        &llm_response.content,
+        None,
+        None,
+        Some(llm_response.tokens_used),
+    )
+    .await?;
 
     let now = ts_now();
     db.query_unpaged(
@@ -1503,7 +2188,9 @@ pub async fn playground_chat(
     update_usage_stats(db, &owner_id, assistant_id, llm_response.tokens_used, false).await?;
 
     let replies = if assistant.config_split_messages {
-        llm_response.content.split("\n\n")
+        llm_response
+            .content
+            .split("\n\n")
             .filter(|s| !s.trim().is_empty())
             .map(|s| s.to_string())
             .collect()
@@ -1515,17 +2202,42 @@ pub async fn playground_chat(
     let audio_mode = assistant.config_audio_mode.as_deref().unwrap_or("disabled");
     let audio_base64 = if audio_mode == "always" || audio_mode == "audio_to_audio" {
         if let Some(voice_id) = &assistant.config_audio_voice_id {
-            let audio_provider = assistant.config_audio_provider.as_deref().unwrap_or("elevenlabs");
-            let tts_provider_key = if audio_provider == "openai" { "openai" } else { "elevenlabs" };
-            let tts_key_opt = crate::services::workspace::get_decrypted_api_key(db, encryption, &owner_id, tts_provider_key).await.ok();
+            let audio_provider = assistant
+                .config_audio_provider
+                .as_deref()
+                .unwrap_or("elevenlabs");
+            let tts_provider_key = if audio_provider == "openai" {
+                "openai"
+            } else {
+                "elevenlabs"
+            };
+            let tts_key_opt = crate::services::workspace::get_decrypted_api_key(
+                db,
+                encryption,
+                &owner_id,
+                tts_provider_key,
+            )
+            .await
+            .ok();
             if let Some(api_key) = tts_key_opt {
                 let tts_result = match audio_provider {
-                    "openai" => crate::services::openai_audio::text_to_speech(
-                        &api_key, voice_id, &llm_response.content
-                    ).await,
-                    _ => crate::services::elevenlabs::text_to_speech(
-                        &api_key, voice_id, &llm_response.content, "mp3_44100_128"
-                    ).await,
+                    "openai" => {
+                        crate::services::openai_audio::text_to_speech(
+                            &api_key,
+                            voice_id,
+                            &llm_response.content,
+                        )
+                        .await
+                    }
+                    _ => {
+                        crate::services::elevenlabs::text_to_speech(
+                            &api_key,
+                            voice_id,
+                            &llm_response.content,
+                            "mp3_44100_128",
+                        )
+                        .await
+                    }
                 };
                 match tts_result {
                     Ok(bytes) => Some(BASE64.encode(&bytes)),
@@ -1566,15 +2278,23 @@ pub struct PlaygroundResponse {
 /// Send a "composing" (typing) presence indicator before sending a message.
 /// For Meta Official, `incoming_message_id` is required to send typing via the read receipt endpoint.
 async fn send_typing_indicator(
-    config: &Config, integration: &AssistantIntegration, contact_phone: &str,
+    config: &Config,
+    integration: &AssistantIntegration,
+    contact_phone: &str,
     incoming_message_id: Option<&str>,
 ) -> Result<(), AppError> {
     let client = Client::new();
-    let connection_phone = integration.config_phone_number.as_deref().unwrap_or_default();
+    let connection_phone = integration
+        .config_phone_number
+        .as_deref()
+        .unwrap_or_default();
     match integration.provider.as_str() {
         "baileys" => {
             let jid = format!("{}@s.whatsapp.net", contact_phone.trim_start_matches('+'));
-            let url = format!("{}/connections/{}/presence", config.baileys_url, connection_phone);
+            let url = format!(
+                "{}/connections/{}/presence",
+                config.baileys_url, connection_phone
+            );
             let resp = client
                 .patch(&url)
                 .header("x-api-key", &config.baileys_api_key)
@@ -1697,20 +2417,32 @@ async fn resolve_audio_bytes(
 /// - `contact_phone`: the phone of the person who sent the message (the recipient of the reply)
 /// Public wrapper for sending messages via provider (used by pix notification)
 pub async fn send_message_via_provider_public(
-    config: &Config, integration: &AssistantIntegration, contact_phone: &str, message: &str,
+    config: &Config,
+    integration: &AssistantIntegration,
+    contact_phone: &str,
+    message: &str,
 ) -> Result<(), AppError> {
     send_message_via_provider(config, integration, contact_phone, message).await
 }
 
 async fn send_message_via_provider(
-    config: &Config, integration: &AssistantIntegration, contact_phone: &str, message: &str,
+    config: &Config,
+    integration: &AssistantIntegration,
+    contact_phone: &str,
+    message: &str,
 ) -> Result<(), AppError> {
     let client = Client::new();
-    let connection_phone = integration.config_phone_number.as_deref().unwrap_or_default();
+    let connection_phone = integration
+        .config_phone_number
+        .as_deref()
+        .unwrap_or_default();
     match integration.provider.as_str() {
         "baileys" => {
             let jid = format!("{}@s.whatsapp.net", contact_phone.trim_start_matches('+'));
-            let url = format!("{}/connections/{}/send-message", config.baileys_url, connection_phone);
+            let url = format!(
+                "{}/connections/{}/send-message",
+                config.baileys_url, connection_phone
+            );
             let resp = client
                 .post(&url)
                 .header("x-api-key", &config.baileys_api_key)
@@ -1725,7 +2457,9 @@ async fn send_message_via_provider(
                 let status = resp.status();
                 let body = resp.text().await.unwrap_or_default();
                 tracing::error!("Baileys send-message failed: {status} {body}");
-                return Err(AppError::InternalError(format!("Baileys send failed: {status}")));
+                return Err(AppError::InternalError(format!(
+                    "Baileys send failed: {status}"
+                )));
             }
         }
         "meta_official" => {
@@ -1749,7 +2483,9 @@ async fn send_message_via_provider(
                 let status = resp.status();
                 let body = resp.text().await.unwrap_or_default();
                 tracing::error!("Meta send-message failed: {status} {body}");
-                return Err(AppError::InternalError(format!("Meta send failed: {status}")));
+                return Err(AppError::InternalError(format!(
+                    "Meta send failed: {status}"
+                )));
             }
         }
         "telegram" => {
@@ -1763,15 +2499,24 @@ async fn send_message_via_provider(
                 }))
                 .send()
                 .await
-                .map_err(|e| AppError::InternalError(format!("Failed to send via Telegram: {e}")))?;
+                .map_err(|e| {
+                    AppError::InternalError(format!("Failed to send via Telegram: {e}"))
+                })?;
             if !resp.status().is_success() {
                 let status = resp.status();
                 let body = resp.text().await.unwrap_or_default();
                 tracing::error!("Telegram sendMessage failed: {status} {body}");
-                return Err(AppError::InternalError(format!("Telegram send failed: {status}")));
+                return Err(AppError::InternalError(format!(
+                    "Telegram send failed: {status}"
+                )));
             }
         }
-        _ => return Err(AppError::BadRequest(format!("Unknown provider: {}", integration.provider))),
+        _ => {
+            return Err(AppError::BadRequest(format!(
+                "Unknown provider: {}",
+                integration.provider
+            )))
+        }
     }
 
     Ok(())
@@ -1798,12 +2543,22 @@ async fn send_responses_as_audio(
 
     let audio_bytes = match audio_provider {
         "openai" => {
-            let api_key = crate::services::workspace::get_decrypted_api_key(db, encryption, user_id, "openai").await?;
+            let api_key = crate::services::workspace::get_decrypted_api_key(
+                db, encryption, user_id, "openai",
+            )
+            .await?;
             crate::services::openai_audio::text_to_speech(&api_key, voice_id, text).await?
         }
         _ => {
-            let api_key = crate::services::workspace::get_decrypted_api_key(db, encryption, user_id, "elevenlabs").await?;
-            crate::services::elevenlabs::text_to_speech(&api_key, voice_id, text, elevenlabs_format).await?
+            let api_key = crate::services::workspace::get_decrypted_api_key(
+                db,
+                encryption,
+                user_id,
+                "elevenlabs",
+            )
+            .await?;
+            crate::services::elevenlabs::text_to_speech(&api_key, voice_id, text, elevenlabs_format)
+                .await?
         }
     };
 
@@ -1818,7 +2573,10 @@ async fn send_audio_via_provider(
     mime: &str,
 ) -> Result<(), AppError> {
     let client = Client::new();
-    let connection_phone = integration.config_phone_number.as_deref().unwrap_or_default();
+    let connection_phone = integration
+        .config_phone_number
+        .as_deref()
+        .unwrap_or_default();
 
     match integration.provider.as_str() {
         "baileys" => {
@@ -1855,8 +2613,7 @@ async fn send_audio_via_provider(
             let phone_number_id = connection_phone;
 
             // Step 1: upload media to Meta
-            let media_url =
-                format!("https://graph.facebook.com/v21.0/{phone_number_id}/media");
+            let media_url = format!("https://graph.facebook.com/v21.0/{phone_number_id}/media");
             let file_part = reqwest::multipart::Part::bytes(audio_bytes.to_vec())
                 .file_name("audio.mp3")
                 .mime_str(mime)
@@ -1891,8 +2648,7 @@ async fn send_audio_via_provider(
                 .ok_or_else(|| AppError::InternalError("No media_id in Meta response".into()))?;
 
             // Step 2: send audio message
-            let msg_url =
-                format!("https://graph.facebook.com/v21.0/{phone_number_id}/messages");
+            let msg_url = format!("https://graph.facebook.com/v21.0/{phone_number_id}/messages");
             let resp = client
                 .post(&msg_url)
                 .bearer_auth(access_token)
@@ -1952,7 +2708,13 @@ async fn send_audio_via_provider(
     Ok(())
 }
 
-async fn update_usage_stats(db: &DbSession, user_id: &Uuid, assistant_id: &Uuid, tokens: i32, rate_limited_path: bool) -> Result<(), AppError> {
+async fn update_usage_stats(
+    db: &DbSession,
+    user_id: &Uuid,
+    assistant_id: &Uuid,
+    tokens: i32,
+    rate_limited_path: bool,
+) -> Result<(), AppError> {
     let today = Utc::now().format("%Y-%m-%d").to_string();
 
     // Read current stats
@@ -1962,12 +2724,17 @@ async fn update_usage_stats(db: &DbSession, user_id: &Uuid, assistant_id: &Uuid,
     ).await.map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     let (current_tokens, current_messages) = result
-        .into_rows_result()?.maybe_first_row::<(i64, i64)>()?
+        .into_rows_result()?
+        .maybe_first_row::<(i64, i64)>()?
         .unwrap_or((0, 0));
 
     // If rate limit was checked (rate_limited_path=true), messages were already incremented atomically in is_rate_limited.
     // Only increment messages here if the rate limit path was NOT used.
-    let new_messages = if rate_limited_path { current_messages } else { current_messages + 2 };
+    let new_messages = if rate_limited_path {
+        current_messages
+    } else {
+        current_messages + 2
+    };
 
     db.query_unpaged(
         "INSERT INTO inertial_eclipse.usage_stats (user_id, assistant_id, period, total_tokens, total_messages) VALUES (?, ?, ?, ?, ?)",
@@ -2023,7 +2790,6 @@ pub async fn delete_conversation(
     Ok(())
 }
 
-
 #[derive(Debug, Serialize)]
 pub struct SummaryResponse {
     pub summary: String,
@@ -2045,17 +2811,30 @@ pub async fn summarize_conversation(
     // Get all messages (up to 200)
     let messages = get_recent_messages(db, conversation_id, 200).await?;
     if messages.is_empty() {
-        return Err(AppError::BadRequest("Conversa sem mensagens para resumir".into()));
+        return Err(AppError::BadRequest(
+            "Conversa sem mensagens para resumir".into(),
+        ));
     }
 
     // Get workspace API key for the chosen provider
-    let api_key = crate::services::workspace::get_decrypted_api_key(db, encryption, user_id, provider).await?;
+    let api_key =
+        crate::services::workspace::get_decrypted_api_key(db, encryption, user_id, provider)
+            .await?;
 
     // Build conversation transcript
     let mut transcript = String::new();
     for msg in &messages {
-        let role_label = if msg.role == "user" { "Cliente" } else { "Agente" };
-        transcript.push_str(&format!("[{}] {}: {}\n", msg.created_at.format("%d/%m %H:%M"), role_label, msg.content.as_deref().unwrap_or("")));
+        let role_label = if msg.role == "user" {
+            "Cliente"
+        } else {
+            "Agente"
+        };
+        transcript.push_str(&format!(
+            "[{}] {}: {}\n",
+            msg.created_at.format("%d/%m %H:%M"),
+            role_label,
+            msg.content.as_deref().unwrap_or("")
+        ));
     }
 
     let system_prompt = "Você é um analista especializado em atendimento ao cliente. Analise a conversa abaixo entre um Agente (IA) e um Cliente e forneça:\n\n\
@@ -2070,8 +2849,18 @@ pub async fn summarize_conversation(
         Responda em português brasileiro de forma clara e estruturada.";
 
     let llm_messages = vec![
-        LlmMessage { role: "system".into(), content: system_prompt.into(), media_base64: None, media_mime_type: None },
-        LlmMessage { role: "user".into(), content: format!("Conversa para análise:\n\n{transcript}"), media_base64: None, media_mime_type: None },
+        LlmMessage {
+            role: "system".into(),
+            content: system_prompt.into(),
+            media_base64: None,
+            media_mime_type: None,
+        },
+        LlmMessage {
+            role: "user".into(),
+            content: format!("Conversa para análise:\n\n{transcript}"),
+            media_base64: None,
+            media_mime_type: None,
+        },
     ];
 
     let response = llm::call_llm(provider, model, &api_key, llm_messages, 0.3, 2000).await?;
@@ -2149,7 +2938,10 @@ async fn send_document_via_provider(
     caption: Option<&str>,
     filename: Option<&str>,
 ) -> Result<(), AppError> {
-    let connection_phone = integration.config_phone_number.as_deref().unwrap_or_default();
+    let connection_phone = integration
+        .config_phone_number
+        .as_deref()
+        .unwrap_or_default();
 
     match integration.provider.as_str() {
         "baileys" => {
@@ -2158,7 +2950,10 @@ async fn send_document_via_provider(
             let b64 = BASE64.encode(&bytes);
 
             let jid = format!("{}@s.whatsapp.net", contact_phone.trim_start_matches('+'));
-            let api_url = format!("{}/connections/{}/send-message", config.baileys_url, connection_phone);
+            let api_url = format!(
+                "{}/connections/{}/send-message",
+                config.baileys_url, connection_phone
+            );
 
             let message_content = if is_image {
                 json!({
@@ -2186,12 +2981,16 @@ async fn send_document_via_provider(
                 }))
                 .send()
                 .await
-                .map_err(|e| AppError::InternalError(format!("Failed to send document via baileys: {e}")))?;
+                .map_err(|e| {
+                    AppError::InternalError(format!("Failed to send document via baileys: {e}"))
+                })?;
             if !resp.status().is_success() {
                 let status = resp.status();
                 let body = resp.text().await.unwrap_or_default();
                 tracing::error!("Baileys send-document failed: {status} {body}");
-                return Err(AppError::InternalError(format!("Baileys send-document failed: {status}")));
+                return Err(AppError::InternalError(format!(
+                    "Baileys send-document failed: {status}"
+                )));
             }
         }
         "meta_official" => {
@@ -2236,12 +3035,16 @@ async fn send_document_via_provider(
                 .json(&body)
                 .send()
                 .await
-                .map_err(|e| AppError::InternalError(format!("Failed to send document via Meta: {e}")))?;
+                .map_err(|e| {
+                    AppError::InternalError(format!("Failed to send document via Meta: {e}"))
+                })?;
             if !resp.status().is_success() {
                 let status = resp.status();
                 let body = resp.text().await.unwrap_or_default();
                 tracing::error!("Meta send-document failed: {status} {body}");
-                return Err(AppError::InternalError(format!("Meta send-document failed: {status}")));
+                return Err(AppError::InternalError(format!(
+                    "Meta send-document failed: {status}"
+                )));
             }
         }
         "telegram" => {
@@ -2270,15 +3073,24 @@ async fn send_document_via_provider(
                 .json(&body)
                 .send()
                 .await
-                .map_err(|e| AppError::InternalError(format!("Failed to send document via Telegram: {e}")))?;
+                .map_err(|e| {
+                    AppError::InternalError(format!("Failed to send document via Telegram: {e}"))
+                })?;
             if !resp.status().is_success() {
                 let status = resp.status();
                 let body = resp.text().await.unwrap_or_default();
                 tracing::error!("Telegram {method} failed: {status} {body}");
-                return Err(AppError::InternalError(format!("Telegram {method} failed: {status}")));
+                return Err(AppError::InternalError(format!(
+                    "Telegram {method} failed: {status}"
+                )));
             }
         }
-        _ => return Err(AppError::BadRequest(format!("Unknown provider: {}", integration.provider))),
+        _ => {
+            return Err(AppError::BadRequest(format!(
+                "Unknown provider: {}",
+                integration.provider
+            )))
+        }
     }
 
     tracing::info!(provider = %integration.provider, url = %url, "Document sent via tool");
@@ -2294,12 +3106,18 @@ async fn send_pix_qr_via_provider(
     qr_base64: &str,
     caption: &str,
 ) -> Result<(), AppError> {
-    let connection_phone = integration.config_phone_number.as_deref().unwrap_or_default();
+    let connection_phone = integration
+        .config_phone_number
+        .as_deref()
+        .unwrap_or_default();
 
     match integration.provider.as_str() {
         "baileys" => {
             let jid = format!("{}@s.whatsapp.net", contact_phone.trim_start_matches('+'));
-            let api_url = format!("{}/connections/{}/send-message", config.baileys_url, connection_phone);
+            let api_url = format!(
+                "{}/connections/{}/send-message",
+                config.baileys_url, connection_phone
+            );
 
             let client = Client::new();
             let resp = client
@@ -2315,18 +3133,24 @@ async fn send_pix_qr_via_provider(
                 }))
                 .send()
                 .await
-                .map_err(|e| AppError::InternalError(format!("Failed to send PIX QR via baileys: {e}")))?;
+                .map_err(|e| {
+                    AppError::InternalError(format!("Failed to send PIX QR via baileys: {e}"))
+                })?;
             if !resp.status().is_success() {
                 let status = resp.status();
                 let body = resp.text().await.unwrap_or_default();
                 tracing::error!("Baileys send PIX QR failed: {status} {body}");
-                return Err(AppError::InternalError(format!("Baileys send PIX QR failed: {status}")));
+                return Err(AppError::InternalError(format!(
+                    "Baileys send PIX QR failed: {status}"
+                )));
             }
         }
         "meta_official" => {
             // Meta Official API doesn't support base64 directly
             // Send the copia-e-cola as a text message instead
-            if let Err(e) = send_message_via_provider(config, integration, contact_phone, caption).await {
+            if let Err(e) =
+                send_message_via_provider(config, integration, contact_phone, caption).await
+            {
                 tracing::error!(error = %e, "Failed to send PIX text via Meta Official");
                 return Err(e);
             }
@@ -2347,8 +3171,14 @@ async fn send_pix_qr_via_provider(
                     .part("photo", part);
 
                 let client = Client::new();
-                let resp = client.post(&api_url).multipart(form).send().await
-                    .map_err(|e| AppError::InternalError(format!("Failed to send PIX QR via Telegram: {e}")))?;
+                let resp = client
+                    .post(&api_url)
+                    .multipart(form)
+                    .send()
+                    .await
+                    .map_err(|e| {
+                        AppError::InternalError(format!("Failed to send PIX QR via Telegram: {e}"))
+                    })?;
                 if !resp.status().is_success() {
                     let status = resp.status();
                     let body = resp.text().await.unwrap_or_default();
@@ -2375,13 +3205,14 @@ async fn notify_human_agent(
     contact_phone: &str,
 ) -> Result<(), AppError> {
     let title = format!("Solicitação de Agente Humano - {assistant_name}");
-    let message = format!(
-        "Contato {contact_phone} precisa de atendimento humano. Motivo: {reason}"
-    );
+    let message =
+        format!("Contato {contact_phone} precisa de atendimento humano. Motivo: {reason}");
 
     // Notify assistant owner (resolve workspace → owner)
     let ws_owner_id = crate::services::workspace::get_workspace(db, owner_user_id)
-        .await.map(|ws| ws.owner_id).unwrap_or(*owner_user_id);
+        .await
+        .map(|ws| ws.owner_id)
+        .unwrap_or(*owner_user_id);
     let owner = crate::services::auth::get_user_by_id(db, &ws_owner_id).await?;
     // Notify all workspace members
     let _ = crate::services::notification::notify_workspace_members(
@@ -2407,8 +3238,7 @@ async fn notify_human_agent(
     }
 
     // Notify all users with accepted share tokens
-    let token_users =
-        crate::services::assistant::list_token_users(db, assistant_id).await?;
+    let token_users = crate::services::assistant::list_token_users(db, assistant_id).await?;
     for user in &token_users {
         crate::services::notification::create_notification(
             db,
@@ -2456,7 +3286,10 @@ async fn notify_appointment_event(
     let message = format!(
         "{} | {} em {} | Cliente: {} ({})",
         title,
-        appointment.appointment_type.as_deref().unwrap_or("Agendamento"),
+        appointment
+            .appointment_type
+            .as_deref()
+            .unwrap_or("Agendamento"),
         appointment.date_time.format("%d/%m/%Y %H:%M"),
         appointment.client_name,
         appointment.client_phone,
@@ -2464,7 +3297,9 @@ async fn notify_appointment_event(
 
     // Notify assistant owner (resolve workspace → owner)
     let ws_owner_id2 = crate::services::workspace::get_workspace(db, owner_user_id)
-        .await.map(|ws| ws.owner_id).unwrap_or(*owner_user_id);
+        .await
+        .map(|ws| ws.owner_id)
+        .unwrap_or(*owner_user_id);
     let owner = crate::services::auth::get_user_by_id(db, &ws_owner_id2).await?;
     // Notify all workspace members
     let _ = crate::services::notification::notify_workspace_members(
@@ -2497,8 +3332,7 @@ async fn notify_appointment_event(
     }
 
     // Notify all users with accepted share tokens
-    let token_users =
-        crate::services::assistant::list_token_users(db, assistant_id).await?;
+    let token_users = crate::services::assistant::list_token_users(db, assistant_id).await?;
     for user in &token_users {
         crate::services::notification::create_notification(
             db,

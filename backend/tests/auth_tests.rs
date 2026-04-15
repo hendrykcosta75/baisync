@@ -104,7 +104,9 @@ async fn update_profile() {
     let token = app.register_user("Old Name", &email, "Password123!").await;
 
     let body = serde_json::json!({ "name": "New Name" });
-    let response = app.put_authenticated("/api/user/profile", &body, &token).await;
+    let response = app
+        .put_authenticated("/api/user/profile", &body, &token)
+        .await;
     assert_eq!(response.status(), 200);
 
     let json: serde_json::Value = response.json().await.unwrap();

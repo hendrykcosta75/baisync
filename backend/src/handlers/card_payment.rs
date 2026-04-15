@@ -37,9 +37,10 @@ pub async fn webhook_stripe(
 
     // Validation: process_stripe_webhook verifies the session exists in our DB
     // (only charges we created will match), so spoofed events are harmlessly ignored.
-    if let Err(e) = crate::services::card_payment::process_stripe_webhook(
-        &db, &config, &event_bus, &payload,
-    ).await {
+    if let Err(e) =
+        crate::services::card_payment::process_stripe_webhook(&db, &config, &event_bus, &payload)
+            .await
+    {
         tracing::error!(error = %e, "Failed to process Stripe webhook");
     }
 
@@ -79,8 +80,14 @@ pub async fn webhook_mercadopago_card(
     }
 
     if let Err(e) = crate::services::card_payment::process_mp_card_webhook(
-        &db, &config, &encryption, &event_bus, &mp_id,
-    ).await {
+        &db,
+        &config,
+        &encryption,
+        &event_bus,
+        &mp_id,
+    )
+    .await
+    {
         tracing::error!(error = %e, mp_payment_id = %mp_id, "Failed to process MP card webhook");
     }
 
@@ -100,7 +107,20 @@ pub async fn get_charge_info(
     ).await.map_err(|e| AppError::DatabaseError(format!("Failed to query charge: {e}")))?;
 
     let row = result
-        .into_rows_result()?.maybe_first_row::<(Uuid, Uuid, Option<f64>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<i32>)>()?
+        .into_rows_result()?
+        .maybe_first_row::<(
+            Uuid,
+            Uuid,
+            Option<f64>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<i32>,
+        )>()?
         .ok_or_else(|| AppError::NotFound("Cobranca nao encontrada".into()))?;
 
     let user_id = row.0;
@@ -111,8 +131,12 @@ pub async fn get_charge_info(
 
     // Fetch user's public key for the payment provider
     let public_key = match card_mode.as_str() {
-        "stripe" => crate::services::card_payment::get_user_stripe_public_key(&db, &user_id).await.unwrap_or(None),
-        "mercadopago" => crate::services::card_payment::get_user_mp_public_key(&db, &user_id).await.unwrap_or(None),
+        "stripe" => crate::services::card_payment::get_user_stripe_public_key(&db, &user_id)
+            .await
+            .unwrap_or(None),
+        "mercadopago" => crate::services::card_payment::get_user_mp_public_key(&db, &user_id)
+            .await
+            .unwrap_or(None),
         _ => None,
     };
 
@@ -152,7 +176,17 @@ pub async fn process_mp_card_payment(
     ).await.map_err(|e| AppError::DatabaseError(format!("Failed to query charge: {e}")))?;
 
     let row = result
-        .into_rows_result()?.maybe_first_row::<(Uuid, Uuid, Option<f64>, Option<String>, Option<String>, Option<String>, Option<String>, Option<i32>)>()?
+        .into_rows_result()?
+        .maybe_first_row::<(
+            Uuid,
+            Uuid,
+            Option<f64>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<i32>,
+        )>()?
         .ok_or_else(|| AppError::NotFound("Cobranca nao encontrada".into()))?;
 
     let user_id = row.0;
@@ -166,7 +200,8 @@ pub async fn process_mp_card_payment(
     }
 
     // Get user's MP access token
-    let token = crate::services::pix::get_user_mp_token(&db, &encryption, &user_id).await?
+    let token = crate::services::pix::get_user_mp_token(&db, &encryption, &user_id)
+        .await?
         .ok_or_else(|| AppError::InternalError("Token MP nao encontrado".into()))?;
 
     tracing::info!(
@@ -186,17 +221,29 @@ pub async fn process_mp_card_payment(
     mp_body["installments"] = serde_json::json!(charge_installments);
 
     // Ensure required fields exist
-    if body.get("token").and_then(|v| v.as_str()).unwrap_or("").is_empty() {
+    if body
+        .get("token")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .is_empty()
+    {
         return Err(AppError::BadRequest("Token do cartao nao fornecido".into()));
     }
 
     // Ensure payer.email exists (required by MP API, but Bricks doesn't always send it)
-    if mp_body.get("payer").and_then(|p| p.get("email")).and_then(|v| v.as_str()).unwrap_or("").is_empty() {
+    if mp_body
+        .get("payer")
+        .and_then(|p| p.get("email"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .is_empty()
+    {
         if mp_body.get("payer").is_none() {
             mp_body["payer"] = serde_json::json!({});
         }
         // Use the platform owner's email from the user record
-        let user_email = crate::services::auth::get_user_by_id(&db, &user_id).await
+        let user_email = crate::services::auth::get_user_by_id(&db, &user_id)
+            .await
             .map(|u| u.email)
             .unwrap_or_else(|_| "pagamento@plataforma.com".to_string());
         mp_body["payer"]["email"] = serde_json::json!(user_email);
@@ -214,10 +261,15 @@ pub async fn process_mp_card_payment(
         .map_err(|e| AppError::InternalError(format!("Failed to create MP payment: {e}")))?;
 
     let resp_status = resp.status();
-    let resp_body: serde_json::Value = resp.json().await
+    let resp_body: serde_json::Value = resp
+        .json()
+        .await
         .map_err(|e| AppError::InternalError(format!("Failed to parse MP response: {e}")))?;
 
-    let mp_payment_status = resp_body.get("status").and_then(|v| v.as_str()).unwrap_or("pending");
+    let mp_payment_status = resp_body
+        .get("status")
+        .and_then(|v| v.as_str())
+        .unwrap_or("pending");
     let new_status = match mp_payment_status {
         "approved" => "approved",
         "pending" | "in_process" => "pending",
@@ -225,10 +277,17 @@ pub async fn process_mp_card_payment(
         _ => "pending",
     };
 
-    let status_detail = resp_body.get("status_detail").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let status_detail = resp_body
+        .get("status_detail")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
 
     if !resp_status.is_success() && mp_payment_status != "rejected" {
-        let msg = resp_body.get("message").and_then(|v| v.as_str()).unwrap_or("Erro desconhecido");
+        let msg = resp_body
+            .get("message")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Erro desconhecido");
         tracing::error!(status = %resp_status, msg = %msg, detail = %status_detail, body = %resp_body, "MP card payment failed");
         return Ok(Json(json!({
             "status": "rejected",
@@ -238,26 +297,42 @@ pub async fn process_mp_card_payment(
     }
 
     // Update charge status
-    let charge = crate::services::card_payment::check_charge_status(&db, &user_id, &charge_id, None).await?;
+    let charge =
+        crate::services::card_payment::check_charge_status(&db, &user_id, &charge_id, None).await?;
     crate::services::card_payment::update_charge_status(
-        &db, &user_id, &charge_id, &charge.assistant_id, charge.created_at, new_status,
-    ).await?;
+        &db,
+        &user_id,
+        &charge_id,
+        &charge.assistant_id,
+        charge.created_at,
+        new_status,
+    )
+    .await?;
 
     // Notify if approved
     if new_status == "approved" {
-        let updated_charge = crate::services::card_payment::check_charge_status(&db, &user_id, &charge_id, None).await?;
-        crate::services::card_payment::notify_card_payment_confirmed(&db, &config, &updated_charge).await;
+        let updated_charge =
+            crate::services::card_payment::check_charge_status(&db, &user_id, &charge_id, None)
+                .await?;
+        crate::services::card_payment::notify_card_payment_confirmed(&db, &config, &updated_charge)
+            .await;
     }
 
     // Publish SSE
-    event_bus.publish(&user_id, crate::services::events::SseEvent {
-        event_type: "card_status_changed".into(),
-        data: serde_json::json!({
-            "chargeId": charge_id.to_string(),
-            "assistantId": charge.assistant_id.to_string(),
-            "status": new_status,
-        }).to_string(),
-    }).await;
+    event_bus
+        .publish(
+            &user_id,
+            crate::services::events::SseEvent {
+                event_type: "card_status_changed".into(),
+                data: serde_json::json!({
+                    "chargeId": charge_id.to_string(),
+                    "assistantId": charge.assistant_id.to_string(),
+                    "status": new_status,
+                })
+                .to_string(),
+            },
+        )
+        .await;
 
     Ok(Json(json!({
         "status": new_status,

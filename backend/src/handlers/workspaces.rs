@@ -65,7 +65,9 @@ pub async fn update(
 ) -> Result<Json<serde_json::Value>, AppError> {
     let role = ws_service::get_member_role(&db, &id, &auth_user.user_id).await?;
     if role != "owner" && role != "admin" {
-        return Err(AppError::Forbidden("Only owners and admins can update workspace".into()));
+        return Err(AppError::Forbidden(
+            "Only owners and admins can update workspace".into(),
+        ));
     }
     ws_service::update_workspace(&db, &id, &body.name).await?;
     let ws = ws_service::get_workspace(&db, &id).await?;
@@ -80,12 +82,16 @@ pub async fn delete(
 ) -> Result<Json<serde_json::Value>, AppError> {
     let role = ws_service::get_member_role(&db, &id, &auth_user.user_id).await?;
     if role != "owner" {
-        return Err(AppError::Forbidden("Only the owner can delete a workspace".into()));
+        return Err(AppError::Forbidden(
+            "Only the owner can delete a workspace".into(),
+        ));
     }
 
     let ws = ws_service::get_workspace(&db, &id).await?;
     if ws.workspace_type == "personal" {
-        return Err(AppError::BadRequest("Cannot delete personal workspace".into()));
+        return Err(AppError::BadRequest(
+            "Cannot delete personal workspace".into(),
+        ));
     }
 
     ws_service::delete_workspace(&db, &id).await?;
@@ -99,7 +105,9 @@ pub async fn delete(
         &jwt_secret,
     )?;
 
-    Ok(Json(serde_json::json!({ "success": true, "token": token, "workspace_id": auth_user.user_id })))
+    Ok(Json(
+        serde_json::json!({ "success": true, "token": token, "workspace_id": auth_user.user_id }),
+    ))
 }
 
 pub async fn switch(
@@ -116,7 +124,9 @@ pub async fn switch(
         &id,
         &jwt_secret,
     )?;
-    Ok(Json(serde_json::json!({ "token": token, "workspace_id": id })))
+    Ok(Json(
+        serde_json::json!({ "token": token, "workspace_id": id }),
+    ))
 }
 
 // ─── Members ───
@@ -140,25 +150,32 @@ pub async fn invite_member(
 ) -> Result<Json<serde_json::Value>, AppError> {
     let role = ws_service::get_member_role(&db, &id, &auth_user.user_id).await?;
     if role != "owner" && role != "admin" {
-        return Err(AppError::Forbidden("Only owners and admins can invite members".into()));
+        return Err(AppError::Forbidden(
+            "Only owners and admins can invite members".into(),
+        ));
     }
 
     let ws = ws_service::get_workspace(&db, &id).await?;
     if ws.workspace_type == "personal" {
-        return Err(AppError::BadRequest("Cannot invite members to personal workspace".into()));
+        return Err(AppError::BadRequest(
+            "Cannot invite members to personal workspace".into(),
+        ));
     }
 
-    let invite = ws_service::create_invite(&db, &id, &body.email, &body.role, &auth_user.user_id).await?;
+    let invite =
+        ws_service::create_invite(&db, &id, &body.email, &body.role, &auth_user.user_id).await?;
 
     // Send invite email
     let invite_url = format!("{}/workspace-invite?token={}", config.app_url, invite.token);
     let subject = format!("Convite para {} - Baisync", ws.name);
-    let body_html = crate::services::email::wrap_invite_email(&config, &ws.name, &invite.role, &invite_url);
+    let body_html =
+        crate::services::email::wrap_invite_email(&config, &ws.name, &invite.role, &invite_url);
 
     let config_clone = config.clone();
     let email = invite.email.clone();
     tokio::spawn(async move {
-        let _ = crate::services::email::send_email(&config_clone, &email, &subject, &body_html).await;
+        let _ =
+            crate::services::email::send_email(&config_clone, &email, &subject, &body_html).await;
     });
 
     Ok(Json(serde_json::json!({ "invite": invite })))
@@ -171,33 +188,46 @@ pub async fn remove_member(
 ) -> Result<Json<serde_json::Value>, AppError> {
     let role = ws_service::get_member_role(&db, &workspace_id, &auth_user.user_id).await?;
     if role != "owner" && role != "admin" {
-        return Err(AppError::Forbidden("Only owners and admins can remove members".into()));
+        return Err(AppError::Forbidden(
+            "Only owners and admins can remove members".into(),
+        ));
     }
 
     let ws = ws_service::get_workspace(&db, &workspace_id).await?;
     if ws.owner_id == user_id {
-        return Err(AppError::BadRequest("Cannot remove the workspace owner".into()));
+        return Err(AppError::BadRequest(
+            "Cannot remove the workspace owner".into(),
+        ));
     }
 
     ws_service::remove_member(&db, &workspace_id, &user_id).await?;
 
     // Reset removed user's active workspace to their personal workspace
-    let active_ws = ws_service::get_active_workspace_id(&db, &user_id).await.unwrap_or(user_id);
+    let active_ws = ws_service::get_active_workspace_id(&db, &user_id)
+        .await
+        .unwrap_or(user_id);
     if active_ws == workspace_id {
-        let _ = db.query_unpaged(
-            "UPDATE inertial_eclipse.users SET active_workspace_id = ? WHERE id = ?",
-            (&user_id, &user_id),
-        ).await;
+        let _ = db
+            .query_unpaged(
+                "UPDATE inertial_eclipse.users SET active_workspace_id = ? WHERE id = ?",
+                (&user_id, &user_id),
+            )
+            .await;
     }
 
     // Notify the removed user via SSE so their frontend redirects immediately
-    crate::services::events::publish_global(&user_id, crate::services::events::SseEvent {
-        event_type: "workspace_member_removed".into(),
-        data: serde_json::json!({
-            "workspace_id": workspace_id.to_string(),
-            "workspace_name": ws.name,
-        }).to_string(),
-    }).await;
+    crate::services::events::publish_global(
+        &user_id,
+        crate::services::events::SseEvent {
+            event_type: "workspace_member_removed".into(),
+            data: serde_json::json!({
+                "workspace_id": workspace_id.to_string(),
+                "workspace_name": ws.name,
+            })
+            .to_string(),
+        },
+    )
+    .await;
 
     Ok(Json(serde_json::json!({ "success": true })))
 }
@@ -210,11 +240,15 @@ pub async fn update_member_role(
 ) -> Result<Json<serde_json::Value>, AppError> {
     let role = ws_service::get_member_role(&db, &workspace_id, &auth_user.user_id).await?;
     if role != "owner" {
-        return Err(AppError::Forbidden("Only the owner can change roles".into()));
+        return Err(AppError::Forbidden(
+            "Only the owner can change roles".into(),
+        ));
     }
 
     if body.role != "admin" && body.role != "member" {
-        return Err(AppError::BadRequest("Role must be 'admin' or 'member'".into()));
+        return Err(AppError::BadRequest(
+            "Role must be 'admin' or 'member'".into(),
+        ));
     }
 
     ws_service::update_member_role(&db, &workspace_id, &user_id, &body.role).await?;
@@ -233,7 +267,9 @@ pub async fn accept_invite(
 
     // Verify email matches
     if invite.email != auth_user.email {
-        return Err(AppError::Forbidden("Invite email does not match your account".into()));
+        return Err(AppError::Forbidden(
+            "Invite email does not match your account".into(),
+        ));
     }
 
     ws_service::accept_invite(&db, &invite, &auth_user.user_id).await?;
@@ -242,7 +278,14 @@ pub async fn accept_invite(
     let channels = crate::services::channel::list_channels(&db, &invite.workspace_id).await?;
     for ch in &channels {
         if ch.name == "geral" && ch.channel_type == "public" {
-            let _ = crate::services::channel::add_member(&db, &ch.id, &auth_user.user_id, &invite.workspace_id, "member").await;
+            let _ = crate::services::channel::add_member(
+                &db,
+                &ch.id,
+                &auth_user.user_id,
+                &invite.workspace_id,
+                "member",
+            )
+            .await;
         }
     }
 
@@ -256,7 +299,9 @@ pub async fn accept_invite(
     )?;
 
     let ws = ws_service::get_workspace(&db, &invite.workspace_id).await?;
-    Ok(Json(serde_json::json!({ "workspace": ws, "token": new_token, "workspace_id": invite.workspace_id })))
+    Ok(Json(
+        serde_json::json!({ "workspace": ws, "token": new_token, "workspace_id": invite.workspace_id }),
+    ))
 }
 
 // ─── API Keys ───
@@ -287,7 +332,9 @@ pub async fn update_api_keys(
 ) -> Result<Json<WorkspaceApiKeysResponse>, AppError> {
     let role = ws_service::get_member_role(&db, &id, &auth_user.user_id).await?;
     if role != "owner" && role != "admin" {
-        return Err(AppError::Forbidden("Only owners and admins can update API keys".into()));
+        return Err(AppError::Forbidden(
+            "Only owners and admins can update API keys".into(),
+        ));
     }
 
     let keys = ws_service::update_api_keys(&db, &id, &encryption, &body).await?;

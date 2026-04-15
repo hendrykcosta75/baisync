@@ -50,16 +50,16 @@ pub async fn query_paged(
     query.set_page_size(page_size);
 
     let paging_state = match cursor {
-        Some(cursor_b64) => {
-            match B64.decode(cursor_b64) {
-                Ok(bytes) => PagingState::new_from_raw_bytes(bytes),
-                Err(_) => PagingState::start(),
-            }
-        }
+        Some(cursor_b64) => match B64.decode(cursor_b64) {
+            Ok(bytes) => PagingState::new_from_raw_bytes(bytes),
+            Err(_) => PagingState::start(),
+        },
         None => PagingState::start(),
     };
 
-    let (result, paging_response) = session.query_single_page(query, values, paging_state).await?;
+    let (result, paging_response) = session
+        .query_single_page(query, values, paging_state)
+        .await?;
 
     let next_cursor = match paging_response.into_paging_control_flow() {
         ControlFlow::Continue(next_state) => {

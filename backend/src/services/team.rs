@@ -1,6 +1,6 @@
-use std::collections::{HashMap, HashSet};
 use chrono::{DateTime, Utc};
 use scylla::frame::value::{CqlTimestamp, CqlTimeuuid};
+use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
 use crate::db::{self, DbSession};
@@ -57,10 +57,7 @@ pub async fn create_team(
     })
 }
 
-pub async fn list_teams(
-    db: &DbSession,
-    workspace_id: &Uuid,
-) -> Result<Vec<Team>, AppError> {
+pub async fn list_teams(db: &DbSession, workspace_id: &Uuid) -> Result<Vec<Team>, AppError> {
     let result = db
         .query_unpaged(
             "SELECT workspace_id, id, name, description, color, created_by, created_at, updated_at FROM inertial_eclipse.teams WHERE workspace_id = ?",
@@ -72,7 +69,19 @@ pub async fn list_teams(
     let rows = result.into_rows_result()?;
 
     let mut teams = Vec::new();
-    for row in rows.rows::<(Uuid, Uuid, Option<String>, Option<String>, Option<String>, Option<Uuid>, Option<DateTime<Utc>>, Option<DateTime<Utc>>)>()?.flatten() {
+    for row in rows
+        .rows::<(
+            Uuid,
+            Uuid,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<Uuid>,
+            Option<DateTime<Utc>>,
+            Option<DateTime<Utc>>,
+        )>()?
+        .flatten()
+    {
         teams.push(Team {
             workspace_id: row.0,
             id: row.1,
@@ -101,9 +110,16 @@ pub async fn get_team(
         .await
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
-    let row = result
-        .into_rows_result()?
-        .single_row::<(Uuid, Uuid, Option<String>, Option<String>, Option<String>, Option<Uuid>, Option<DateTime<Utc>>, Option<DateTime<Utc>>)>()?;
+    let row = result.into_rows_result()?.single_row::<(
+        Uuid,
+        Uuid,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<Uuid>,
+        Option<DateTime<Utc>>,
+        Option<DateTime<Utc>>,
+    )>()?;
 
     Ok(Team {
         workspace_id: row.0,
@@ -271,10 +287,7 @@ pub async fn remove_member(
     Ok(())
 }
 
-pub async fn list_members(
-    db: &DbSession,
-    team_id: &Uuid,
-) -> Result<Vec<TeamMember>, AppError> {
+pub async fn list_members(db: &DbSession, team_id: &Uuid) -> Result<Vec<TeamMember>, AppError> {
     let result = db
         .query_unpaged(
             "SELECT team_id, user_id, workspace_id, role, joined_at FROM inertial_eclipse.team_members WHERE team_id = ?",
@@ -286,7 +299,16 @@ pub async fn list_members(
     let rows = result.into_rows_result()?;
 
     let mut members = Vec::new();
-    for row in rows.rows::<(Uuid, Uuid, Option<Uuid>, Option<String>, Option<DateTime<Utc>>)>()?.flatten() {
+    for row in rows
+        .rows::<(
+            Uuid,
+            Uuid,
+            Option<Uuid>,
+            Option<String>,
+            Option<DateTime<Utc>>,
+        )>()?
+        .flatten()
+    {
         // Enrich with user info
         let (user_name, user_email) = get_user_info(db, &row.1).await;
         members.push(TeamMember {
@@ -320,7 +342,17 @@ pub async fn list_user_teams(
     let rows = result.into_rows_result()?;
 
     let mut teams = Vec::new();
-    for row in rows.rows::<(Uuid, Uuid, Uuid, Option<String>, Option<String>, Option<DateTime<Utc>>)>()?.flatten() {
+    for row in rows
+        .rows::<(
+            Uuid,
+            Uuid,
+            Uuid,
+            Option<String>,
+            Option<String>,
+            Option<DateTime<Utc>>,
+        )>()?
+        .flatten()
+    {
         teams.push(UserTeam {
             user_id: row.0,
             workspace_id: row.1,
@@ -377,9 +409,7 @@ pub async fn create_task(
         priority: priority.to_string(),
         assignee_id: assignee_id.copied(),
         created_by: *created_by,
-        due_date: due_date.map(|d| {
-            DateTime::from_timestamp_millis(d.0).unwrap_or(Utc::now())
-        }),
+        due_date: due_date.map(|d| DateTime::from_timestamp_millis(d.0).unwrap_or(Utc::now())),
         tags: tags.to_vec(),
         checklist_total: 0,
         checklist_done: 0,
@@ -392,10 +422,7 @@ pub async fn create_task(
     })
 }
 
-pub async fn list_tasks(
-    db: &DbSession,
-    team_id: &Uuid,
-) -> Result<Vec<Task>, AppError> {
+pub async fn list_tasks(db: &DbSession, team_id: &Uuid) -> Result<Vec<Task>, AppError> {
     let result = db
         .query_unpaged(
             "SELECT team_id, id, title, description, status, priority, assignee_id, due_date, tags, checklist_total, checklist_done, okr_objective_id, okr_key_result_id, position, created_at, updated_at FROM inertial_eclipse.tasks WHERE team_id = ?",
@@ -407,10 +434,22 @@ pub async fn list_tasks(
     // ScyllaDB FromRow supports max 16 tuple elements.
     // We select 16 columns (omit created_by, fetch separately if needed).
     type TaskRow = (
-        Uuid, Uuid, Option<String>, Option<String>, Option<String>, Option<String>,
-        Option<Uuid>, Option<DateTime<Utc>>, Option<Vec<String>>,
-        Option<i32>, Option<i32>, Option<Uuid>, Option<Uuid>, Option<i32>,
-        Option<DateTime<Utc>>, Option<DateTime<Utc>>,
+        Uuid,
+        Uuid,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<Uuid>,
+        Option<DateTime<Utc>>,
+        Option<Vec<String>>,
+        Option<i32>,
+        Option<i32>,
+        Option<Uuid>,
+        Option<Uuid>,
+        Option<i32>,
+        Option<DateTime<Utc>>,
+        Option<DateTime<Utc>>,
     );
 
     let rows = result.into_rows_result()?;
@@ -419,9 +458,7 @@ pub async fn list_tasks(
     let raw_rows: Vec<_> = rows.rows::<TaskRow>()?.flatten().collect();
 
     // Gather unique assignee IDs
-    let assignee_ids: HashSet<Uuid> = raw_rows.iter()
-        .filter_map(|row| row.6)
-        .collect();
+    let assignee_ids: HashSet<Uuid> = raw_rows.iter().filter_map(|row| row.6).collect();
 
     // Batch fetch user info
     let mut user_cache: HashMap<Uuid, Option<String>> = HashMap::new();
@@ -432,7 +469,9 @@ pub async fn list_tasks(
 
     let mut tasks = Vec::new();
     for row in raw_rows {
-        let assignee_name = row.6.and_then(|aid| user_cache.get(&aid).cloned().flatten());
+        let assignee_name = row
+            .6
+            .and_then(|aid| user_cache.get(&aid).cloned().flatten());
         tasks.push(task_from_row(row, assignee_name));
     }
 
@@ -441,10 +480,22 @@ pub async fn list_tasks(
 
 fn task_from_row(
     row: (
-        Uuid, Uuid, Option<String>, Option<String>, Option<String>, Option<String>,
-        Option<Uuid>, Option<DateTime<Utc>>, Option<Vec<String>>,
-        Option<i32>, Option<i32>, Option<Uuid>, Option<Uuid>, Option<i32>,
-        Option<DateTime<Utc>>, Option<DateTime<Utc>>,
+        Uuid,
+        Uuid,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<Uuid>,
+        Option<DateTime<Utc>>,
+        Option<Vec<String>>,
+        Option<i32>,
+        Option<i32>,
+        Option<Uuid>,
+        Option<Uuid>,
+        Option<i32>,
+        Option<DateTime<Utc>>,
+        Option<DateTime<Utc>>,
     ),
     assignee_name: Option<String>,
 ) -> Task {
@@ -470,11 +521,7 @@ fn task_from_row(
     }
 }
 
-pub async fn get_task(
-    db: &DbSession,
-    team_id: &Uuid,
-    task_id: &Uuid,
-) -> Result<Task, AppError> {
+pub async fn get_task(db: &DbSession, team_id: &Uuid, task_id: &Uuid) -> Result<Task, AppError> {
     let result = db
         .query_unpaged(
             "SELECT team_id, id, title, description, status, priority, assignee_id, due_date, tags, checklist_total, checklist_done, okr_objective_id, okr_key_result_id, position, created_at, updated_at FROM inertial_eclipse.tasks WHERE team_id = ? AND id = ?",
@@ -486,15 +533,25 @@ pub async fn get_task(
     // ScyllaDB FromRow supports max 16 tuple elements.
     // We select 16 columns (omit created_by, fetch separately if needed).
     type TaskRow = (
-        Uuid, Uuid, Option<String>, Option<String>, Option<String>, Option<String>,
-        Option<Uuid>, Option<DateTime<Utc>>, Option<Vec<String>>,
-        Option<i32>, Option<i32>, Option<Uuid>, Option<Uuid>, Option<i32>,
-        Option<DateTime<Utc>>, Option<DateTime<Utc>>,
+        Uuid,
+        Uuid,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<Uuid>,
+        Option<DateTime<Utc>>,
+        Option<Vec<String>>,
+        Option<i32>,
+        Option<i32>,
+        Option<Uuid>,
+        Option<Uuid>,
+        Option<i32>,
+        Option<DateTime<Utc>>,
+        Option<DateTime<Utc>>,
     );
 
-    let row = result
-        .into_rows_result()?
-        .single_row::<TaskRow>()?;
+    let row = result.into_rows_result()?.single_row::<TaskRow>()?;
 
     let assignee_name = if let Some(ref aid) = row.6 {
         let (name, _) = get_user_info(db, aid).await;
@@ -613,11 +670,7 @@ pub async fn move_task(
     Ok(())
 }
 
-pub async fn delete_task(
-    db: &DbSession,
-    team_id: &Uuid,
-    task_id: &Uuid,
-) -> Result<(), AppError> {
+pub async fn delete_task(db: &DbSession, team_id: &Uuid, task_id: &Uuid) -> Result<(), AppError> {
     // Delete comments first
     db.query_unpaged(
         "DELETE FROM inertial_eclipse.task_comments WHERE task_id = ?",
@@ -684,7 +737,17 @@ pub async fn list_comments(
     let rows = result.into_rows_result()?;
 
     let mut comments = Vec::new();
-    for row in rows.rows::<(Uuid, CqlTimeuuid, Option<Uuid>, Option<String>, Option<String>, Option<DateTime<Utc>>)>()?.flatten() {
+    for row in rows
+        .rows::<(
+            Uuid,
+            CqlTimeuuid,
+            Option<Uuid>,
+            Option<String>,
+            Option<String>,
+            Option<DateTime<Utc>>,
+        )>()?
+        .flatten()
+    {
         comments.push(TaskComment {
             task_id: row.0,
             id: Uuid::from(row.1),
@@ -746,7 +809,21 @@ pub async fn list_activity(
     let rows = result.into_rows_result()?;
 
     let mut entries = Vec::new();
-    for row in rows.rows::<(Uuid, CqlTimeuuid, Option<Uuid>, Option<String>, Option<String>, Option<String>, Option<Uuid>, Option<String>, Option<String>, Option<DateTime<Utc>>)>()?.flatten() {
+    for row in rows
+        .rows::<(
+            Uuid,
+            CqlTimeuuid,
+            Option<Uuid>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<Uuid>,
+            Option<String>,
+            Option<String>,
+            Option<DateTime<Utc>>,
+        )>()?
+        .flatten()
+    {
         entries.push(TeamActivityEntry {
             team_id: row.0,
             id: Uuid::from(row.1),
@@ -769,21 +846,28 @@ pub async fn list_activity(
 
 // ─── Stats Helpers ───
 
-pub async fn get_team_with_stats(
-    db: &DbSession,
-    team: Team,
-) -> Result<TeamWithStats, AppError> {
+pub async fn get_team_with_stats(db: &DbSession, team: Team) -> Result<TeamWithStats, AppError> {
     let members = list_members(db, &team.id).await?;
     let tasks = list_tasks(db, &team.id).await?;
 
-    let open = tasks.iter().filter(|t| t.status == "backlog" || t.status == "todo").count() as i32;
-    let in_progress = tasks.iter().filter(|t| t.status == "in_progress" || t.status == "in_review").count() as i32;
+    let open = tasks
+        .iter()
+        .filter(|t| t.status == "backlog" || t.status == "todo")
+        .count() as i32;
+    let in_progress = tasks
+        .iter()
+        .filter(|t| t.status == "in_progress" || t.status == "in_review")
+        .count() as i32;
     let done = tasks.iter().filter(|t| t.status == "done").count() as i32;
 
     Ok(TeamWithStats {
         team,
         member_count: members.len() as i32,
-        task_counts: TaskCounts { open, in_progress, done },
+        task_counts: TaskCounts {
+            open,
+            in_progress,
+            done,
+        },
         okr_progress: None,
     })
 }
@@ -860,7 +944,20 @@ pub async fn list_task_attachments(
     let rows = result.into_rows_result()?;
 
     let mut attachments = Vec::new();
-    for row in rows.rows::<(Uuid, Uuid, Option<Uuid>, Option<String>, Option<i64>, Option<String>, Option<Uuid>, Option<String>, Option<DateTime<Utc>>)>()?.flatten() {
+    for row in rows
+        .rows::<(
+            Uuid,
+            Uuid,
+            Option<Uuid>,
+            Option<String>,
+            Option<i64>,
+            Option<String>,
+            Option<Uuid>,
+            Option<String>,
+            Option<DateTime<Utc>>,
+        )>()?
+        .flatten()
+    {
         attachments.push(TaskAttachment {
             task_id: row.0,
             id: row.1,

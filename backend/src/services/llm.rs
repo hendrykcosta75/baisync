@@ -115,7 +115,11 @@ fn extract_placeholders(s: &str) -> Vec<String> {
 }
 
 /// Build a JSON Schema from placeholder variables found in endpoint, headers, and body.
-fn auto_schema_from_placeholders(endpoint: &str, headers: Option<&str>, body: Option<&str>) -> Value {
+fn auto_schema_from_placeholders(
+    endpoint: &str,
+    headers: Option<&str>,
+    body: Option<&str>,
+) -> Value {
     let mut vars = extract_placeholders(endpoint);
     if let Some(h) = headers {
         for v in extract_placeholders(h) {
@@ -161,7 +165,10 @@ impl From<&AssistantTool> for LlmTool {
                 return Self {
                     id: Some(t.id),
                     name: sanitize_tool_name(&t.name),
-                    description: t.description.clone().unwrap_or_else(|| "Envia um documento ou imagem na conversa".to_string()),
+                    description: t
+                        .description
+                        .clone()
+                        .unwrap_or_else(|| "Envia um documento ou imagem na conversa".to_string()),
                     parameters: json!({
                         "type": "object",
                         "properties": {
@@ -353,44 +360,50 @@ impl From<&AssistantTool> for LlmTool {
             .as_deref()
             .and_then(|s| serde_json::from_str::<Value>(s).ok())
             .and_then(|v| {
-                if v.get("__extended").and_then(|e| e.as_bool()).unwrap_or(false) {
-                    body_content = v.get("bodyContent")
+                if v.get("__extended")
+                    .and_then(|e| e.as_bool())
+                    .unwrap_or(false)
+                {
+                    body_content = v
+                        .get("bodyContent")
                         .and_then(|b| b.as_str())
                         .map(|s| s.to_string());
                     auth = v.get("auth").cloned();
-                    query_params = v.get("queryParams")
-                        .and_then(|qp| qp.as_array())
-                        .cloned();
-                    body_content_type = v.get("bodyContentType")
+                    query_params = v.get("queryParams").and_then(|qp| qp.as_array()).cloned();
+                    body_content_type = v
+                        .get("bodyContentType")
                         .and_then(|b| b.as_str())
                         .map(|s| s.to_string());
 
-                    v.get("schema")
-                        .and_then(|s| {
-                            if s.is_string() {
-                                serde_json::from_str(s.as_str().unwrap()).ok()
-                            } else if s.is_object() {
-                                Some(s.clone())
-                            } else {
-                                None
-                            }
-                        })
+                    v.get("schema").and_then(|s| {
+                        if s.is_string() {
+                            serde_json::from_str(s.as_str().unwrap()).ok()
+                        } else if s.is_object() {
+                            Some(s.clone())
+                        } else {
+                            None
+                        }
+                    })
                 } else {
                     Some(v)
                 }
             });
 
         let parameters = match &user_schema {
-            Some(schema) if schema.get("properties").and_then(|p| p.as_object()).map(|o| !o.is_empty()).unwrap_or(false) => {
+            Some(schema)
+                if schema
+                    .get("properties")
+                    .and_then(|p| p.as_object())
+                    .map(|o| !o.is_empty())
+                    .unwrap_or(false) =>
+            {
                 schema.clone()
             }
-            _ => {
-                auto_schema_from_placeholders(
-                    &t.endpoint,
-                    t.headers_json.as_deref(),
-                    body_content.as_deref(),
-                )
-            }
+            _ => auto_schema_from_placeholders(
+                &t.endpoint,
+                t.headers_json.as_deref(),
+                body_content.as_deref(),
+            ),
         };
 
         Self {
@@ -418,7 +431,16 @@ pub async fn call_llm(
     temperature: f32,
     max_tokens: i32,
 ) -> Result<LlmResponse, AppError> {
-    call_llm_with_tools(provider, model, api_key, messages, temperature, max_tokens, &[]).await
+    call_llm_with_tools(
+        provider,
+        model,
+        api_key,
+        messages,
+        temperature,
+        max_tokens,
+        &[],
+    )
+    .await
 }
 
 pub async fn call_llm_with_tools(
@@ -430,8 +452,25 @@ pub async fn call_llm_with_tools(
     max_tokens: i32,
     tools: &[LlmTool],
 ) -> Result<LlmResponse, AppError> {
-    let ctx = ToolContext { db: None, assistant_id: None, user_id: None, conversation_id: None, config: None, encryption: None };
-    call_llm_with_tools_ctx(provider, model, api_key, messages, temperature, max_tokens, tools, &ctx).await
+    let ctx = ToolContext {
+        db: None,
+        assistant_id: None,
+        user_id: None,
+        conversation_id: None,
+        config: None,
+        encryption: None,
+    };
+    call_llm_with_tools_ctx(
+        provider,
+        model,
+        api_key,
+        messages,
+        temperature,
+        max_tokens,
+        tools,
+        &ctx,
+    )
+    .await
 }
 
 pub async fn call_llm_with_tools_ctx(
@@ -447,10 +486,38 @@ pub async fn call_llm_with_tools_ctx(
     let client = Client::new();
 
     match provider {
-        "openai" => call_openai_with_tools(&client, api_key, model, messages, temperature, max_tokens, tools, ctx).await,
-        "claude" => call_claude_with_tools(&client, api_key, model, messages, temperature, max_tokens, tools, ctx).await,
-        "gemini" => call_gemini_with_tools(&client, api_key, model, messages, temperature, max_tokens).await,
-        _ => Err(AppError::BadRequest(format!("Unknown LLM provider: {provider}"))),
+        "openai" => {
+            call_openai_with_tools(
+                &client,
+                api_key,
+                model,
+                messages,
+                temperature,
+                max_tokens,
+                tools,
+                ctx,
+            )
+            .await
+        }
+        "claude" => {
+            call_claude_with_tools(
+                &client,
+                api_key,
+                model,
+                messages,
+                temperature,
+                max_tokens,
+                tools,
+                ctx,
+            )
+            .await
+        }
+        "gemini" => {
+            call_gemini_with_tools(&client, api_key, model, messages, temperature, max_tokens).await
+        }
+        _ => Err(AppError::BadRequest(format!(
+            "Unknown LLM provider: {provider}"
+        ))),
     }
 }
 
@@ -487,13 +554,19 @@ fn interpolate_template(template: &str, arguments: &Value) -> String {
     result
 }
 
-async fn execute_tool(client: &Client, tool: &LlmTool, arguments: &Value, ctx: &ToolContext<'_>) -> (String, ToolCallRecord) {
+async fn execute_tool(
+    client: &Client,
+    tool: &LlmTool,
+    arguments: &Value,
+    ctx: &ToolContext<'_>,
+) -> (String, ToolCallRecord) {
     let start = std::time::Instant::now();
 
     // Built-in tool types return synthetic results — actual side-effects are handled post-LLM
     match tool.tool_type.as_str() {
         "send_document" => {
-            let result = r#"{"status":"queued","message":"Documento será enviado ao usuário."}"#.to_string();
+            let result =
+                r#"{"status":"queued","message":"Documento será enviado ao usuário."}"#.to_string();
             let record = ToolCallRecord {
                 tool_id: tool.id,
                 tool_name: tool.name.clone(),
@@ -507,7 +580,8 @@ async fn execute_tool(client: &Client, tool: &LlmTool, arguments: &Value, ctx: &
             return (result, record);
         }
         "notify_human" => {
-            let result = r#"{"status":"queued","message":"Agente humano foi notificado."}"#.to_string();
+            let result =
+                r#"{"status":"queued","message":"Agente humano foi notificado."}"#.to_string();
             let record = ToolCallRecord {
                 tool_id: tool.id,
                 tool_name: tool.name.clone(),
@@ -521,58 +595,93 @@ async fn execute_tool(client: &Client, tool: &LlmTool, arguments: &Value, ctx: &
             return (result, record);
         }
         "pix_payment" => {
-            let action = arguments.get("action").and_then(|v| v.as_str()).unwrap_or("create_charge");
+            let action = arguments
+                .get("action")
+                .and_then(|v| v.as_str())
+                .unwrap_or("create_charge");
             tracing::info!(action = %action, arguments = %arguments, "pix_payment tool called");
 
             let result = if action == "create_charge" {
-                let amount = arguments.get("amount").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                let desc = arguments.get("description").and_then(|v| v.as_str()).unwrap_or("");
-                let customer_name = arguments.get("customer_name").and_then(|v| v.as_str()).unwrap_or("");
-                let customer_cpf = arguments.get("customer_cpf").and_then(|v| v.as_str()).unwrap_or("");
+                let amount = arguments
+                    .get("amount")
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(0.0);
+                let desc = arguments
+                    .get("description")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let customer_name = arguments
+                    .get("customer_name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let customer_cpf = arguments
+                    .get("customer_cpf")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
 
                 if amount <= 0.0 {
-                    json!({"status": "error", "message": "Valor deve ser maior que zero."}).to_string()
+                    json!({"status": "error", "message": "Valor deve ser maior que zero."})
+                        .to_string()
                 } else if desc.is_empty() {
                     json!({"status": "error", "message": "Descrição é obrigatória."}).to_string()
                 } else if customer_name.is_empty() || customer_cpf.is_empty() {
-                    json!({"status": "error", "message": "Nome e CPF do cliente são obrigatórios."}).to_string()
+                    json!({"status": "error", "message": "Nome e CPF do cliente são obrigatórios."})
+                        .to_string()
                 } else {
                     json!({"status": "queued", "action": "create_charge", "message": "Cobrança PIX será gerada e enviada ao usuário."}).to_string()
                 }
             } else if action == "check_status" {
-                let charge_id_str = arguments.get("charge_id").and_then(|v| v.as_str()).unwrap_or("");
-                if let (Some(db), Some(user_id), Some(encryption), Some(config)) = (ctx.db, ctx.user_id, ctx.encryption, ctx.config) {
+                let charge_id_str = arguments
+                    .get("charge_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                if let (Some(db), Some(user_id), Some(encryption), Some(config)) =
+                    (ctx.db, ctx.user_id, ctx.encryption, ctx.config)
+                {
                     let conv_id = ctx.conversation_id;
                     match uuid::Uuid::parse_str(charge_id_str) {
                         Ok(cid) => {
                             // Use live check: actively polls MP API for pending MP charges
-                            match crate::services::pix::check_charge_status_live(db, encryption, config, &user_id, &cid, conv_id.as_ref()).await {
-                                Ok(charge) => {
-                                    json!({
-                                        "status": "ok",
-                                        "charge_id": charge.id.to_string(),
-                                        "payment_status": charge.status,
-                                        "amount": charge.amount,
-                                        "description": charge.description,
-                                        "message": match charge.status.as_str() {
-                                            "approved" => "Pagamento confirmado!",
-                                            "pending" => "Pagamento ainda pendente.",
-                                            "cancelled" => "Pagamento foi cancelado.",
-                                            "refunded" => "Pagamento foi estornado.",
-                                            _ => "Status desconhecido."
-                                        }
-                                    }).to_string()
+                            match crate::services::pix::check_charge_status_live(
+                                db,
+                                encryption,
+                                config,
+                                &user_id,
+                                &cid,
+                                conv_id.as_ref(),
+                            )
+                            .await
+                            {
+                                Ok(charge) => json!({
+                                    "status": "ok",
+                                    "charge_id": charge.id.to_string(),
+                                    "payment_status": charge.status,
+                                    "amount": charge.amount,
+                                    "description": charge.description,
+                                    "message": match charge.status.as_str() {
+                                        "approved" => "Pagamento confirmado!",
+                                        "pending" => "Pagamento ainda pendente.",
+                                        "cancelled" => "Pagamento foi cancelado.",
+                                        "refunded" => "Pagamento foi estornado.",
+                                        _ => "Status desconhecido."
+                                    }
+                                })
+                                .to_string(),
+                                Err(e) => {
+                                    json!({"status": "error", "message": e.to_string()}).to_string()
                                 }
-                                Err(e) => json!({"status": "error", "message": e.to_string()}).to_string(),
                             }
                         }
-                        Err(_) => json!({"status": "error", "message": "ID da cobrança inválido."}).to_string(),
+                        Err(_) => json!({"status": "error", "message": "ID da cobrança inválido."})
+                            .to_string(),
                     }
                 } else {
-                    json!({"status": "error", "message": "Serviço de pagamento indisponível."}).to_string()
+                    json!({"status": "error", "message": "Serviço de pagamento indisponível."})
+                        .to_string()
                 }
             } else {
-                json!({"status": "error", "message": format!("Ação desconhecida: {}", action)}).to_string()
+                json!({"status": "error", "message": format!("Ação desconhecida: {}", action)})
+                    .to_string()
             };
 
             let record = ToolCallRecord {
@@ -588,78 +697,129 @@ async fn execute_tool(client: &Client, tool: &LlmTool, arguments: &Value, ctx: &
             return (result, record);
         }
         "card_payment" => {
-            let action = arguments.get("action").and_then(|v| v.as_str()).unwrap_or("create_charge");
+            let action = arguments
+                .get("action")
+                .and_then(|v| v.as_str())
+                .unwrap_or("create_charge");
             tracing::info!(action = %action, arguments = %arguments, "card_payment tool called");
 
             let result = if action == "create_charge" {
-                let amount = arguments.get("amount").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                let desc = arguments.get("description").and_then(|v| v.as_str()).unwrap_or("");
-                let customer_name = arguments.get("customer_name").and_then(|v| v.as_str()).unwrap_or("");
-                let payment_type = arguments.get("payment_type").and_then(|v| v.as_str()).unwrap_or("credit");
-                let installments = arguments.get("installments").and_then(|v| v.as_i64()).unwrap_or(1) as i32;
+                let amount = arguments
+                    .get("amount")
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(0.0);
+                let desc = arguments
+                    .get("description")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let customer_name = arguments
+                    .get("customer_name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let payment_type = arguments
+                    .get("payment_type")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("credit");
+                let installments = arguments
+                    .get("installments")
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(1) as i32;
 
                 if amount <= 0.0 {
-                    json!({"status": "error", "message": "Valor deve ser maior que zero."}).to_string()
+                    json!({"status": "error", "message": "Valor deve ser maior que zero."})
+                        .to_string()
                 } else if desc.is_empty() {
                     json!({"status": "error", "message": "Descrição é obrigatória."}).to_string()
                 } else if customer_name.is_empty() {
-                    json!({"status": "error", "message": "Nome do cliente é obrigatório."}).to_string()
+                    json!({"status": "error", "message": "Nome do cliente é obrigatório."})
+                        .to_string()
                 } else if payment_type != "credit" && payment_type != "debit" {
                     json!({"status": "error", "message": "Tipo de pagamento deve ser 'credit' ou 'debit'."}).to_string()
                 } else if payment_type == "debit" && installments > 1 {
                     json!({"status": "error", "message": "Cartão de débito não permite parcelamento."}).to_string()
                 } else if installments < 1 || installments > 12 {
-                    json!({"status": "error", "message": "Parcelas devem ser entre 1 e 12."}).to_string()
+                    json!({"status": "error", "message": "Parcelas devem ser entre 1 e 12."})
+                        .to_string()
                 } else if installments > 1 && (amount / installments as f64) < 5.0 {
                     let max_parcelas = (amount / 5.0).floor() as i32;
                     let sugestao = if max_parcelas >= 2 {
-                        format!("Para R$ {:.2}, o máximo é {}x (R$ {:.2}/parcela).", amount, max_parcelas, amount / max_parcelas as f64)
+                        format!(
+                            "Para R$ {:.2}, o máximo é {}x (R$ {:.2}/parcela).",
+                            amount,
+                            max_parcelas,
+                            amount / max_parcelas as f64
+                        )
                     } else {
-                        format!("Para R$ {:.2}, apenas pagamento à vista (1x) é permitido.", amount)
+                        format!(
+                            "Para R$ {:.2}, apenas pagamento à vista (1x) é permitido.",
+                            amount
+                        )
                     };
                     json!({"status": "error", "message": format!("Valor mínimo por parcela é R$ 5,00. {}x de R$ {:.2} = R$ {:.2}/parcela. {}", installments, amount, amount / installments as f64, sugestao)}).to_string()
                 } else {
                     let parcelas_msg = if installments > 1 {
-                        format!("{}x de R$ {:.2}", installments, amount / installments as f64)
+                        format!(
+                            "{}x de R$ {:.2}",
+                            installments,
+                            amount / installments as f64
+                        )
                     } else {
                         "à vista".to_string()
                     };
                     json!({"status": "queued", "action": "create_charge", "message": format!("Link de pagamento por cartão de {} será gerado ({}).", if payment_type == "credit" { "crédito" } else { "débito" }, parcelas_msg)}).to_string()
                 }
             } else if action == "check_status" {
-                let charge_id_str = arguments.get("charge_id").and_then(|v| v.as_str()).unwrap_or("");
-                if let (Some(db), Some(user_id), Some(encryption), Some(config)) = (ctx.db, ctx.user_id, ctx.encryption, ctx.config) {
+                let charge_id_str = arguments
+                    .get("charge_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                if let (Some(db), Some(user_id), Some(encryption), Some(config)) =
+                    (ctx.db, ctx.user_id, ctx.encryption, ctx.config)
+                {
                     let conv_id = ctx.conversation_id;
                     match uuid::Uuid::parse_str(charge_id_str) {
                         Ok(cid) => {
-                            match crate::services::card_payment::check_charge_status_live(db, encryption, config, &user_id, &cid, conv_id.as_ref()).await {
-                                Ok(charge) => {
-                                    json!({
-                                        "status": "ok",
-                                        "charge_id": charge.id.to_string(),
-                                        "payment_status": charge.status,
-                                        "amount": charge.amount,
-                                        "description": charge.description,
-                                        "checkout_url": charge.checkout_url,
-                                        "message": match charge.status.as_str() {
-                                            "approved" => "Pagamento confirmado!",
-                                            "pending" => "Pagamento ainda pendente.",
-                                            "cancelled" => "Pagamento foi cancelado ou expirou.",
-                                            "refunded" => "Pagamento foi estornado.",
-                                            _ => "Status desconhecido."
-                                        }
-                                    }).to_string()
+                            match crate::services::card_payment::check_charge_status_live(
+                                db,
+                                encryption,
+                                config,
+                                &user_id,
+                                &cid,
+                                conv_id.as_ref(),
+                            )
+                            .await
+                            {
+                                Ok(charge) => json!({
+                                    "status": "ok",
+                                    "charge_id": charge.id.to_string(),
+                                    "payment_status": charge.status,
+                                    "amount": charge.amount,
+                                    "description": charge.description,
+                                    "checkout_url": charge.checkout_url,
+                                    "message": match charge.status.as_str() {
+                                        "approved" => "Pagamento confirmado!",
+                                        "pending" => "Pagamento ainda pendente.",
+                                        "cancelled" => "Pagamento foi cancelado ou expirou.",
+                                        "refunded" => "Pagamento foi estornado.",
+                                        _ => "Status desconhecido."
+                                    }
+                                })
+                                .to_string(),
+                                Err(e) => {
+                                    json!({"status": "error", "message": e.to_string()}).to_string()
                                 }
-                                Err(e) => json!({"status": "error", "message": e.to_string()}).to_string(),
                             }
                         }
-                        Err(_) => json!({"status": "error", "message": "ID da cobrança inválido."}).to_string(),
+                        Err(_) => json!({"status": "error", "message": "ID da cobrança inválido."})
+                            .to_string(),
                     }
                 } else {
-                    json!({"status": "error", "message": "Serviço de pagamento indisponível."}).to_string()
+                    json!({"status": "error", "message": "Serviço de pagamento indisponível."})
+                        .to_string()
                 }
             } else {
-                json!({"status": "error", "message": format!("Ação desconhecida: {}", action)}).to_string()
+                json!({"status": "error", "message": format!("Ação desconhecida: {}", action)})
+                    .to_string()
             };
 
             let record = ToolCallRecord {
@@ -675,19 +835,36 @@ async fn execute_tool(client: &Client, tool: &LlmTool, arguments: &Value, ctx: &
             return (result, record);
         }
         "schedule_appointment" => {
-            let action = arguments.get("action").and_then(|v| v.as_str()).unwrap_or("create");
+            let action = arguments
+                .get("action")
+                .and_then(|v| v.as_str())
+                .unwrap_or("create");
             tracing::info!(action = %action, arguments = %arguments, "schedule_appointment tool called");
 
             let result = if action == "check_availability" {
                 if let (Some(db), Some(assistant_id)) = (ctx.db, ctx.assistant_id) {
                     let date = arguments.get("date").and_then(|v| v.as_str()).unwrap_or("");
-                    let week_start = arguments.get("week_start").and_then(|v| v.as_str()).unwrap_or("");
+                    let week_start = arguments
+                        .get("week_start")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
 
                     if !week_start.is_empty() {
                         // Week-level availability summary (7 days)
-                        match crate::services::appointment::get_available_days(db, &assistant_id, week_start).await {
-                            Ok(days) => json!({"status": "ok", "week_start": week_start, "days": days}).to_string(),
-                            Err(e) => json!({"status": "error", "message": e.to_string()}).to_string(),
+                        match crate::services::appointment::get_available_days(
+                            db,
+                            &assistant_id,
+                            week_start,
+                        )
+                        .await
+                        {
+                            Ok(days) => {
+                                json!({"status": "ok", "week_start": week_start, "days": days})
+                                    .to_string()
+                            }
+                            Err(e) => {
+                                json!({"status": "error", "message": e.to_string()}).to_string()
+                            }
                         }
                     } else if !date.is_empty() {
                         // Day-level: specific time slots
@@ -704,14 +881,20 @@ async fn execute_tool(client: &Client, tool: &LlmTool, arguments: &Value, ctx: &
                         json!({"status": "error", "message": "Informe 'date' (YYYY-MM-DD) para horários ou 'week_start' (YYYY-MM-DD) para disponibilidade semanal."}).to_string()
                     }
                 } else {
-                    json!({"status": "error", "message": "Serviço de agendamento indisponível"}).to_string()
+                    json!({"status": "error", "message": "Serviço de agendamento indisponível"})
+                        .to_string()
                 }
             } else if action == "create" {
                 // Pre-validate before telling the LLM it's queued
                 if let (Some(db), Some(assistant_id)) = (ctx.db, ctx.assistant_id) {
-                    let date_time_str = arguments.get("date_time").and_then(|v| v.as_str()).unwrap_or("");
-                    let tz = crate::services::appointment::resolve_assistant_tz(db, &assistant_id).await;
-                    let dt_utc = crate::services::appointment::parse_datetime_in_tz(date_time_str, &tz);
+                    let date_time_str = arguments
+                        .get("date_time")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    let tz =
+                        crate::services::appointment::resolve_assistant_tz(db, &assistant_id).await;
+                    let dt_utc =
+                        crate::services::appointment::parse_datetime_in_tz(date_time_str, &tz);
 
                     match dt_utc {
                         Some(dt_utc) => {
@@ -740,15 +923,24 @@ async fn execute_tool(client: &Client, tool: &LlmTool, arguments: &Value, ctx: &
                         }
                     }
                 } else {
-                    json!({"status": "error", "message": "Serviço de agendamento indisponível"}).to_string()
+                    json!({"status": "error", "message": "Serviço de agendamento indisponível"})
+                        .to_string()
                 }
             } else if action == "reschedule" {
                 // Pre-validate rescheduling
                 if let (Some(db), Some(assistant_id)) = (ctx.db, ctx.assistant_id) {
-                    let date_time_str = arguments.get("date_time").and_then(|v| v.as_str()).unwrap_or("");
-                    let appointment_id_str = arguments.get("appointment_id").and_then(|v| v.as_str()).unwrap_or("");
-                    let tz = crate::services::appointment::resolve_assistant_tz(db, &assistant_id).await;
-                    let dt_utc = crate::services::appointment::parse_datetime_in_tz(date_time_str, &tz);
+                    let date_time_str = arguments
+                        .get("date_time")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    let appointment_id_str = arguments
+                        .get("appointment_id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    let tz =
+                        crate::services::appointment::resolve_assistant_tz(db, &assistant_id).await;
+                    let dt_utc =
+                        crate::services::appointment::parse_datetime_in_tz(date_time_str, &tz);
 
                     match (dt_utc, uuid::Uuid::parse_str(appointment_id_str)) {
                         (Some(dt_utc), Ok(appt_id)) => {
@@ -779,7 +971,8 @@ async fn execute_tool(client: &Client, tool: &LlmTool, arguments: &Value, ctx: &
                         }
                     }
                 } else {
-                    json!({"status": "error", "message": "Serviço de agendamento indisponível"}).to_string()
+                    json!({"status": "error", "message": "Serviço de agendamento indisponível"})
+                        .to_string()
                 }
             } else {
                 // cancel — no pre-validation needed, side effects in messaging.rs
@@ -872,7 +1065,10 @@ async fn execute_tool(client: &Client, tool: &LlmTool, arguments: &Value, ctx: &
     }
 
     // For POST/PUT/PATCH, send body content or arguments
-    if matches!(tool.method.to_uppercase().as_str(), "POST" | "PUT" | "PATCH") {
+    if matches!(
+        tool.method.to_uppercase().as_str(),
+        "POST" | "PUT" | "PATCH"
+    ) {
         if let Some(body_template) = &tool.body_content {
             if !body_template.trim().is_empty() {
                 let interpolated_body = interpolate_template(body_template, arguments);
@@ -918,7 +1114,11 @@ async fn execute_tool(client: &Client, tool: &LlmTool, arguments: &Value, ctx: &
                         tool_name: tool.name.clone(),
                         arguments: arguments.clone(),
                         status_code: Some(status),
-                        response_body: Some(if text.len() > 8000 { format!("{}...[truncated]", &text[..8000]) } else { text }),
+                        response_body: Some(if text.len() > 8000 {
+                            format!("{}...[truncated]", &text[..8000])
+                        } else {
+                            text
+                        }),
                         error: None,
                         duration_ms: duration_ms(start),
                         tool_type: tool.tool_type.clone(),
@@ -1030,7 +1230,16 @@ async fn call_openai_with_tools(
     let mut all_records: Vec<ToolCallRecord> = Vec::new();
 
     for round in 0..5 {
-        let result = call_openai_raw(client, api_key, model, &raw_messages, temperature, max_tokens, tools).await?;
+        let result = call_openai_raw(
+            client,
+            api_key,
+            model,
+            &raw_messages,
+            temperature,
+            max_tokens,
+            tools,
+        )
+        .await?;
         total_tokens += result.tokens;
 
         match result.tool_calls {
@@ -1056,16 +1265,19 @@ async fn call_openai_with_tools(
                         execute_tool(client, t, &call.arguments, ctx).await
                     } else {
                         let err_msg = format!("Error: tool '{}' not found", call.name);
-                        (err_msg.clone(), ToolCallRecord {
-                            tool_id: None,
-                            tool_name: call.name.clone(),
-                            arguments: call.arguments.clone(),
-                            status_code: None,
-                            response_body: None,
-                            error: Some(err_msg),
-                            duration_ms: 0,
-                            tool_type: "http_request".to_string(),
-                        })
+                        (
+                            err_msg.clone(),
+                            ToolCallRecord {
+                                tool_id: None,
+                                tool_name: call.name.clone(),
+                                arguments: call.arguments.clone(),
+                                status_code: None,
+                                response_body: None,
+                                error: Some(err_msg),
+                                duration_ms: 0,
+                                tool_type: "http_request".to_string(),
+                            },
+                        )
                     };
                     all_records.push(record);
 
@@ -1158,22 +1370,24 @@ async fn call_openai_raw(
     // Preserve raw tool_calls for echoing back
     let raw_tool_calls = message.get("tool_calls").cloned();
 
-    let tool_calls = message["tool_calls"]
-        .as_array()
-        .map(|calls| {
-            calls
-                .iter()
-                .filter_map(|c| {
-                    let id = c["id"].as_str()?.to_string();
-                    let name = c["function"]["name"].as_str()?.to_string();
-                    let args: Value = c["function"]["arguments"]
-                        .as_str()
-                        .and_then(|s| serde_json::from_str(s).ok())
-                        .unwrap_or(json!({}));
-                    Some(ToolCall { id, name, arguments: args })
+    let tool_calls = message["tool_calls"].as_array().map(|calls| {
+        calls
+            .iter()
+            .filter_map(|c| {
+                let id = c["id"].as_str()?.to_string();
+                let name = c["function"]["name"].as_str()?.to_string();
+                let args: Value = c["function"]["arguments"]
+                    .as_str()
+                    .and_then(|s| serde_json::from_str(s).ok())
+                    .unwrap_or(json!({}));
+                Some(ToolCall {
+                    id,
+                    name,
+                    arguments: args,
                 })
-                .collect()
-        });
+            })
+            .collect()
+    });
 
     Ok(RawLlmResult {
         content,
@@ -1271,7 +1485,17 @@ async fn call_claude_with_tools(
     let mut all_records: Vec<ToolCallRecord> = Vec::new();
 
     for round in 0..5 {
-        let result = call_claude_raw(client, api_key, model, &raw_messages, &system_msg, temperature, max_tokens, tools).await?;
+        let result = call_claude_raw(
+            client,
+            api_key,
+            model,
+            &raw_messages,
+            &system_msg,
+            temperature,
+            max_tokens,
+            tools,
+        )
+        .await?;
         total_tokens += result.tokens;
 
         match result.tool_calls {
@@ -1299,16 +1523,19 @@ async fn call_claude_with_tools(
                         execute_tool(client, t, &call.arguments, ctx).await
                     } else {
                         let err_msg = format!("Error: tool '{}' not found", call.name);
-                        (err_msg.clone(), ToolCallRecord {
-                            tool_id: None,
-                            tool_name: call.name.clone(),
-                            arguments: call.arguments.clone(),
-                            status_code: None,
-                            response_body: None,
-                            error: Some(err_msg),
-                            duration_ms: 0,
-                            tool_type: "http_request".to_string(),
-                        })
+                        (
+                            err_msg.clone(),
+                            ToolCallRecord {
+                                tool_id: None,
+                                tool_name: call.name.clone(),
+                                arguments: call.arguments.clone(),
+                                status_code: None,
+                                response_body: None,
+                                error: Some(err_msg),
+                                duration_ms: 0,
+                                tool_type: "http_request".to_string(),
+                            },
+                        )
                     };
                     all_records.push(record);
 
@@ -1425,7 +1652,11 @@ async fn call_claude_raw(
     Ok(RawLlmResult {
         content,
         tokens: (input_tokens + output_tokens) as i32,
-        tool_calls: if tool_calls.is_empty() { None } else { Some(tool_calls) },
+        tool_calls: if tool_calls.is_empty() {
+            None
+        } else {
+            Some(tool_calls)
+        },
         raw_tool_calls: None,
         raw_content_blocks,
     })
@@ -1452,7 +1683,11 @@ async fn call_gemini_with_tools(
         .iter()
         .filter(|m| m.role != "system")
         .map(|m| {
-            let role = if m.role == "assistant" { "model" } else { "user" };
+            let role = if m.role == "assistant" {
+                "model"
+            } else {
+                "user"
+            };
             let parts = if let (Some(b64), Some(mime)) = (&m.media_base64, &m.media_mime_type) {
                 let mut p = vec![];
                 if !m.content.is_empty() {
@@ -1513,7 +1748,11 @@ async fn call_gemini_with_tools(
         .as_i64()
         .unwrap_or(0) as i32;
 
-    Ok(LlmResponse { content, tokens_used: tokens, tool_call_records: Vec::new() })
+    Ok(LlmResponse {
+        content,
+        tokens_used: tokens,
+        tool_call_records: Vec::new(),
+    })
 }
 
 /// Merge consecutive same-role Gemini contents into one entry.
