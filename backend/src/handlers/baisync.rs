@@ -1,7 +1,7 @@
 use axum::extract::Extension;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::Json;
-use base64::Engine;
+
 use futures::stream::Stream;
 use serde::{Deserialize, Serialize};
 use std::convert::Infallible;
@@ -19,6 +19,7 @@ use crate::middleware::auth::AuthUser;
 
 #[derive(Debug, Deserialize)]
 pub struct BaisyncAttachment {
+    #[allow(dead_code)]
     pub name: String,
     pub mime_type: String,
     pub data_base64: String,
@@ -674,131 +675,41 @@ O usuário pode enviar imagens e documentos diretamente no chat. Quando receber 
         }
     }
 
-    // Build input array for OpenAI Responses API
-    let mut input = vec![serde_json::json!({
-        "role": "developer",
-        "content": system_prompt,
-    })];
+    // Build Gemini contents
+    let mut contents: Vec<serde_json::Value> = Vec::new();
 
     for msg in &req.history {
-        if msg.file_refs.is_empty() {
-            input.push(serde_json::json!({
-                "role": msg.role,
-                "content": msg.content,
-            }));
-        } else {
-            // Rebuild multimodal content with file references
-            let mut parts = vec![serde_json::json!({
-                "type": "input_text",
-                "text": msg.content,
-            })];
-            for fref in &msg.file_refs {
-                if fref.kind == "image" {
-                    parts.push(serde_json::json!({
-                        "type": "input_image",
-                        "file_id": fref.id,
-                    }));
-                } else {
-                    parts.push(serde_json::json!({
-                        "type": "input_file",
-                        "file_id": fref.id,
-                    }));
-                }
-            }
-            input.push(serde_json::json!({
-                "role": msg.role,
-                "content": parts,
-            }));
-        }
+        let role = if msg.role == "assistant" { "model" } else { "user" };
+        contents.push(serde_json::json!({
+            "role": role,
+            "parts": [{"text": msg.content}],
+        }));
     }
 
     // Build user message — multimodal if attachments are present
-    let mut uploaded_file_refs: Vec<serde_json::Value> = Vec::new();
-
     if req.attachments.is_empty() {
-        input.push(serde_json::json!({
+        contents.push(serde_json::json!({
             "role": "user",
-            "content": req.message,
+            "parts": [{"text": req.message}],
         }));
     } else {
-        let mut content_parts = vec![serde_json::json!({
-            "type": "input_text",
-            "text": req.message,
-        })];
-
-        let client = reqwest::Client::new();
-
+        let mut parts = vec![serde_json::json!({"text": req.message})];
         for att in &req.attachments {
-            // Upload all attachments (images + documents) to Files API for persistent file_id
-            let file_bytes = base64::engine::general_purpose::STANDARD
-                .decode(&att.data_base64)
-                .unwrap_or_default();
-
-            let file_part = reqwest::multipart::Part::bytes(file_bytes)
-                .file_name(att.name.clone())
-                .mime_str(&att.mime_type)
-                .unwrap_or_else(|_| reqwest::multipart::Part::bytes(vec![]));
-
-            let form = reqwest::multipart::Form::new()
-                .text("purpose", "user_data")
-                .part("file", file_part);
-
-            let upload_res = client
-                .post("https://api.openai.com/v1/files")
-                .header("Authorization", format!("Bearer {}", api_key))
-                .multipart(form)
-                .send()
-                .await;
-
-            let file_id = match upload_res {
-                Ok(res) if res.status().is_success() => res
-                    .json::<serde_json::Value>()
-                    .await
-                    .ok()
-                    .and_then(|body| body["id"].as_str().map(String::from)),
-                Ok(res) => {
-                    let err = res.text().await.unwrap_or_default();
-                    tracing::error!("OpenAI file upload failed: {}", err);
-                    None
+            parts.push(serde_json::json!({
+                "inline_data": {
+                    "mime_type": att.mime_type,
+                    "data": att.data_base64,
                 }
-                Err(e) => {
-                    tracing::error!("OpenAI file upload error: {}", e);
-                    None
-                }
-            };
-
-            let Some(file_id) = file_id else {
-                return Err(AppError::BadRequest(format!(
-                    "Não foi possível processar o arquivo \"{}\". Tente novamente.",
-                    att.name
-                )));
-            };
-
-            let kind = if att.mime_type.starts_with("image/") {
-                "image"
-            } else {
-                "file"
-            };
-            uploaded_file_refs.push(serde_json::json!({"id": file_id, "kind": kind}));
-
-            if att.mime_type.starts_with("image/") {
-                content_parts.push(serde_json::json!({
-                    "type": "input_image",
-                    "file_id": file_id,
-                }));
-            } else {
-                content_parts.push(serde_json::json!({
-                    "type": "input_file",
-                    "file_id": file_id,
-                }));
-            }
+            }));
         }
-
-        input.push(serde_json::json!({
+        contents.push(serde_json::json!({
             "role": "user",
-            "content": content_parts,
+            "parts": parts,
         }));
     }
+
+    // Coalesce consecutive same-role messages (Gemini requirement)
+    contents = coalesce_contents(contents);
 
     // Increment usage counter
     increment_usage(&db, &user_id).await;
@@ -812,15 +723,6 @@ O usuário pode enviar imagens e documentos diretamente no chat. Quando receber 
 
     // Spawn streaming task
     tokio::spawn(async move {
-        // Send uploaded file refs so frontend can persist them for history
-        if !uploaded_file_refs.is_empty() {
-            let _ = tx
-                .send(Ok(Event::default().event("file_refs").data(
-                    serde_json::json!({"file_refs": uploaded_file_refs}).to_string(),
-                )))
-                .await;
-        }
-
         // Send thinking status
         let _ = tx
             .send(Ok(Event::default().event("status").data(
@@ -828,18 +730,25 @@ O usuário pode enviar imagens e documentos diretamente no chat. Quando receber 
             )))
             .await;
 
-        // Call OpenAI Responses API with streaming
+        // Call Gemini streaming API
         let client = reqwest::Client::new();
         let body = serde_json::json!({
-            "model": "gpt-5.3-chat-latest",
-            "input": input,
-            "stream": true,
-            "max_output_tokens": 4096,
+            "systemInstruction": {"parts": [{"text": system_prompt}]},
+            "contents": contents,
+            "generationConfig": {
+                "temperature": 0.7,
+                "maxOutputTokens": 4096,
+            },
+            "tools": [{"google_search": {}}],
         });
 
+        let url = format!(
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:streamGenerateContent?alt=sse&key={}",
+            api_key
+        );
+
         let resp = client
-            .post("https://api.openai.com/v1/responses")
-            .header("Authorization", format!("Bearer {}", api_key))
+            .post(&url)
             .header("Content-Type", "application/json")
             .json(&body)
             .send()
@@ -855,7 +764,7 @@ O usuário pode enviar imagens e documentos diretamente no chat. Quando receber 
             Ok(response) => {
                 if !response.status().is_success() {
                     let error_text = response.text().await.unwrap_or_default();
-                    tracing::error!("OpenAI API error: {}", error_text);
+                    tracing::error!("Gemini API error: {}", error_text);
                     let _ = tx
                         .send(Ok(Event::default()
                             .event("error")
@@ -865,7 +774,7 @@ O usuário pode enviar imagens e documentos diretamente no chat. Quando receber 
                     return;
                 }
 
-                // Process SSE stream from OpenAI Responses API
+                // Process SSE stream from Gemini
                 let mut stream = response.bytes_stream();
                 let mut buffer = String::new();
                 let mut full_content = String::new();
@@ -889,19 +798,15 @@ O usuário pode enviar imagens e documentos diretamente no chat. Quando receber 
                                     if let Ok(parsed) =
                                         serde_json::from_str::<serde_json::Value>(data)
                                     {
-                                        let event_type = parsed["type"].as_str().unwrap_or("");
-
-                                        // response.output_text.delta contains streaming text
-                                        if event_type == "response.output_text.delta" {
-                                            if let Some(delta) = parsed["delta"].as_str() {
-                                                full_content.push_str(delta);
-                                                let _ = tx
-                                                    .send(Ok(Event::default().event("token").data(
-                                                        serde_json::json!({"text": delta})
-                                                            .to_string(),
-                                                    )))
-                                                    .await;
-                                            }
+                                        // Gemini streaming: extract text from candidates
+                                        if let Some(text) = parsed["candidates"][0]["content"]["parts"][0]["text"].as_str() {
+                                            full_content.push_str(text);
+                                            let _ = tx
+                                                .send(Ok(Event::default().event("token").data(
+                                                    serde_json::json!({"text": text})
+                                                        .to_string(),
+                                                )))
+                                                .await;
                                         }
                                     }
                                 }
@@ -945,7 +850,7 @@ O usuário pode enviar imagens e documentos diretamente no chat. Quando receber 
                     .await;
             }
             Err(e) => {
-                tracing::error!("OpenAI request failed: {}", e);
+                tracing::error!("Gemini request failed: {}", e);
                 let _ = tx
                     .send(Ok(Event::default()
                         .event("error")
@@ -958,6 +863,34 @@ O usuário pode enviar imagens e documentos diretamente no chat. Quando receber 
 
     let stream = ReceiverStream::new(rx);
     Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
+}
+
+// ─── Helpers ────────────────────────────────────────────────────────────────
+
+/// Merge consecutive same-role Gemini contents into one entry.
+fn coalesce_contents(contents: Vec<serde_json::Value>) -> Vec<serde_json::Value> {
+    if contents.is_empty() {
+        return contents;
+    }
+
+    let mut coalesced: Vec<serde_json::Value> = Vec::new();
+    for msg in contents {
+        let role = msg["role"].as_str().unwrap_or("user");
+        if let Some(last) = coalesced.last_mut() {
+            if last["role"].as_str().unwrap_or("") == role {
+                if let (Some(existing), Some(new)) = (
+                    last.get_mut("parts").and_then(|p| p.as_array_mut()),
+                    msg["parts"].as_array(),
+                ) {
+                    existing.extend(new.iter().cloned());
+                }
+                continue;
+            }
+        }
+        coalesced.push(msg);
+    }
+
+    coalesced
 }
 
 // ─── Rate limit info endpoint ──────��─────────────────────────────────────────

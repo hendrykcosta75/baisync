@@ -7,29 +7,6 @@ import {
 } from 'lucide-react'
 import * as THREE from 'three'
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
-interface SpeechRecognitionType {
-  lang: string
-  continuous: boolean
-  interimResults: boolean
-  maxAlternatives: number
-  onresult: ((event: any) => void) | null
-  onerror: ((event: any) => void) | null
-  onend: (() => void) | null
-  start: () => void
-  stop: () => void
-  abort: () => void
-}
-/* eslint-enable @typescript-eslint/no-explicit-any */
-
-function getSpeechRecognition(): SpeechRecognitionType | null {
-  if (typeof window === 'undefined') return null
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const w = window as any
-  const Ctor = w.SpeechRecognition || w.webkitSpeechRecognition
-  return Ctor ? new Ctor() : null
-}
-
 const mono = "'JetBrains Mono', 'Fira Code', monospace"
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -117,10 +94,12 @@ const FRAGMENT_SHADER = `
 
 function InterviewOrb({
   active,
+  intensityRef,
   onPress,
   size = 160,
 }: {
   active: boolean
+  intensityRef: React.RefObject<number>
   onPress: () => void
   size?: number
 }) {
@@ -132,7 +111,6 @@ function InterviewOrb({
     u_intensity: { value: number }
   } | null>(null)
   const animRef = useRef<number>(0)
-  const targetIntensity = useRef(1.0)
   const currentIntensity = useRef(1.0)
 
   useEffect(() => {
@@ -166,9 +144,10 @@ function InterviewOrb({
 
     const animate = () => {
       animRef.current = requestAnimationFrame(animate)
-      const speed = targetIntensity.current > 1.5 ? 0.022 : 0.012
+      const target = intensityRef.current
+      const speed = target > 1.5 ? 0.022 : 0.012
       uniforms.u_time.value += speed
-      currentIntensity.current += (targetIntensity.current - currentIntensity.current) * 0.03
+      currentIntensity.current += (target - currentIntensity.current) * 0.08
       uniforms.u_intensity.value = currentIntensity.current
       renderer.render(scene, camera)
     }
@@ -180,11 +159,7 @@ function InterviewOrb({
       geometry.dispose()
       material.dispose()
     }
-  }, [size])
-
-  useEffect(() => {
-    targetIntensity.current = active ? 2.0 : 1.0
-  }, [active])
+  }, [size, intensityRef])
 
   return (
     <canvas
@@ -298,12 +273,80 @@ export default function SwotInterview({
 
   const chatBodyRef = useRef<HTMLDivElement>(null)
   const currentAudioRef = useRef<HTMLAudioElement | null>(null)
+  const speakGenRef = useRef(0)
   const streamingContentRef = useRef('')
   // Use refs for latest values to avoid stale closures in callbacks
   const messagesRef = useRef<ChatMessage[]>([])
   const tabRef = useRef(tab)
+  const isStreamingRef = useRef(false)
   messagesRef.current = messages
   tabRef.current = tab
+
+  // Audio analysis (orb reactivity + VAD)
+  const audioCtxRef = useRef<AudioContext | null>(null)
+  const analyserRef = useRef<AnalyserNode | null>(null)
+  const orbIntensityRef = useRef(1.0)
+  const orbRafRef = useRef(0)
+  const silenceStartRef = useRef(0)
+  const speechDetectedRef = useRef(false)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const startRecordingRef = useRef<() => void>(null as any)
+
+  const getAudioCtx = useCallback(() => {
+    if (!audioCtxRef.current || audioCtxRef.current.state === 'closed') {
+      audioCtxRef.current = new AudioContext()
+    }
+    if (audioCtxRef.current.state === 'suspended') {
+      audioCtxRef.current.resume()
+    }
+    return audioCtxRef.current
+  }, [])
+
+  const startAnalysis = useCallback((mode: 'tts' | 'mic') => {
+    cancelAnimationFrame(orbRafRef.current)
+    silenceStartRef.current = 0
+    speechDetectedRef.current = false
+
+    const modeRef = { current: mode }
+    const data = new Uint8Array(256)
+
+    const tick = () => {
+      const analyser = analyserRef.current
+      if (!analyser) {
+        orbIntensityRef.current = 1.0
+        return // self-terminate
+      }
+
+      analyser.getByteTimeDomainData(data)
+      let sum = 0
+      for (let i = 0; i < data.length; i++) {
+        const v = (data[i] - 128) / 128
+        sum += v * v
+      }
+      const rms = Math.sqrt(sum / data.length)
+      orbIntensityRef.current = 1.0 + Math.min(rms * 12, 3.5)
+
+      // VAD: auto-stop recording after 1.5s of silence
+      if (modeRef.current === 'mic' && mediaRecorderRef.current?.state === 'recording') {
+        if (rms > 0.015) {
+          speechDetectedRef.current = true
+          silenceStartRef.current = 0
+        } else if (speechDetectedRef.current) {
+          if (!silenceStartRef.current) silenceStartRef.current = Date.now()
+          if (Date.now() - silenceStartRef.current > 1500) {
+            mediaRecorderRef.current.stop()
+            mediaRecorderRef.current = null
+            setIsRecording(false)
+            setAudioStatus('Transcrevendo...')
+            return // onstop handler cleans up analyser
+          }
+        }
+      }
+
+      orbRafRef.current = requestAnimationFrame(tick)
+    }
+    tick()
+  }, [])
 
   const scrollToBottom = useCallback(() => {
     if (chatBodyRef.current) {
@@ -317,12 +360,28 @@ export default function SwotInterview({
 
   // ── TTS ──
 
+  const stopSpeaking = useCallback(() => {
+    speakGenRef.current++
+    if (currentAudioRef.current) {
+      currentAudioRef.current.pause()
+      currentAudioRef.current = null
+    }
+    analyserRef.current = null
+    cancelAnimationFrame(orbRafRef.current)
+    orbIntensityRef.current = 1.0
+    setIsSpeaking(false)
+  }, [])
+
   const speakText = useCallback(
     async (text: string) => {
       if (!wsId) return
 
       const cleanText = text.replace(/<[^>]+>/g, '').trim()
       if (!cleanText) return
+
+      // Cancel any previous speak call
+      stopSpeaking()
+      const gen = ++speakGenRef.current
 
       setIsSpeaking(true)
       setAudioStatus('IA respondendo...')
@@ -335,21 +394,53 @@ export default function SwotInterview({
           body: JSON.stringify({ text: cleanText }),
         })
 
-        if (!resp.ok) {
-          console.error('TTS error status:', resp.status)
-          throw new Error('TTS request failed')
-        }
+        if (!resp.ok) throw new Error('TTS request failed')
+
+        // Abort if a newer speak was triggered while we were fetching
+        if (speakGenRef.current !== gen) return
 
         const blob = await resp.blob()
         const url = URL.createObjectURL(blob)
         const audio = new Audio(url)
+
+        // Connect to AudioContext analyser so orb reacts to voice
+        const ctx = getAudioCtx()
+        const source = ctx.createMediaElementSource(audio)
+        const analyser = ctx.createAnalyser()
+        analyser.fftSize = 256
+        source.connect(analyser)
+        analyser.connect(ctx.destination)
+        analyserRef.current = analyser
+        startAnalysis('tts')
+
+        // Wait for audio to fully buffer before playing (prevents cut-off at start)
+        await new Promise<void>((resolve, reject) => {
+          audio.addEventListener('canplaythrough', () => resolve(), { once: true })
+          audio.addEventListener('error', () => reject(new Error('audio load error')), { once: true })
+          audio.load()
+        })
+
+        // Abort if a newer speak was triggered while we were buffering
+        if (speakGenRef.current !== gen) {
+          analyserRef.current = null
+          URL.revokeObjectURL(url)
+          return
+        }
+
         currentAudioRef.current = audio
 
         audio.onended = () => {
           setIsSpeaking(false)
-          setAudioStatus('Toque no orbe para falar')
           URL.revokeObjectURL(url)
           currentAudioRef.current = null
+          analyserRef.current = null
+          orbIntensityRef.current = 1.0
+          // Auto-start recording in audio mode
+          if (tabRef.current === 'audio' && !isStreamingRef.current) {
+            startRecordingRef.current?.()
+          } else {
+            setAudioStatus('Toque no orbe para falar')
+          }
         }
 
         audio.onerror = () => {
@@ -357,16 +448,19 @@ export default function SwotInterview({
           setAudioStatus('Toque no orbe para falar')
           URL.revokeObjectURL(url)
           currentAudioRef.current = null
+          analyserRef.current = null
+          orbIntensityRef.current = 1.0
         }
 
         await audio.play()
       } catch (err) {
+        if (speakGenRef.current !== gen) return
         console.error('TTS error:', err)
         setIsSpeaking(false)
         setAudioStatus('Toque no orbe para falar')
       }
     },
-    [wsId]
+    [wsId, stopSpeaking, getAudioCtx, startAnalysis]
   )
 
   // ── Send message to backend SSE ──
@@ -376,6 +470,7 @@ export default function SwotInterview({
       if (!wsId) return
 
       setIsStreaming(true)
+      isStreamingRef.current = true
       streamingContentRef.current = ''
 
       setMessages((prev) => [...prev, { role: 'assistant', content: '' }])
@@ -488,81 +583,99 @@ export default function SwotInterview({
         })
       } finally {
         setIsStreaming(false)
+        isStreamingRef.current = false
       }
     },
     [wsId, speakText, onSwotCreated]
   )
 
-  // ── STT via browser SpeechRecognition (free, no API call) ──
+  // ── STT via MediaRecorder + Gemini transcription ──
 
-  const recognitionRef = useRef<SpeechRecognitionType | null>(null)
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
+  const audioChunksRef = useRef<Blob[]>([])
 
-  const startRecording = useCallback(() => {
-    // Stop any playing audio
-    if (currentAudioRef.current) {
-      currentAudioRef.current.pause()
-      currentAudioRef.current = null
-      setIsSpeaking(false)
-    }
+  const transcribeAudio = useCallback(async (audioBlob: Blob) => {
+    setAudioStatus('Transcrevendo...')
+    try {
+      const formData = new FormData()
+      formData.append('audio', audioBlob, 'audio.webm')
 
-    const recognition = getSpeechRecognition()
-    if (!recognition) {
-      setAudioStatus('Reconhecimento de voz nao suportado neste navegador')
-      return
-    }
+      const res = await fetch(`/api/workspaces/${wsId}/swot/interview/stt`, {
+        method: 'POST',
+        body: formData,
+      })
 
-    recognition.lang = 'pt-BR'
-    recognition.continuous = false
-    recognition.interimResults = false
-    recognition.maxAlternatives = 1
+      if (!res.ok) {
+        const err = await res.text().catch(() => '')
+        throw new Error(err || `STT failed: ${res.status}`)
+      }
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    recognition.onresult = async (event: any) => {
-      const text = event.results?.[0]?.[0]?.transcript?.trim()
-      setIsRecording(false)
-      recognitionRef.current = null
+      const data = await res.json()
+      const text = (data.text || '').trim()
 
       if (text) {
-        setAudioStatus('Processando...')
+        setAudioStatus('')
         const currentHistory = messagesRef.current
         setMessages((prev) => [...prev, { role: 'user' as const, content: text }])
         await sendToBackend(text, currentHistory)
       } else {
         setAudioStatus('Nao entendi. Toque no orbe para tentar novamente.')
       }
+    } catch (e) {
+      console.error('STT error:', e)
+      setAudioStatus('Erro na transcricao. Tente novamente.')
     }
+  }, [wsId, sendToBackend])
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    recognition.onerror = (event: any) => {
-      console.error('Speech recognition error:', event.error)
-      setIsRecording(false)
-      recognitionRef.current = null
-      if (event.error === 'not-allowed') {
-        setAudioStatus('Permissao do microfone negada')
-      } else {
-        setAudioStatus('Erro ao ouvir. Toque no orbe para tentar novamente.')
+  const startRecording = useCallback(async () => {
+    // Stop any playing audio
+    stopSpeaking()
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' })
+      audioChunksRef.current = []
+
+      // Connect mic to analyser for orb reactivity + VAD
+      const ctx = getAudioCtx()
+      const source = ctx.createMediaStreamSource(stream)
+      const analyser = ctx.createAnalyser()
+      analyser.fftSize = 256
+      source.connect(analyser)
+      analyserRef.current = analyser
+      startAnalysis('mic')
+
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) audioChunksRef.current.push(e.data)
       }
-    }
 
-    recognition.onend = () => {
-      if (recognitionRef.current) {
-        setIsRecording(false)
-        recognitionRef.current = null
+      recorder.onstop = () => {
+        stream.getTracks().forEach((t) => t.stop())
+        analyserRef.current = null
+        orbIntensityRef.current = 1.0
+        const blob = new Blob(audioChunksRef.current, { type: 'audio/webm' })
+        if (blob.size > 0) {
+          transcribeAudio(blob)
+        }
       }
-    }
 
-    recognition.start()
-    recognitionRef.current = recognition
-    setIsRecording(true)
-    setAudioStatus('Ouvindo... fale sobre sua empresa')
-  }, [sendToBackend])
+      recorder.start(250)
+      mediaRecorderRef.current = recorder
+      setIsRecording(true)
+      setAudioStatus('Ouvindo...')
+    } catch {
+      setAudioStatus('Permissao do microfone negada')
+    }
+  }, [stopSpeaking, transcribeAudio, getAudioCtx, startAnalysis])
+
+  startRecordingRef.current = startRecording
 
   const stopRecording = useCallback(() => {
-    if (recognitionRef.current) {
-      recognitionRef.current.stop()
-      recognitionRef.current = null
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+      mediaRecorderRef.current.stop()
+      mediaRecorderRef.current = null
       setIsRecording(false)
-      setAudioStatus('Processando...')
+      setAudioStatus('Transcrevendo...')
     }
   }, [])
 
@@ -602,13 +715,14 @@ export default function SwotInterview({
 
   const handleQuestionSelect = useCallback(
     async (option: string) => {
+      stopSpeaking()
       setQuestions(null)
       const currentHistory = messagesRef.current
       const userMsg: ChatMessage = { role: 'user', content: option }
       setMessages((prev) => [...prev, userMsg])
       await sendToBackend(option, currentHistory)
     },
-    [sendToBackend]
+    [stopSpeaking, sendToBackend]
   )
 
   // ── Clean display text (strip XML tags) ──
@@ -796,6 +910,7 @@ export default function SwotInterview({
               <div className="flex-1 flex flex-col items-center justify-center gap-5 px-6 py-6">
                 <InterviewOrb
                   active={isRecording || isSpeaking}
+                  intensityRef={orbIntensityRef}
                   onPress={toggleRecording}
                   size={160}
                 />
@@ -880,7 +995,7 @@ export default function SwotInterview({
                               className="text-[10px] font-bold"
                               style={{ color: '#ff6b2c' }}
                             >
-                              Nova
+                              Axel
                             </span>
                           </div>
                         )}

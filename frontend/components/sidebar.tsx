@@ -10,6 +10,7 @@ import {
   ChevronDown,
 } from 'lucide-react'
 import { WorkspaceSwitcher } from '@/components/workspace/workspace-switcher'
+import { useWorkspaceStore } from '@/store/useWorkspaceStore'
 
 const MIN_WIDTH = 72
 const MAX_WIDTH = 320
@@ -118,6 +119,8 @@ export function Sidebar({
 }) {
   const pathname = usePathname()
   const { logout } = useAuthStore()
+  const { activeWorkspace } = useWorkspaceStore()
+  const isPersonal = !activeWorkspace || activeWorkspace.workspace_type === 'personal'
   const dragRef = useRef<{ startX: number; startWidth: number } | null>(null)
   const [isDragging, setIsDragging] = useState(false)
 
@@ -248,7 +251,7 @@ export function Sidebar({
 
         {/* Navigation */}
         <nav className="flex-1 overflow-y-auto py-2">
-          {sections.map((section) => (
+          {sections.filter((s) => !(s.label === 'Workspace' && isPersonal)).map((section) => (
             <div key={section.label}>
               {!collapsed && (
                 <div

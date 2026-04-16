@@ -159,7 +159,7 @@ See `.env.example` for the full list. Key variables:
 | JWT_SECRET        | Secret for JWT token signing         |
 | ENCRYPTION_KEY    | AES-256-GCM key for API key storage  |
 | BAILEYS_URL       | WhatsApp Baileys API endpoint        |
-| BAISYNC_API_KEY   | OpenAI key for Baisync Agent         |
+| BAISYNC_API_KEY   | Gemini API key for Baisync Agent     |
 | SMTP_*            | Email service configuration          |
 | ADMIN_USER/PASS   | Admin panel credentials              |
 

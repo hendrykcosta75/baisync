@@ -52,10 +52,10 @@ fn build_system_prompt(workspace_name: &str) -> String {
     };
 
     format!(
-        r#"Voce e uma entrevistadora de IA especializada em criar analises SWOT para negocios. Seu nome e Nova. Voce conduz entrevistas estrategicas para mapear forcas, fraquezas, oportunidades e ameacas de empresas.
+        r#"Você é um entrevistador de IA especializado em criar análises SWOT para negócios. Seu nome é Axel. Você conduz entrevistas estratégicas para mapear forças, fraquezas, oportunidades e ameaças de empresas.
 
-## Saudacao
-Use "{greeting}" como saudacao inicial.
+## Saudação
+Use "{greeting}" como saudação inicial.
 
 ## Workspace
 O workspace atual se chama "{workspace_name}".
@@ -64,77 +64,77 @@ O workspace atual se chama "{workspace_name}".
 
 ### Fase 1 - Abertura
 Na sua PRIMEIRA mensagem:
-1. Cumprimente com "{greeting}! Sou a Nova, sua assistente de inteligencia artificial."
-2. Diga "Vamos iniciar agora uma entrevista para analisar estrategicamente a sua empresa. Me confirma quando estiver pronto para comecar!"
-3. PARE e aguarde confirmacao.
+1. Cumprimente com "{greeting}! Sou o Axel, seu assistente de inteligência artificial."
+2. Diga "Vamos iniciar agora uma entrevista para analisar estrategicamente a sua empresa. Me confirma quando estiver pronto para começar!"
+3. PARE e aguarde confirmação.
 
-### Fase 2 - Entendimento do Negocio
-Apos confirmacao, use <swot-questions> para perguntas estruturadas. Faca UMA pergunta por vez.
+### Fase 2 - Entendimento do Negócio
+Após confirmação, use <swot-questions> para perguntas estruturadas. Faça UMA pergunta por vez.
 
 Perguntas iniciais:
 1. Qual o nome e setor da empresa?
-   Opcoes: Tecnologia, Saude, Alimentacao, Varejo/E-commerce, Servicos/Consultoria, Educacao, Imobiliario, Industria, Outro
+   Opções: Tecnologia, Saúde, Alimentação, Varejo/E-commerce, Serviços/Consultoria, Educação, Imobiliário, Indústria, Outro
 
-2. Quais os principais produtos ou servicos oferecidos?
+2. Quais os principais produtos ou serviços oferecidos?
 
 3. Qual o porte da empresa?
-   Opcoes: MEI/Autonomo, Microempresa (ate 10 func.), Pequena empresa (10-50), Media empresa (50-250), Grande empresa (250+)
+   Opções: MEI/Autônomo, Microempresa (até 10 func.), Pequena empresa (10-50), Média empresa (50-250), Grande empresa (250+)
 
-4. Quem e o publico-alvo principal?
+4. Quem é o público-alvo principal?
 
-### Fase 3 - Analise SWOT Aprofundada
-Faca perguntas exploratoriass para cada quadrante:
+### Fase 3 - Análise SWOT Aprofundada
+Faça perguntas exploratórias para cada quadrante:
 
-**Forcas (Strengths):**
+**Forças (Strengths):**
 - Quais diferenciais competitivos da empresa?
-- Que recursos ou capacidades unicas a empresa tem?
+- Que recursos ou capacidades únicas a empresa tem?
 - O que os clientes mais elogiam?
 
 **Fraquezas (Weaknesses):**
-- Quais areas precisam de melhoria?
-- Que limitacoes internas existem?
+- Quais áreas precisam de melhoria?
+- Que limitações internas existem?
 - Onde a empresa perde para concorrentes?
 
 **Oportunidades (Opportunities):**
-- Que tendencias de mercado podem ser aproveitadas?
+- Que tendências de mercado podem ser aproveitadas?
 - Existem nichos ou segmentos inexplorados?
 - Que parcerias ou tecnologias podem gerar crescimento?
 
-**Ameacas (Threats):**
+**Ameaças (Threats):**
 - Quais concorrentes preocupam mais?
-- Que mudancas regulatorias ou economicas podem impactar?
+- Que mudanças regulatórias ou econômicas podem impactar?
 - Quais riscos externos mais relevantes?
 
 ### Fase 4 - Perguntas Complementares
-Faca 2-3 perguntas adicionais baseadas nas respostas para aprofundar a analise.
+Faça 2-3 perguntas adicionais baseadas nas respostas para aprofundar a análise.
 
-### Fase 5 - Geracao do SWOT
-Quando tiver informacoes suficientes (minimo ~6 trocas de mensagens), gere o SWOT:
-1. Informe que vai criar a analise
+### Fase 5 - Geração do SWOT
+Quando tiver informações suficientes (mínimo ~8 trocas de mensagens), gere o SWOT:
+1. Informe que vai criar a análise
 2. Emita a tag <swot-create> com os itens
 
 ## Formato de Question Box
-Para perguntas com opcoes, use:
-<swot-questions>{{"question": "Sua pergunta aqui", "options": ["Opcao 1", "Opcao 2", "Opcao 3"]}}</swot-questions>
+Para perguntas com opções, use:
+<swot-questions>{{"question": "Sua pergunta aqui", "options": ["Opção 1", "Opção 2", "Opção 3"]}}</swot-questions>
 
-Use question_box para TODAS as perguntas que tenham opcoes previsiveis. Para perguntas abertas, use texto normal.
+Use question_box para TODAS as perguntas que tenham opções previsíveis. Para perguntas abertas, use texto normal.
 
-## Formato de Criacao SWOT
+## Formato de Criação SWOT
 Quando pronto para criar o SWOT:
-<swot-create>{{"title": "SWOT - [Nome da Empresa]", "items": [{{"quadrant": "strengths", "content": "Descricao do item"}}, {{"quadrant": "weaknesses", "content": "..."}}  , {{"quadrant": "opportunities", "content": "..."}}, {{"quadrant": "threats", "content": "..."}}]}}</swot-create>
+<swot-create>{{"title": "SWOT - [Nome da Empresa]", "items": [{{"quadrant": "strengths", "content": "Descrição do item"}}, {{"quadrant": "weaknesses", "content": "..."}}  , {{"quadrant": "opportunities", "content": "..."}}, {{"quadrant": "threats", "content": "..."}}]}}</swot-create>
 
 Gere pelo menos 3 itens por quadrante (12+ no total).
 
 ## Regras
-- Responda SEMPRE em portugues brasileiro
-- Faca UMA pergunta por vez, nunca liste todas
-- Seja consultiva: explique brevemente por que cada informacao importa
-- Use linguagem profissional mas acessivel
-- Quando usar <swot-questions>, a resposta do usuario sera a opcao selecionada
-- Mantenha respostas curtas e diretas (maximo 3 paragrafos)
-- NAO use emojis
-- Ao gerar o SWOT, seja especifico e baseado nas respostas coletadas
-- Cada item do SWOT deve ser uma frase completa e acionavel"#,
+- Responda SEMPRE em português brasileiro com acentuação correta
+- Faça UMA pergunta por vez, nunca liste todas
+- Seja consultivo: explique brevemente por que cada informação importa
+- Use linguagem profissional mas acessível
+- Quando usar <swot-questions>, a resposta do usuário será a opção selecionada
+- Mantenha respostas curtas e diretas (máximo 3 parágrafos)
+- NÃO use emojis
+- Ao gerar o SWOT, seja específico e baseado nas respostas coletadas
+- Cada item do SWOT deve ser uma frase completa e acionável"#,
         greeting = greeting,
         workspace_name = workspace_name,
     )
@@ -168,38 +168,45 @@ pub async fn interview_chat(
 
     let system_prompt = build_system_prompt(ws_name);
 
-    // Build messages for OpenAI
-    let mut input = vec![serde_json::json!({
-        "role": "developer",
-        "content": system_prompt,
-    })];
+    // Build Gemini contents
+    let mut contents: Vec<serde_json::Value> = Vec::new();
 
     for msg in &req.history {
-        input.push(serde_json::json!({
-            "role": msg.role,
-            "content": msg.content,
+        let role = if msg.role == "assistant" { "model" } else { "user" };
+        contents.push(serde_json::json!({
+            "role": role,
+            "parts": [{"text": msg.content}],
         }));
     }
 
-    input.push(serde_json::json!({
+    contents.push(serde_json::json!({
         "role": "user",
-        "content": req.message,
+        "parts": [{"text": req.message}],
     }));
+
+    // Coalesce consecutive same-role messages (Gemini requirement)
+    contents = coalesce_contents(contents);
 
     let (tx, rx) = mpsc::channel::<Result<Event, Infallible>>(128);
 
     tokio::spawn(async move {
         let client = reqwest::Client::new();
         let body = serde_json::json!({
-            "model": "gpt-4o",
-            "input": input,
-            "stream": true,
-            "max_output_tokens": 2048,
+            "systemInstruction": {"parts": [{"text": system_prompt}]},
+            "contents": contents,
+            "generationConfig": {
+                "temperature": 0.7,
+                "maxOutputTokens": 2048,
+            },
         });
 
+        let url = format!(
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:streamGenerateContent?alt=sse&key={}",
+            api_key
+        );
+
         let resp = client
-            .post("https://api.openai.com/v1/responses")
-            .header("Authorization", format!("Bearer {}", api_key))
+            .post(&url)
             .header("Content-Type", "application/json")
             .json(&body)
             .send()
@@ -209,7 +216,7 @@ pub async fn interview_chat(
             Ok(response) => {
                 if !response.status().is_success() {
                     let error_text = response.text().await.unwrap_or_default();
-                    tracing::error!("OpenAI API error for SWOT interview: {}", error_text);
+                    tracing::error!("Gemini API error for SWOT interview: {}", error_text);
                     let _ = tx
                         .send(Ok(Event::default().event("error").data(
                             serde_json::json!({"error": "Nao foi possivel processar. Tente novamente."}).to_string(),
@@ -241,18 +248,15 @@ pub async fn interview_chat(
                                     if let Ok(parsed) =
                                         serde_json::from_str::<serde_json::Value>(data)
                                     {
-                                        let event_type = parsed["type"].as_str().unwrap_or("");
-
-                                        if event_type == "response.output_text.delta" {
-                                            if let Some(delta) = parsed["delta"].as_str() {
-                                                full_content.push_str(delta);
-                                                let _ = tx
-                                                    .send(Ok(Event::default().event("token").data(
-                                                        serde_json::json!({"text": delta})
-                                                            .to_string(),
-                                                    )))
-                                                    .await;
-                                            }
+                                        // Gemini streaming: extract text from candidates
+                                        if let Some(text) = parsed["candidates"][0]["content"]["parts"][0]["text"].as_str() {
+                                            full_content.push_str(text);
+                                            let _ = tx
+                                                .send(Ok(Event::default().event("token").data(
+                                                    serde_json::json!({"text": text})
+                                                        .to_string(),
+                                                )))
+                                                .await;
                                         }
                                     }
                                 }
@@ -393,47 +397,13 @@ pub async fn interview_tts(
         }
     }
 
-    // Fallback: OpenAI TTS
-    let api_key = &config.baisync_api_key;
-    if api_key.is_empty() {
-        return Err(AppError::InternalError("No TTS API key configured".into()));
-    }
-
-    let client = reqwest::Client::new();
-    let resp = client
-        .post("https://api.openai.com/v1/audio/speech")
-        .header("Authorization", format!("Bearer {}", api_key))
-        .header("Content-Type", "application/json")
-        .json(&serde_json::json!({
-            "model": "tts-1",
-            "input": clean_text,
-            "voice": "nova",
-            "response_format": "mp3"
-        }))
-        .send()
-        .await
-        .map_err(|e| AppError::InternalError(format!("OpenAI TTS request failed: {e}")))?;
-
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let err = resp.text().await.unwrap_or_default();
-        return Err(AppError::InternalError(format!(
-            "OpenAI TTS error {status}: {err}"
-        )));
-    }
-
-    let stream = resp.bytes_stream();
-    let body = Body::from_stream(stream);
-
-    Ok(Response::builder()
-        .header(header::CONTENT_TYPE, "audio/mpeg")
-        .header(header::TRANSFER_ENCODING, "chunked")
-        .header(header::CACHE_CONTROL, "no-cache")
-        .body(body)
-        .unwrap())
+    // No fallback — ElevenLabs is required for TTS
+    Err(AppError::InternalError(
+        "TTS nao disponivel. Configure a chave da ElevenLabs.".into(),
+    ))
 }
 
-// ─── STT (Speech to Text via OpenAI Whisper) ────────────────────────────────
+// ─── STT (Speech to Text via Gemini) ────────────────────────────────────────
 
 pub async fn interview_stt(
     Extension(db): Extension<DbSession>,
@@ -450,15 +420,11 @@ pub async fn interview_stt(
     }
 
     let mut audio_bytes: Option<Vec<u8>> = None;
-    let mut file_name = "audio.webm".to_string();
     let mut mime = "audio/webm".to_string();
 
     while let Ok(Some(field)) = multipart.next_field().await {
         let name = field.name().unwrap_or("").to_string();
         if name == "audio" {
-            if let Some(n) = field.file_name() {
-                file_name = n.to_string();
-            }
             if let Some(ct) = field.content_type() {
                 mime = ct.to_string();
             }
@@ -475,56 +441,89 @@ pub async fn interview_stt(
         return Err(AppError::BadRequest("Audio file is empty".into()));
     }
 
-    tracing::info!(
-        "SWOT STT: received {} bytes, file={}, mime={}",
-        audio_data.len(),
-        file_name,
-        mime
-    );
+    tracing::info!("SWOT STT: received {} bytes, mime={}", audio_data.len(), mime);
+
+    // Encode audio as base64 and send to Gemini for transcription
+    use base64::Engine;
+    let audio_b64 = base64::engine::general_purpose::STANDARD.encode(&audio_data);
 
     let client = reqwest::Client::new();
-    let file_part = reqwest::multipart::Part::bytes(audio_data)
-        .file_name(file_name)
-        .mime_str(&mime)
-        .unwrap_or_else(|_| {
-            reqwest::multipart::Part::bytes(vec![])
-                .file_name("audio.webm")
-                .mime_str("audio/webm")
-                .unwrap()
-        });
+    let body = serde_json::json!({
+        "contents": [{
+            "role": "user",
+            "parts": [
+                {"text": "Transcreva o audio a seguir em portugues brasileiro. Retorne APENAS o texto transcrito, sem explicacoes, aspas ou formatacao."},
+                {"inline_data": {"mime_type": mime, "data": audio_b64}}
+            ]
+        }],
+        "generationConfig": {
+            "temperature": 0.0,
+            "maxOutputTokens": 1024,
+        }
+    });
 
-    let form = reqwest::multipart::Form::new()
-        .text("model", "whisper-1")
-        .text("language", "pt")
-        .part("file", file_part);
+    let url = format!(
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key={}",
+        api_key
+    );
 
     let resp = client
-        .post("https://api.openai.com/v1/audio/transcriptions")
-        .header("Authorization", format!("Bearer {}", api_key))
-        .multipart(form)
+        .post(&url)
+        .header("Content-Type", "application/json")
+        .json(&body)
         .send()
         .await
-        .map_err(|e| AppError::InternalError(format!("Whisper request failed: {e}")))?;
+        .map_err(|e| AppError::InternalError(format!("Gemini STT request failed: {e}")))?;
 
     if !resp.status().is_success() {
         let status = resp.status();
         let err = resp.text().await.unwrap_or_default();
         return Err(AppError::InternalError(format!(
-            "Whisper error {status}: {err}"
+            "Gemini STT error {status}: {err}"
         )));
     }
 
     let data: serde_json::Value = resp
         .json()
         .await
-        .map_err(|e| AppError::InternalError(format!("Failed to parse Whisper response: {e}")))?;
+        .map_err(|e| AppError::InternalError(format!("Failed to parse Gemini STT response: {e}")))?;
 
-    let text = data["text"].as_str().unwrap_or("").to_string();
+    let text = data["candidates"][0]["content"]["parts"][0]["text"]
+        .as_str()
+        .unwrap_or("")
+        .trim()
+        .to_string();
 
     Ok(Json(serde_json::json!({ "text": text })))
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
+
+/// Merge consecutive same-role Gemini contents into one entry.
+fn coalesce_contents(contents: Vec<serde_json::Value>) -> Vec<serde_json::Value> {
+    if contents.is_empty() {
+        return contents;
+    }
+
+    let mut coalesced: Vec<serde_json::Value> = Vec::new();
+    for msg in contents {
+        let role = msg["role"].as_str().unwrap_or("user");
+        if let Some(last) = coalesced.last_mut() {
+            if last["role"].as_str().unwrap_or("") == role {
+                if let (Some(existing), Some(new)) = (
+                    last.get_mut("parts").and_then(|p| p.as_array_mut()),
+                    msg["parts"].as_array(),
+                ) {
+                    existing.extend(new.iter().cloned());
+                }
+                continue;
+            }
+        }
+        coalesced.push(msg);
+    }
+
+    coalesced
+}
 
 fn strip_xml_tags(input: &str) -> String {
     let mut result = String::with_capacity(input.len());
