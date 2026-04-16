@@ -76,41 +76,6 @@ export interface OkrCheckIn {
   created_at: string
 }
 
-export interface OkrInitiative {
-  key_result_id: string
-  id: string
-  title: string
-  description: string | null
-  status: InitiativeStatus
-  priority: string | null
-  effort_estimate: string | null
-  assignee_id: string | null
-  task_id: string | null
-  team_id: string | null
-  start_date: string | null
-  end_date: string | null
-  progress: number
-  created_at: string
-  updated_at: string
-}
-
-export interface InitiativeByWorkspace {
-  workspace_id: string
-  id: string
-  key_result_id: string
-  objective_id: string | null
-  title: string
-  description: string | null
-  status: InitiativeStatus
-  priority: string | null
-  assignee_id: string | null
-  team_id: string | null
-  start_date: string | null
-  end_date: string | null
-  progress: number
-  created_at: string
-}
-
 export interface OkrAttachment {
   entity_id: string
   id: string
@@ -127,8 +92,6 @@ export interface OkrAttachment {
 export type OkrObjectiveType = 'committed' | 'aspirational' | 'learning'
 export type OkrStatus = 'on_track' | 'at_risk' | 'behind' | 'achieved' | 'canceled'
 export type KrType = 'number' | 'percentage' | 'binary'
-export type InitiativeStatus = 'planned' | 'in_progress' | 'done'
-
 export const OKR_TYPE_CONFIG: Record<OkrObjectiveType, { label: string; color: string }> = {
   committed: { label: 'Committed', color: '#22c55e' },
   aspirational: { label: 'Aspirational', color: '#f59e0b' },

@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { apiFetch } from '@/lib/api'
 import type {
-  OkrObjective, OkrObjectiveByCycle, OkrKeyResult, OkrCheckIn, OkrInitiative, OkrObjectiveChild,
+  OkrObjective, OkrObjectiveByCycle, OkrKeyResult, OkrCheckIn, OkrObjectiveChild,
   OkrAttachment,
 } from '@/types/okr'
 
@@ -10,7 +10,6 @@ interface OkrState {
   activeObjective: OkrObjective | null
   checkIns: OkrCheckIn[]
   checkInsCursor: string | null
-  initiatives: OkrInitiative[]
   isLoading: boolean
   currentCycle: string
 
@@ -40,12 +39,6 @@ interface OkrState {
   fetchAttachments: (entityType: string, entityId: string) => Promise<OkrAttachment[]>
   uploadAttachment: (entityType: string, entityId: string, file: File) => Promise<OkrAttachment>
   deleteAttachment: (entityId: string, attachmentId: string) => Promise<void>
-
-  fetchInitiatives: (krId: string) => Promise<void>
-  createInitiative: (krId: string, data: {
-    title: string; status?: string; assignee_id?: string;
-    task_id?: string; team_id?: string;
-  }) => Promise<OkrInitiative>
 }
 
 export const useOkrStore = create<OkrState>((set) => ({
@@ -53,7 +46,6 @@ export const useOkrStore = create<OkrState>((set) => ({
   activeObjective: null,
   checkIns: [],
   checkInsCursor: null,
-  initiatives: [],
   isLoading: false,
   currentCycle: getCurrentCycleDefault(),
 
@@ -176,20 +168,6 @@ export const useOkrStore = create<OkrState>((set) => ({
 
   deleteAttachment: async (entityId, attachmentId) => {
     await apiFetch(`/api/okr-attachments/file/${entityId}/${attachmentId}`, { method: 'DELETE' })
-  },
-
-  fetchInitiatives: async (krId) => {
-    const data = await apiFetch<{ initiatives: OkrInitiative[] }>(`/api/key-results/${krId}/initiatives`)
-    set({ initiatives: data.initiatives })
-  },
-
-  createInitiative: async (krId, body) => {
-    const data = await apiFetch<{ initiative: OkrInitiative }>(`/api/key-results/${krId}/initiatives`, {
-      method: 'POST',
-      body: JSON.stringify(body),
-    })
-    set((s) => ({ initiatives: [...s.initiatives, data.initiative] }))
-    return data.initiative
   },
 }))
 

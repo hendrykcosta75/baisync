@@ -5,12 +5,12 @@ node_modules/
 docker-compose.coolify.yml
 
 # IDE
-.idea/
-.vscode/
+.idea
+.vscode
 
 # Claude Code internal
-.claude/agents/
-.claude/commands/
+.claude/agents
+.claude/commands
 
 # Shell/system config
 .bashrc

@@ -8,7 +8,6 @@ describe('useOkrStore', () => {
       activeObjective: null,
       checkIns: [],
       checkInsCursor: null,
-      initiatives: [],
       isLoading: false,
     })
   })
