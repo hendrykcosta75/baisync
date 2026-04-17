@@ -20,6 +20,9 @@ pub struct Appointment {
     pub is_manual: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    pub meeting_id: Option<Uuid>,
+    pub meeting_code: Option<String>,
+    pub meeting_url: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -35,6 +38,9 @@ pub struct CreateAppointmentRequest {
     pub origin_channel: Option<String>,
     pub conversation_id: Option<Uuid>,
     pub is_manual: Option<bool>,
+    pub meeting_id: Option<Uuid>,
+    pub meeting_code: Option<String>,
+    pub meeting_url: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

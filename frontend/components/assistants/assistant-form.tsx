@@ -58,16 +58,20 @@ export function AssistantForm({ initialData, onSubmit, onCancel, assistantId, sh
   // eslint-disable-next-line react-hooks/incompatible-library
   const selectedProvider = watch('llmProvider') as LLMProvider
   const selectedModel = watch('model')
-  const { models: availableModels, isLoading: modelsLoading, hasApiKey } = useModels(
+  const { models: availableModels, isLoading: modelsLoading, hasApiKey, modelsReady } = useModels(
     selectedProvider,
     assistantId && shareToken ? { assistantId, shareToken } : undefined
   )
 
   useEffect(() => {
+    // Don't "fix" the selected model until we have the real (non-fallback) list.
+    // Otherwise, opening the form with a saved model that isn't in the FALLBACK
+    // list (e.g. gemini-3-flash-preview) would clobber it before the API responds.
+    if (!modelsReady) return
     if (availableModels.length > 0 && !availableModels.includes(selectedModel)) {
       setValue('model', availableModels[0])
     }
-  }, [selectedProvider, availableModels, selectedModel, setValue])
+  }, [selectedProvider, availableModels, selectedModel, setValue, modelsReady])
 
   const limitations = getModelLimitations(selectedProvider, selectedModel)
 

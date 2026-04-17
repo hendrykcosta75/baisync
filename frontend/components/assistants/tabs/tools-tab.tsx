@@ -89,6 +89,9 @@ export function ToolsTab({ assistant, shareToken, isReadOnly }: ToolsTabProps) {
   const [pixMode, setPixMode] = useState<'direct' | 'mercadopago' | 'stripe'>('direct')
   const [stripePixCheck, setStripePixCheck] = useState<{ checking: boolean; result: { ok: boolean; msg: string } | null }>({ checking: false, result: null })
   const [cardMode, setCardMode] = useState<'stripe' | 'mercadopago'>('stripe')
+  const [meetingLinkExpiry, setMeetingLinkExpiry] = useState<'single_use' | '24h' | '7d' | 'never'>('24h')
+  const [autoGenerateMeeting, setAutoGenerateMeeting] = useState(false)
+  const [scheduleMeetingLinkExpiry, setScheduleMeetingLinkExpiry] = useState<'single_use' | '24h' | '7d' | 'never'>('7d')
   const [editingBuiltinTool, setEditingBuiltinTool] = useState<AssistantTool | null>(null)
 
   // URL test state (for send_document)
@@ -198,6 +201,8 @@ export function ToolsTab({ assistant, shareToken, isReadOnly }: ToolsTabProps) {
         schedule_appointment: 'agendar_compromisso',
         pix_payment: 'cobrar_pix',
         card_payment: 'cobrar_cartao',
+        create_meeting: 'gerar_link_reuniao',
+        current_datetime: 'data_hora_atual',
       }
       const descMap: Record<string, string> = {
         send_document: 'Envia um documento ou imagem na conversa fornecendo uma URL',
@@ -205,12 +210,19 @@ export function ToolsTab({ assistant, shareToken, isReadOnly }: ToolsTabProps) {
         schedule_appointment: 'Agenda, cancela ou reagenda compromissos para clientes durante a conversa',
         pix_payment: 'Gera cobranças PIX e verifica pagamentos durante conversas',
         card_payment: 'Gera cobranças por cartão de crédito/débito e verifica pagamentos durante conversas',
+        create_meeting: 'Cria links de videochamadas (instantâneas ou agendadas) para compartilhar com clientes durante a conversa',
+        current_datetime: 'Retorna a data e hora atuais — use antes de agendar ou falar sobre datas relativas (hoje, amanhã, esta semana)',
       }
       setBuiltinName(nameMap[type] || type)
       setBuiltinDescription(descMap[type] || '')
       setBuiltinEnabled(true)
       setBuiltinEndpoint('')
       setTestUrlResult(null)
+      if (type === 'create_meeting') setMeetingLinkExpiry('24h')
+      if (type === 'schedule_appointment') {
+        setAutoGenerateMeeting(false)
+        setScheduleMeetingLinkExpiry('7d')
+      }
       setBuiltinModalOpen(true)
     }
   }
@@ -234,7 +246,7 @@ export function ToolsTab({ assistant, shareToken, isReadOnly }: ToolsTabProps) {
 
   const openEditModal = (tool: AssistantTool) => {
     const type = tool.toolType || 'http_request'
-    if (type === 'send_document' || type === 'notify_human' || type === 'schedule_appointment' || type === 'pix_payment' || type === 'card_payment') {
+    if (type === 'send_document' || type === 'notify_human' || type === 'schedule_appointment' || type === 'pix_payment' || type === 'card_payment' || type === 'create_meeting' || type === 'current_datetime') {
       setEditingBuiltinTool(tool)
       setBuiltinToolType(type)
       setBuiltinName(tool.name)
@@ -253,6 +265,19 @@ export function ToolsTab({ assistant, shareToken, isReadOnly }: ToolsTabProps) {
           const h = JSON.parse(tool.headers)
           setCardMode(h.card_mode || 'stripe')
         } catch { setCardMode('stripe') }
+      }
+      if (type === 'create_meeting') {
+        try {
+          const h = tool.headers ? JSON.parse(tool.headers) : {}
+          setMeetingLinkExpiry(h.link_expiry || '24h')
+        } catch { setMeetingLinkExpiry('24h') }
+      }
+      if (type === 'schedule_appointment') {
+        try {
+          const h = tool.headers ? JSON.parse(tool.headers) : {}
+          setAutoGenerateMeeting(Boolean(h.auto_generate_meeting))
+          setScheduleMeetingLinkExpiry(h.meeting_link_expiry || '7d')
+        } catch { setAutoGenerateMeeting(false); setScheduleMeetingLinkExpiry('7d') }
       }
       setTestUrlResult(null)
       setBuiltinModalOpen(true)
@@ -308,6 +333,8 @@ export function ToolsTab({ assistant, shareToken, isReadOnly }: ToolsTabProps) {
       toolType: builtinToolType,
       ...(builtinToolType === 'pix_payment' ? { headers: JSON.stringify({ pix_key_type: pixKeyType, pix_mode: pixMode }) } : {}),
       ...(builtinToolType === 'card_payment' ? { headers: JSON.stringify({ card_mode: cardMode }) } : {}),
+      ...(builtinToolType === 'create_meeting' ? { headers: JSON.stringify({ link_expiry: meetingLinkExpiry }) } : {}),
+      ...(builtinToolType === 'schedule_appointment' ? { headers: JSON.stringify({ auto_generate_meeting: autoGenerateMeeting, meeting_link_expiry: scheduleMeetingLinkExpiry }) } : {}),
     }
 
     if (shareToken) {
@@ -320,6 +347,8 @@ export function ToolsTab({ assistant, shareToken, isReadOnly }: ToolsTabProps) {
               tool_type: builtinToolType, endpoint: toolData.endpoint,
               ...(builtinToolType === 'pix_payment' ? { headers_json: JSON.stringify({ pix_key_type: pixKeyType, pix_mode: pixMode }) } : {}),
               ...(builtinToolType === 'card_payment' ? { headers_json: JSON.stringify({ card_mode: cardMode }) } : {}),
+              ...(builtinToolType === 'create_meeting' ? { headers_json: JSON.stringify({ link_expiry: meetingLinkExpiry }) } : {}),
+              ...(builtinToolType === 'schedule_appointment' ? { headers_json: JSON.stringify({ auto_generate_meeting: autoGenerateMeeting, meeting_link_expiry: scheduleMeetingLinkExpiry }) } : {}),
             }),
           })
           setSharedTools(prev => prev.map(t => t.id === editingBuiltinTool.id ? { ...t, ...toolData } as AssistantTool : t))
@@ -331,6 +360,8 @@ export function ToolsTab({ assistant, shareToken, isReadOnly }: ToolsTabProps) {
               tool_type: builtinToolType, endpoint: toolData.endpoint,
               ...(builtinToolType === 'pix_payment' ? { headers_json: JSON.stringify({ pix_key_type: pixKeyType, pix_mode: pixMode }) } : {}),
               ...(builtinToolType === 'card_payment' ? { headers_json: JSON.stringify({ card_mode: cardMode }) } : {}),
+              ...(builtinToolType === 'create_meeting' ? { headers_json: JSON.stringify({ link_expiry: meetingLinkExpiry }) } : {}),
+              ...(builtinToolType === 'schedule_appointment' ? { headers_json: JSON.stringify({ auto_generate_meeting: autoGenerateMeeting, meeting_link_expiry: scheduleMeetingLinkExpiry }) } : {}),
             }),
           })
           setSharedTools(prev => [...prev, { id: created.id, ...toolData } as AssistantTool])
@@ -514,6 +545,10 @@ export function ToolsTab({ assistant, shareToken, isReadOnly }: ToolsTabProps) {
               ? { bg: 'bg-[#ff6b2c]/10 dark:bg-[#ff6b2c]/10', text: '', icon: <img src="/logo-pix-520x520.png" alt="PIX" width={24} height={24} className="brightness-0 invert-0" style={{ filter: 'brightness(0) saturate(100%) invert(45%) sepia(96%) saturate(1500%) hue-rotate(360deg) brightness(100%) contrast(100%)' }} /> }
               : toolType === 'card_payment'
               ? { bg: 'bg-[#635BFF]/10 dark:bg-[#635BFF]/10', text: 'text-[#635BFF] dark:text-[#635BFF]', icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><rect x="2" y="5" width="20" height="14" rx="2" stroke="currentColor" strokeWidth="1.5" /><path d="M2 10h20" stroke="currentColor" strokeWidth="1.5" /><path d="M6 15h4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" /></svg> }
+              : toolType === 'create_meeting'
+              ? { bg: 'bg-[#ff6b2c]/10 dark:bg-[#ff6b2c]/10', text: 'text-[#ff6b2c] dark:text-[#ff6b2c]', icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M23 7l-7 5 7 5V7z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /><rect x="1" y="5" width="15" height="14" rx="2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg> }
+              : toolType === 'current_datetime'
+              ? { bg: 'bg-sky-100 dark:bg-sky-900/30', text: 'text-sky-600 dark:text-sky-400', icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="1.5" /><path d="M12 7V12L15 14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg> }
               : { bg: 'bg-[#ff6b2c]/10 dark:bg-[#ff6b2c]/10', text: 'text-[#ff6b2c] dark:text-[#ff6b2c]', icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M13.325 3.05L8.667 20.432M15.5 5.5L20 10L15.5 14.5M8.5 5.5L4 10L8.5 14.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg> }
 
             const badgeConfig = toolType === 'send_document'
@@ -526,6 +561,10 @@ export function ToolsTab({ assistant, shareToken, isReadOnly }: ToolsTabProps) {
               ? { text: 'text-[#ff6b2c] dark:text-[#ff6b2c]', bg: 'bg-[#ff6b2c]/10 dark:bg-[#ff6b2c]/10', label: 'PIX' }
               : toolType === 'card_payment'
               ? { text: 'text-[#635BFF] dark:text-[#635BFF]', bg: 'bg-[#635BFF]/10 dark:bg-[#635BFF]/10', label: 'CARTÃO' }
+              : toolType === 'create_meeting'
+              ? { text: 'text-[#ff6b2c] dark:text-[#ff6b2c]', bg: 'bg-[#ff6b2c]/10 dark:bg-[#ff6b2c]/10', label: 'REUNIÃO' }
+              : toolType === 'current_datetime'
+              ? { text: 'text-sky-600 dark:text-sky-400', bg: 'bg-sky-100 dark:bg-sky-900/30', label: 'DATA/HORA' }
               : { text: 'text-[#ff6b2c] dark:text-[#ff6b2c]', bg: 'bg-[#ff6b2c]/10 dark:bg-[#ff6b2c]/10', label: tool.method || 'POST' }
 
             return (
@@ -557,15 +596,19 @@ export function ToolsTab({ assistant, shareToken, isReadOnly }: ToolsTabProps) {
                         toggleToolForAssistant(assistant.id, tool.id, val)
                       }
                     }}
-                  />
+                  >
+                    <Switch.Control>
+                      <Switch.Thumb />
+                    </Switch.Control>
+                  </Switch>
                   )}
                 </div>
 
                 <p className="text-sm text-muted mt-2 line-clamp-2 flex-1">{tool.description}</p>
 
                 <div className="mt-4 pt-4 border-t border-dim flex items-center justify-between">
-                  {toolType === 'notify_human' || toolType === 'pix_payment' || toolType === 'card_payment' ? (
-                    <div className="text-xs text-muted">{toolType === 'pix_payment' ? 'Cobrança PIX' : toolType === 'card_payment' ? 'Cobrança Cartão' : 'Ferramenta integrada'}</div>
+                  {toolType === 'notify_human' || toolType === 'pix_payment' || toolType === 'card_payment' || toolType === 'create_meeting' || toolType === 'schedule_appointment' || toolType === 'current_datetime' ? (
+                    <div className="text-xs text-muted">{toolType === 'pix_payment' ? 'Cobrança PIX' : toolType === 'card_payment' ? 'Cobrança Cartão' : toolType === 'create_meeting' ? 'Reuniões por vídeo' : toolType === 'schedule_appointment' ? 'Agendamento' : toolType === 'current_datetime' ? 'Data e hora atual' : 'Ferramenta integrada'}</div>
                   ) : (
                     <div className="text-xs text-slate-500 font-mono truncate max-w-[150px] bg-raised px-2 py-1 rounded">
                       {tool.endpoint || '—'}
@@ -617,7 +660,7 @@ export function ToolsTab({ assistant, shareToken, isReadOnly }: ToolsTabProps) {
       <Modal>
         <Modal.Backdrop isOpen={typeSelectionOpen} onOpenChange={setTypeSelectionOpen}>
           <Modal.Container>
-            <Modal.Dialog className="sm:max-w-[560px] w-full bg-overlay p-6 rounded-2xl shadow-xl flex flex-col gap-5">
+            <Modal.Dialog className="sm:max-w-[560px] w-full bg-overlay p-6 rounded-2xl shadow-xl flex flex-col gap-5 max-h-[90vh] overflow-y-auto">
               <div>
                 <h3 className="text-lg font-semibold text-foreground">Adicionar Ferramenta</h3>
                 <p className="text-sm text-muted mt-1">Selecione o tipo de ferramenta que deseja criar.</p>
@@ -774,6 +817,66 @@ export function ToolsTab({ assistant, shareToken, isReadOnly }: ToolsTabProps) {
                     </button>
                   )
                 })()}
+
+                {/* Current Date/Time */}
+                {(() => {
+                  const exists = tools.some(t => (t.toolType || 'http_request') === 'current_datetime')
+                  return (
+                    <button
+                      type="button"
+                      className={`flex flex-col items-center gap-3 p-4 rounded-xl transition text-center ${
+                        exists
+                          ? 'opacity-50 cursor-not-allowed'
+                          : 'hover:border-sky-400 hover:bg-sky-50 dark:hover:bg-sky-900/10 cursor-pointer'
+                      }`}
+                      onClick={() => !exists && selectToolType('current_datetime')}
+                      disabled={exists}
+                    >
+                      <div className="w-12 h-12 bg-sky-100 dark:bg-sky-900/30 text-sky-600 dark:text-sky-400 rounded-lg flex items-center justify-center">
+                        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                          <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="1.5" />
+                          <path d="M12 7V12L15 14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                      </div>
+                      <div>
+                        <p className="font-semibold text-foreground text-sm">Data e Hora Atual</p>
+                        <p className="text-xs text-muted mt-1">
+                          {exists ? 'Já configurado' : 'Retorna ao agente a data e hora atuais (timezone do assistente)'}
+                        </p>
+                      </div>
+                    </button>
+                  )
+                })()}
+
+                {/* Create Meeting */}
+                {(() => {
+                  const exists = tools.some(t => (t.toolType || 'http_request') === 'create_meeting')
+                  return (
+                    <button
+                      type="button"
+                      className={`flex flex-col items-center gap-3 p-4 rounded-xl transition text-center ${
+                        exists
+                          ? 'opacity-50 cursor-not-allowed'
+                          : 'hover:border-[#ff6b2c] hover:bg-[#ff6b2c]/5 dark:hover:bg-[#ff6b2c]/10 cursor-pointer'
+                      }`}
+                      onClick={() => !exists && selectToolType('create_meeting')}
+                      disabled={exists}
+                    >
+                      <div className="w-12 h-12 bg-[#ff6b2c]/10 dark:bg-[#ff6b2c]/10 text-[#ff6b2c] dark:text-[#ff6b2c] rounded-lg flex items-center justify-center">
+                        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                          <path d="M23 7l-7 5 7 5V7z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                          <rect x="1" y="5" width="15" height="14" rx="2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                      </div>
+                      <div>
+                        <p className="font-semibold text-foreground text-sm">Criar Link de Reunião</p>
+                        <p className="text-xs text-muted mt-1">
+                          {exists ? 'Já configurado' : 'Gera links de videochamadas instantâneas ou agendadas'}
+                        </p>
+                      </div>
+                    </button>
+                  )
+                })()}
               </div>
               <div className="flex justify-end">
                 <button type="button" className="btn-neu-ghost text-sm" onClick={() => setTypeSelectionOpen(false)}>Cancelar</button>
@@ -816,6 +919,20 @@ export function ToolsTab({ assistant, shareToken, isReadOnly }: ToolsTabProps) {
                       <path d="M6 15h4" stroke="#635BFF" strokeWidth="1.5" strokeLinecap="round" />
                     </svg>
                   </div>
+                ) : builtinToolType === 'create_meeting' ? (
+                  <div className="w-10 h-10 bg-[#ff6b2c]/10 dark:bg-[#ff6b2c]/10 text-[#ff6b2c] dark:text-[#ff6b2c] rounded-lg flex items-center justify-center shrink-0">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      <path d="M23 7l-7 5 7 5V7z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                      <rect x="1" y="5" width="15" height="14" rx="2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  </div>
+                ) : builtinToolType === 'current_datetime' ? (
+                  <div className="w-10 h-10 bg-sky-100 dark:bg-sky-900/30 text-sky-600 dark:text-sky-400 rounded-lg flex items-center justify-center shrink-0">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="1.5" />
+                      <path d="M12 7V12L15 14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  </div>
                 ) : (
                   <div className="w-10 h-10 bg-amber-100 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400 rounded-lg flex items-center justify-center shrink-0">
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -830,6 +947,8 @@ export function ToolsTab({ assistant, shareToken, isReadOnly }: ToolsTabProps) {
                       : builtinToolType === 'schedule_appointment' ? 'Agendar Compromisso'
                       : builtinToolType === 'pix_payment' ? 'Cobrança PIX'
                       : builtinToolType === 'card_payment' ? 'Cobrança por Cartão'
+                      : builtinToolType === 'create_meeting' ? 'Criar Link de Reunião'
+                      : builtinToolType === 'current_datetime' ? 'Data e Hora Atual'
                       : 'Notificar Agente Humano'
                     }
                   </h3>
@@ -842,6 +961,10 @@ export function ToolsTab({ assistant, shareToken, isReadOnly }: ToolsTabProps) {
                       ? 'A IA poderá gerar cobranças PIX e verificar pagamentos.'
                       : builtinToolType === 'card_payment'
                       ? 'A IA poderá gerar links de pagamento por cartão de crédito/débito.'
+                      : builtinToolType === 'create_meeting'
+                      ? 'A IA poderá gerar links de videochamadas (instantâneas ou agendadas) durante a conversa.'
+                      : builtinToolType === 'current_datetime'
+                      ? 'A IA saberá a data e hora reais no timezone configurado do assistente ao chamar esta tool.'
                       : 'A IA poderá notificar agentes humanos para intervir na conversa.'}
                   </p>
                 </div>
@@ -919,6 +1042,24 @@ export function ToolsTab({ assistant, shareToken, isReadOnly }: ToolsTabProps) {
                         </div>
                       )}
                     </div>
+                  </div>
+                )}
+
+                {/* Create Meeting — link expiry */}
+                {builtinToolType === 'create_meeting' && (
+                  <div className="flex flex-col gap-1.5">
+                    <Label>Expiração do link gerado</Label>
+                    <select
+                      value={meetingLinkExpiry}
+                      onChange={(e) => setMeetingLinkExpiry(e.target.value as 'single_use' | '24h' | '7d' | 'never')}
+                      className="w-full bg-raised rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-[#ff6b2c]"
+                    >
+                      <option value="single_use">Uso único (invalidado após o primeiro acesso)</option>
+                      <option value="24h">24 horas</option>
+                      <option value="7d">7 dias</option>
+                      <option value="never">Nunca expira</option>
+                    </select>
+                    <p className="text-xs text-muted mt-1">A IA cria reuniões instantâneas ou agendadas usando esta política de expiração.</p>
                   </div>
                 )}
 
@@ -1077,8 +1218,50 @@ export function ToolsTab({ assistant, shareToken, isReadOnly }: ToolsTabProps) {
                     onChange={(isChecked: React.ChangeEvent<HTMLInputElement> | boolean) => {
                       setBuiltinEnabled(typeof isChecked === 'boolean' ? isChecked : isChecked.target.checked)
                     }}
-                  />
+                  >
+                    <Switch.Control>
+                      <Switch.Thumb />
+                    </Switch.Control>
+                  </Switch>
                 </div>
+
+                {/* Meeting link integration for schedule_appointment */}
+                {builtinToolType === 'schedule_appointment' && (
+                  <div className="glass-card rounded-xl p-4 flex flex-col gap-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex-1">
+                        <p className="text-sm font-semibold text-foreground">Gerar link de reunião ao agendar</p>
+                        <p className="text-xs text-muted mt-0.5">Cada compromisso agendado pela IA virá com um link de videochamada pronto, no mesmo horário.</p>
+                      </div>
+                      <Switch
+                        isSelected={autoGenerateMeeting}
+                        onChange={(isChecked: React.ChangeEvent<HTMLInputElement> | boolean) => {
+                          setAutoGenerateMeeting(typeof isChecked === 'boolean' ? isChecked : isChecked.target.checked)
+                        }}
+                      >
+                        <Switch.Control>
+                          <Switch.Thumb />
+                        </Switch.Control>
+                      </Switch>
+                    </div>
+                    {autoGenerateMeeting && (
+                      <div className="flex flex-col gap-1.5">
+                        <Label>Expiração do link</Label>
+                        <select
+                          value={scheduleMeetingLinkExpiry}
+                          onChange={(e) => setScheduleMeetingLinkExpiry(e.target.value as 'single_use' | '24h' | '7d' | 'never')}
+                          className="w-full bg-raised rounded-lg px-3 py-2 text-sm text-foreground focus:outline-none focus:border-[#ff6b2c]"
+                        >
+                          <option value="single_use">Uso único</option>
+                          <option value="24h">24 horas</option>
+                          <option value="7d">7 dias</option>
+                          <option value="never">Nunca expira</option>
+                        </select>
+                        <p className="text-xs text-muted">O link aparece junto com a confirmação enviada ao cliente e fica registrado no compromisso.</p>
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {/* Availability config for schedule_appointment */}
                 {builtinToolType === 'schedule_appointment' && (
@@ -1581,7 +1764,11 @@ export function ToolsTab({ assistant, shareToken, isReadOnly }: ToolsTabProps) {
                               const val = typeof isChecked === 'boolean' ? isChecked : isChecked.target.checked
                               setSettings(s => ({ ...s, retryOnFailure: val }))
                             }}
-                          />
+                          >
+                            <Switch.Control>
+                              <Switch.Thumb />
+                            </Switch.Control>
+                          </Switch>
                         </div>
 
                         {settings.retryOnFailure && (
@@ -1608,7 +1795,11 @@ export function ToolsTab({ assistant, shareToken, isReadOnly }: ToolsTabProps) {
                               const val = typeof isChecked === 'boolean' ? isChecked : isChecked.target.checked
                               setSettings(s => ({ ...s, followRedirects: val }))
                             }}
-                          />
+                          >
+                            <Switch.Control>
+                              <Switch.Thumb />
+                            </Switch.Control>
+                          </Switch>
                         </div>
 
                         <div className="flex items-center justify-between py-2">
@@ -1622,7 +1813,11 @@ export function ToolsTab({ assistant, shareToken, isReadOnly }: ToolsTabProps) {
                               const val = typeof isChecked === 'boolean' ? isChecked : isChecked.target.checked
                               setSettings(s => ({ ...s, ignoreSSLErrors: val }))
                             }}
-                          />
+                          >
+                            <Switch.Control>
+                              <Switch.Thumb />
+                            </Switch.Control>
+                          </Switch>
                         </div>
                       </div>
                     </Tabs.Panel>

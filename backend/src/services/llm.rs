@@ -1,3 +1,4 @@
+use chrono::Datelike;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -308,12 +309,69 @@ impl From<&AssistantTool> for LlmTool {
                     tool_type,
                 };
             }
+            "current_datetime" => {
+                return Self {
+                    id: Some(t.id),
+                    name: sanitize_tool_name(&t.name),
+                    description: t.description.clone().unwrap_or_else(||
+                        "Retorna a data e hora atual. Use SEMPRE esta tool antes de falar sobre datas (hoje, amanhã, esta semana, próximo mês, etc.) ou antes de chamar check_availability / create em ferramentas de agendamento — o modelo não conhece a data real.".to_string()
+                    ),
+                    parameters: json!({
+                        "type": "object",
+                        "properties": {},
+                    }),
+                    endpoint: String::new(),
+                    method: String::new(),
+                    headers: t.headers_json.clone(),
+                    auth: None,
+                    query_params: None,
+                    body_content_type: None,
+                    body_content: None,
+                    tool_type,
+                };
+            }
+            "create_meeting" => {
+                return Self {
+                    id: Some(t.id),
+                    name: sanitize_tool_name(&t.name),
+                    description: t.description.clone().unwrap_or_else(||
+                        "Cria um link de reunião por vídeo (instantânea ou agendada) para compartilhar com o cliente. Use meeting_type=instant quando o cliente quer conversar agora; meeting_type=scheduled quando é para uma data futura (forneça scheduled_start no formato ISO 8601).".to_string()
+                    ),
+                    parameters: json!({
+                        "type": "object",
+                        "properties": {
+                            "meeting_type": {
+                                "type": "string",
+                                "enum": ["instant", "scheduled"],
+                                "description": "instant = começa agora mesmo; scheduled = reunião futura (requer scheduled_start)"
+                            },
+                            "title": {
+                                "type": "string",
+                                "description": "Título curto da reunião (ex: 'Demo com João', 'Reunião de briefing')"
+                            },
+                            "scheduled_start": {
+                                "type": "string",
+                                "description": "Data e hora ISO 8601 do início (ex: 2026-04-15T14:00:00). Obrigatório apenas para meeting_type=scheduled."
+                            }
+                        },
+                        "required": ["meeting_type", "title"]
+                    }),
+                    endpoint: String::new(),
+                    method: String::new(),
+                    headers: t.headers_json.clone(),
+                    auth: None,
+                    query_params: None,
+                    body_content_type: None,
+                    body_content: None,
+                    tool_type,
+                };
+            }
             "schedule_appointment" => {
                 return Self {
                     id: Some(t.id),
                     name: sanitize_tool_name(&t.name),
                     description: t.description.clone().unwrap_or_else(||
-                        "Agenda, cancela ou reagenda compromissos. IMPORTANTE: SEMPRE use check_availability ANTES de agendar. Use week_start para ver dias disponíveis, depois date para horários específicos. Nunca agende sem verificar disponibilidade primeiro.".to_string()
+                        "Agenda, cancela ou reagenda compromissos. REGRAS OBRIGATÓRIAS: (1) SEMPRE chame data_hora_atual PRIMEIRO para saber o ano/mês/dia de hoje — NUNCA assuma pelo seu conhecimento interno. (2) SEMPRE use check_availability ANTES de create. (3) Todas as datas em date_time DEVEM ser futuras e usar o MESMO ANO retornado por data_hora_atual. Se o cliente disser 'semana que vem', some os dias à data de hoje — NUNCA invente anos anteriores.".to_string()
                     ),
                     parameters: json!({
                         "type": "object",
@@ -326,19 +384,19 @@ impl From<&AssistantTool> for LlmTool {
                             "client_name": { "type": "string", "description": "Nome completo do cliente" },
                             "client_email": { "type": "string", "description": "Email do cliente" },
                             "client_phone": { "type": "string", "description": "Telefone com código do país (ex: +5511999999999)" },
-                            "date_time": { "type": "string", "description": "Data e hora ISO 8601 (ex: 2026-04-15T14:00:00)" },
+                            "date_time": { "type": "string", "description": "Data e hora ISO 8601 no formato YYYY-MM-DDTHH:MM:SS. OBRIGATÓRIO: precisa ser uma data FUTURA e o ANO precisa ser igual ao retornado por data_hora_atual (não use anos de seu treinamento). Ex.: se data_hora_atual retornou date=2026-04-17, use 2026-04-20T15:00:00 ou 2026-05-03T10:00:00." },
                             "duration_minutes": { "type": "integer", "description": "Duração em minutos" },
                             "appointment_type": { "type": "string", "description": "Tipo/motivo (ex: consulta, reunião, demonstração)" },
                             "notes": { "type": "string", "description": "Observações adicionais" },
                             "appointment_id": { "type": "string", "description": "ID do agendamento (obrigatório para cancel e reschedule)" },
-                            "date": { "type": "string", "description": "Data no formato YYYY-MM-DD (para check_availability de um dia específico)" },
-                            "week_start": { "type": "string", "description": "Data início da semana YYYY-MM-DD (para check_availability — retorna resumo de 7 dias com disponibilidade)" }
+                            "date": { "type": "string", "description": "Data no formato YYYY-MM-DD (para check_availability de um dia específico). Use o mesmo ano de data_hora_atual." },
+                            "week_start": { "type": "string", "description": "Data início da semana YYYY-MM-DD (para check_availability — retorna resumo de 7 dias com disponibilidade). Use o mesmo ano de data_hora_atual." }
                         },
                         "required": ["action"]
                     }),
                     endpoint: String::new(),
                     method: String::new(),
-                    headers: None,
+                    headers: t.headers_json.clone(),
                     auth: None,
                     query_params: None,
                     body_content_type: None,
@@ -513,7 +571,17 @@ pub async fn call_llm_with_tools_ctx(
             .await
         }
         "gemini" => {
-            call_gemini_with_tools(&client, api_key, model, messages, temperature, max_tokens).await
+            call_gemini_with_tools(
+                &client,
+                api_key,
+                model,
+                messages,
+                temperature,
+                max_tokens,
+                tools,
+                ctx,
+            )
+            .await
         }
         _ => Err(AppError::BadRequest(format!(
             "Unknown LLM provider: {provider}"
@@ -552,6 +620,60 @@ fn interpolate_template(template: &str, arguments: &Value) -> String {
         }
     }
     result
+}
+
+/// Read an AI-tool-level "headers_json" config and return the expiry string saved by the UI.
+/// Accepts `link_expiry` or `meeting_link_expiry` (schedule_appointment uses the latter).
+fn meeting_expiry_from_headers(headers: Option<&str>, key: &str) -> Option<String> {
+    let raw = headers?;
+    let parsed: Value = serde_json::from_str(raw).ok()?;
+    parsed
+        .get(key)
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+}
+
+/// Create a meeting on behalf of the assistant's owner, reusing the same service path
+/// as the dashboard (workspace + rate-limit + LiveKit room).
+///
+/// Note: `tenant_id` comes from `ToolContext.user_id`, which in this codebase's
+/// multi-tenant convention is the **workspace_id** (the assistant's partition key),
+/// not a real user id. We treat it as the workspace and resolve its owner for the
+/// `created_by` / `host_user_id` fields the meetings service expects.
+async fn create_meeting_for_tool(
+    db: &DbSession,
+    config: &crate::config::Config,
+    tenant_id: &Uuid,
+    title: &str,
+    scheduled_start: Option<chrono::DateTime<chrono::Utc>>,
+    link_expiry: Option<String>,
+    start_now: bool,
+) -> Result<crate::models::meeting::Meeting, AppError> {
+    let workspace = crate::services::workspace::get_workspace(db, tenant_id).await?;
+    let members = crate::services::workspace::list_members(db, tenant_id)
+        .await
+        .unwrap_or_default();
+    let member_count = members.len() as i32;
+    crate::services::meeting::check_and_increment_rate(db, &workspace.owner_id).await?;
+    crate::services::meeting::create_meeting(
+        db,
+        crate::services::meeting::CreateMeetingParams {
+            workspace_id: tenant_id,
+            created_by: &workspace.owner_id,
+            title: title.to_string(),
+            participant_mode: if member_count > 1 {
+                "workspace".into()
+            } else {
+                "personal".into()
+            },
+            scheduled_start,
+            link_expiry,
+            start_now,
+            workspace_member_count: member_count.max(1),
+            app_url: &config.app_url,
+        },
+    )
+    .await
 }
 
 async fn execute_tool(
@@ -834,6 +956,126 @@ async fn execute_tool(
             };
             return (result, record);
         }
+        "current_datetime" => {
+            // Resolve the assistant's configured timezone if available, else São Paulo.
+            let tz = if let (Some(db), Some(aid)) = (ctx.db, ctx.assistant_id) {
+                crate::services::appointment::resolve_assistant_tz(db, &aid).await
+            } else {
+                chrono_tz::America::Sao_Paulo
+            };
+            let now_utc = chrono::Utc::now();
+            let now_local = now_utc.with_timezone(&tz);
+            let weekdays_pt = [
+                "segunda", "terça", "quarta", "quinta", "sexta", "sábado", "domingo",
+            ];
+            let weekday = weekdays_pt[now_local.weekday().num_days_from_monday() as usize];
+            let result = json!({
+                "status": "ok",
+                "iso": now_local.to_rfc3339(),
+                "iso_utc": now_utc.to_rfc3339(),
+                "date": now_local.format("%Y-%m-%d").to_string(),
+                "time": now_local.format("%H:%M").to_string(),
+                "weekday": weekday,
+                "timezone": tz.name(),
+            })
+            .to_string();
+
+            let record = ToolCallRecord {
+                tool_id: tool.id,
+                tool_name: tool.name.clone(),
+                arguments: arguments.clone(),
+                status_code: Some(200),
+                response_body: Some(result.clone()),
+                error: None,
+                duration_ms: start.elapsed().as_millis() as i32,
+                tool_type: "current_datetime".to_string(),
+            };
+            return (result, record);
+        }
+        "create_meeting" => {
+            let meeting_type = arguments
+                .get("meeting_type")
+                .and_then(|v| v.as_str())
+                .unwrap_or("instant");
+            let title = arguments
+                .get("title")
+                .and_then(|v| v.as_str())
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+                .unwrap_or("Reunião");
+            tracing::info!(meeting_type = %meeting_type, title = %title, "create_meeting tool called");
+
+            let result = if let (Some(db), Some(user_id), Some(config)) =
+                (ctx.db, ctx.user_id, ctx.config)
+            {
+                let link_expiry = meeting_expiry_from_headers(tool.headers.as_deref(), "link_expiry")
+                    .unwrap_or_else(|| "24h".to_string());
+
+                let (scheduled_start, start_now) = if meeting_type == "scheduled" {
+                    let scheduled_str = arguments
+                        .get("scheduled_start")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    let tz = if let Some(aid) = ctx.assistant_id {
+                        crate::services::appointment::resolve_assistant_tz(db, &aid).await
+                    } else {
+                        chrono_tz::America::Sao_Paulo
+                    };
+                    match crate::services::appointment::parse_datetime_in_tz(scheduled_str, &tz) {
+                        Some(dt) => (Some(dt), false),
+                        None => (None, true), // fallback: treat as instant
+                    }
+                } else {
+                    (None, true)
+                };
+
+                match create_meeting_for_tool(
+                    db,
+                    config,
+                    &user_id,
+                    title,
+                    scheduled_start,
+                    Some(link_expiry),
+                    start_now,
+                )
+                .await
+                {
+                    Ok(meeting) => {
+                        let starts_at = meeting
+                            .scheduled_start
+                            .or(meeting.started_at)
+                            .map(|d| d.to_rfc3339());
+                        json!({
+                            "status": "ok",
+                            "meeting_type": if start_now { "instant" } else { "scheduled" },
+                            "code": meeting.code,
+                            "share_url": meeting.share_url,
+                            "starts_at": starts_at,
+                            "expires_at": meeting.expires_at.map(|d| d.to_rfc3339()),
+                        })
+                        .to_string()
+                    }
+                    Err(e) => {
+                        json!({"status": "error", "message": e.to_string()}).to_string()
+                    }
+                }
+            } else {
+                json!({"status": "error", "message": "Serviço de reuniões indisponível"})
+                    .to_string()
+            };
+
+            let record = ToolCallRecord {
+                tool_id: tool.id,
+                tool_name: tool.name.clone(),
+                arguments: arguments.clone(),
+                status_code: Some(200),
+                response_body: Some(result.clone()),
+                error: None,
+                duration_ms: start.elapsed().as_millis() as i32,
+                tool_type: "create_meeting".to_string(),
+            };
+            return (result, record);
+        }
         "schedule_appointment" => {
             let action = arguments
                 .get("action")
@@ -911,7 +1153,49 @@ async fn execute_tool(
                                     json!({"status": "error", "action": "create", "errors": errors, "message": "Não foi possível agendar. Informe os erros ao cliente e sugira alternativas."}).to_string()
                                 }
                                 Ok(_) => {
-                                    json!({"status": "queued", "action": "create", "message": "Agendamento validado e será processado."}).to_string()
+                                    // If the tool is configured to auto-generate a meeting, try it here
+                                    // so the LLM can include the link in its natural-language reply.
+                                    let auto_meeting = tool
+                                        .headers
+                                        .as_deref()
+                                        .and_then(|h| serde_json::from_str::<Value>(h).ok())
+                                        .and_then(|v| v.get("auto_generate_meeting").and_then(|b| b.as_bool()))
+                                        .unwrap_or(false);
+
+                                    let mut response = json!({
+                                        "status": "queued",
+                                        "action": "create",
+                                        "message": "Agendamento validado e será processado."
+                                    });
+
+                                    if auto_meeting {
+                                        if let (Some(user_id), Some(config)) = (ctx.user_id, ctx.config) {
+                                            let link_expiry = meeting_expiry_from_headers(tool.headers.as_deref(), "meeting_link_expiry")
+                                                .unwrap_or_else(|| "7d".to_string());
+                                            let client_name = arguments
+                                                .get("client_name")
+                                                .and_then(|v| v.as_str())
+                                                .map(|s| s.trim())
+                                                .filter(|s| !s.is_empty())
+                                                .unwrap_or("cliente");
+                                            let title = format!("Compromisso: {}", client_name);
+                                            match create_meeting_for_tool(db, config, &user_id, &title, Some(dt_utc), Some(link_expiry), false).await {
+                                                Ok(meeting) => {
+                                                    response["meeting"] = json!({
+                                                        "id": meeting.id.to_string(),
+                                                        "code": meeting.code,
+                                                        "share_url": meeting.share_url,
+                                                    });
+                                                    response["message"] = json!("Agendamento validado. Link da reunião foi gerado — inclua-o na confirmação ao cliente.");
+                                                }
+                                                Err(e) => {
+                                                    response["meeting_error"] = json!(e.to_string());
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    response.to_string()
                                 }
                                 Err(e) => {
                                     json!({"status": "error", "action": "create", "message": format!("Erro ao validar: {}", e)}).to_string()
@@ -1663,9 +1947,12 @@ async fn call_claude_raw(
 }
 
 // =====================================================================
-// Gemini (no tool support for now)
+// Gemini — supports function calling via `tools.functionDeclarations`
 // =====================================================================
 
+/// Gemini tool-call loop. Mirrors the Claude pattern: iterate up to 5 rounds,
+/// echo `functionCall` parts back as a "model" turn, send `functionResponse`
+/// parts as a "function" turn, stop when Gemini returns plain text.
 async fn call_gemini_with_tools(
     client: &Client,
     api_key: &str,
@@ -1673,21 +1960,19 @@ async fn call_gemini_with_tools(
     messages: Vec<LlmMessage>,
     temperature: f32,
     max_tokens: i32,
+    tools: &[LlmTool],
+    ctx: &ToolContext<'_>,
 ) -> Result<LlmResponse, AppError> {
     let system_instruction = messages
         .iter()
         .find(|m| m.role == "system")
         .map(|m| json!({"parts": [{"text": m.content}]}));
 
-    let contents: Vec<Value> = messages
+    let initial: Vec<Value> = messages
         .iter()
         .filter(|m| m.role != "system")
         .map(|m| {
-            let role = if m.role == "assistant" {
-                "model"
-            } else {
-                "user"
-            };
+            let role = if m.role == "assistant" { "model" } else { "user" };
             let parts = if let (Some(b64), Some(mime)) = (&m.media_base64, &m.media_mime_type) {
                 let mut p = vec![];
                 if !m.content.is_empty() {
@@ -1702,9 +1987,110 @@ async fn call_gemini_with_tools(
         })
         .collect();
 
-    // Gemini also needs consecutive same-role messages merged
-    let contents = coalesce_gemini_contents(contents);
+    let mut contents = coalesce_gemini_contents(initial);
 
+    let mut total_tokens = 0i32;
+    let mut all_records: Vec<ToolCallRecord> = Vec::new();
+
+    for round in 0..5 {
+        let result = call_gemini_raw(
+            client,
+            api_key,
+            model,
+            &contents,
+            &system_instruction,
+            temperature,
+            max_tokens,
+            tools,
+        )
+        .await?;
+        total_tokens += result.tokens;
+
+        match result.tool_calls {
+            Some(calls) if !calls.is_empty() => {
+                let tool_names: Vec<&str> = calls.iter().map(|c| c.name.as_str()).collect();
+                tracing::info!(round = round, tools = ?tool_names, "Gemini tool call round");
+
+                // Echo back the model turn with its raw parts (text + functionCall)
+                if let Some(raw_parts) = &result.raw_content_blocks {
+                    contents.push(json!({
+                        "role": "model",
+                        "parts": raw_parts,
+                    }));
+                } else {
+                    contents.push(json!({
+                        "role": "model",
+                        "parts": [{"text": result.content}],
+                    }));
+                }
+
+                // Execute all function calls and build functionResponse parts
+                let mut response_parts: Vec<Value> = Vec::new();
+                for call in &calls {
+                    let tool = tools.iter().find(|t| t.name == call.name);
+                    let (tool_result, record) = if let Some(t) = tool {
+                        execute_tool(client, t, &call.arguments, ctx).await
+                    } else {
+                        let err_msg = format!("Error: tool '{}' not found", call.name);
+                        (
+                            err_msg.clone(),
+                            ToolCallRecord {
+                                tool_id: None,
+                                tool_name: call.name.clone(),
+                                arguments: call.arguments.clone(),
+                                status_code: None,
+                                response_body: None,
+                                error: Some(err_msg),
+                                duration_ms: 0,
+                                tool_type: "http_request".to_string(),
+                            },
+                        )
+                    };
+                    all_records.push(record);
+
+                    // Gemini requires functionResponse.response to be an object.
+                    // If the tool returned JSON already, pass it through; else wrap as {content: ...}.
+                    let response_value = serde_json::from_str::<Value>(&tool_result)
+                        .ok()
+                        .filter(|v| v.is_object())
+                        .unwrap_or_else(|| json!({"content": tool_result}));
+
+                    response_parts.push(json!({
+                        "functionResponse": {
+                            "name": call.name,
+                            "response": response_value,
+                        }
+                    }));
+                }
+
+                contents.push(json!({
+                    "role": "function",
+                    "parts": response_parts,
+                }));
+            }
+            _ => {
+                return Ok(LlmResponse {
+                    content: result.content,
+                    tokens_used: total_tokens,
+                    tool_call_records: all_records,
+                });
+            }
+        }
+    }
+
+    Err(AppError::InternalError("Too many tool call rounds".into()))
+}
+
+async fn call_gemini_raw(
+    client: &Client,
+    api_key: &str,
+    model: &str,
+    contents: &[Value],
+    system_instruction: &Option<Value>,
+    temperature: f32,
+    max_tokens: i32,
+    tools: &[LlmTool],
+) -> Result<RawLlmResult, AppError> {
     let mut body = json!({
         "contents": contents,
         "generationConfig": {
@@ -1714,7 +2100,21 @@ async fn call_gemini_with_tools(
     });
 
     if let Some(si) = system_instruction {
-        body["systemInstruction"] = si;
+        body["systemInstruction"] = si.clone();
+    }
+
+    if !tools.is_empty() {
+        let function_declarations: Vec<Value> = tools
+            .iter()
+            .map(|t| {
+                json!({
+                    "name": t.name,
+                    "description": t.description,
+                    "parameters": t.parameters,
+                })
+            })
+            .collect();
+        body["tools"] = json!([{ "functionDeclarations": function_declarations }]);
     }
 
     let url = format!(
@@ -1733,25 +2133,54 @@ async fn call_gemini_with_tools(
         .await
         .map_err(|e| AppError::InternalError(format!("Gemini response parse failed: {e}")))?;
 
-    // Check for API error response
     if let Some(err) = data["error"]["message"].as_str() {
         tracing::error!("Gemini API error for model {model}: {err}");
         return Err(AppError::InternalError(format!("Gemini API error: {err}")));
     }
 
-    let content = data["candidates"][0]["content"]["parts"][0]["text"]
-        .as_str()
-        .unwrap_or("")
-        .to_string();
+    let mut content = String::new();
+    let mut tool_calls: Vec<ToolCall> = Vec::new();
+
+    // Preserve the full parts array so we can echo it back on the next turn.
+    let raw_parts = data["candidates"][0]["content"]["parts"]
+        .as_array()
+        .cloned()
+        .map(Value::Array);
+
+    if let Some(parts) = data["candidates"][0]["content"]["parts"].as_array() {
+        for part in parts {
+            if let Some(text) = part["text"].as_str() {
+                content.push_str(text);
+            }
+            if let Some(fc) = part.get("functionCall") {
+                if let Some(name) = fc["name"].as_str() {
+                    let args = fc.get("args").cloned().unwrap_or(json!({}));
+                    // Gemini doesn't return an id — synthesize one for logging parity.
+                    let id = format!("gemini_call_{}_{}", name, tool_calls.len());
+                    tool_calls.push(ToolCall {
+                        id,
+                        name: name.to_string(),
+                        arguments: if args.is_null() { json!({}) } else { args },
+                    });
+                }
+            }
+        }
+    }
 
     let tokens = data["usageMetadata"]["totalTokenCount"]
         .as_i64()
         .unwrap_or(0) as i32;
 
-    Ok(LlmResponse {
+    Ok(RawLlmResult {
         content,
-        tokens_used: tokens,
-        tool_call_records: Vec::new(),
+        tokens,
+        tool_calls: if tool_calls.is_empty() {
+            None
+        } else {
+            Some(tool_calls)
+        },
+        raw_tool_calls: None,
+        raw_content_blocks: raw_parts,
     })
 }
 

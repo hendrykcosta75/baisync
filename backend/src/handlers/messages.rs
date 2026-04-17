@@ -831,6 +831,7 @@ pub struct ChatRequest {
 pub async fn playground_chat(
     Extension(db): Extension<DbSession>,
     Extension(encryption): Extension<EncryptionService>,
+    Extension(config): Extension<Config>,
     Extension(auth_user): Extension<AuthUser>,
     Path(assistant_id): Path<Uuid>,
     Query(query): Query<crate::handlers::assistants::ShareTokenQuery>,
@@ -839,6 +840,7 @@ pub async fn playground_chat(
     let response = messaging::playground_chat(
         &db,
         &encryption,
+        &config,
         &auth_user.workspace_id,
         &assistant_id,
         query.share_token.as_deref(),

@@ -66,6 +66,7 @@ const FRONTEND_ONLY_ROUTES = new Set([
   '/api/auth/logout',
   '/api/admin/logout',
   '/api/health',
+  '/api/public',
 ])
 
 function main() {

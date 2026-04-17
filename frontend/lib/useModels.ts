@@ -23,27 +23,39 @@ export function clearModelCache() {
 export function useModels(provider: LLMProvider, opts?: { assistantId?: string; shareToken?: string }) {
   const [models, setModels] = useState<string[]>(cache.get(provider) || FALLBACK_MODELS[provider] || [])
   const [isLoading, setIsLoading] = useState(false)
+  // Optimistic default: assume configured until the backend says otherwise,
+  // so the form doesn't flash "chave não configurada" while api-keys status is loading.
   const [hasApiKey, setHasApiKey] = useState(true)
+  // True once we have a real model list (from cache or a successful API fetch);
+  // false while we're still showing the FALLBACK list. Consumers (e.g. assistant-form)
+  // use this to avoid resetting the selected model to availableModels[0] based on stale fallback data.
+  const [modelsReady, setModelsReady] = useState<boolean>(cache.has(provider))
   const keys = useApiKeysStore(s => s.keys)
   const configured = useApiKeysStore(s => s.configured)
+  const hasFetchedKeys = useApiKeysStore(s => s.hasFetched)
   useEffect(() => {
     const isShared = !!(opts?.assistantId && opts?.shareToken)
     const keyConfigured = isShared || configured[provider] || !!keys?.[provider]
+    // Only flip `hasApiKey` to false once we have authoritative data from the backend.
+    // Before that, stay optimistic to avoid a false-positive warning on first render.
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setHasApiKey(keyConfigured)
+    setHasApiKey(keyConfigured || !hasFetchedKeys)
 
     if (!isShared && cache.has(provider)) {
       setModels(cache.get(provider)!)
+      setModelsReady(true)
       return
     }
 
     if (!keyConfigured) {
       setModels(FALLBACK_MODELS[provider] || [])
+      setModelsReady(false)
       return
     }
 
     let cancelled = false
     setIsLoading(true)
+    setModelsReady(false)
 
     const shareQs = opts?.assistantId && opts?.shareToken
       ? `?assistant_id=${opts.assistantId}&share_token=${encodeURIComponent(opts.shareToken)}`
@@ -54,17 +66,19 @@ export function useModels(provider: LLMProvider, opts?: { assistantId?: string; 
         const ids = res.models.map(m => m.id)
         cache.set(provider, ids)
         setModels(ids)
+        setModelsReady(true)
       })
       .catch(() => {
         if (cancelled) return
         setModels(FALLBACK_MODELS[provider] || [])
+        // Fetch failed — keep modelsReady=false so consumers treat the list as untrusted.
       })
       .finally(() => {
         if (!cancelled) setIsLoading(false)
       })
 
     return () => { cancelled = true }
-  }, [provider, keys, configured, opts?.assistantId, opts?.shareToken])
+  }, [provider, keys, configured, hasFetchedKeys, opts?.assistantId, opts?.shareToken])
 
-  return { models, isLoading, hasApiKey }
+  return { models, isLoading, hasApiKey, modelsReady }
 }

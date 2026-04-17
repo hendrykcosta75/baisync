@@ -11,6 +11,7 @@ pub mod events;
 pub mod files;
 pub mod financeiro;
 pub mod integrations;
+pub mod meetings;
 pub mod messages;
 pub mod models;
 pub mod notifications;

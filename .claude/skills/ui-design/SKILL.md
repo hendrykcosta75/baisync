@@ -1,6 +1,6 @@
 ---
 name: ui-design
-description: TRIGGER when creating new components, pages, modals, cards, forms, or any visual UI element in the frontend. Also when refactoring existing components for better visual quality.
+description: TRIGGER on ANY frontend change — new or edited .tsx/.ts/.css file under `frontend/`. Invoke BEFORE writing the first line of code for components, pages, modals, cards, forms, widgets, restyles, refactors, or bug-fixes that touch markup/styles. If you are about to edit anything visual in the dashboard, you MUST have invoked this skill first.
 
 ---
 
@@ -83,16 +83,19 @@ Status background pattern: `bg-{color}-500/10` for containers, `bg-{color}-500` 
 
 ### 3.1 Font Stack
 
-| Token           | CSS Variable                | Family                                  | Usage                              |
-|-----------------|-----------------------------|------------------------------------------|------------------------------------|
-| Display/Body    | `--font-geist-sans`         | `'Geist', sans-serif`                    | Body text, paragraphs, UI defaults |
-| Branded/Mono    | `--font-jetbrains-mono`     | `'JetBrains Mono', 'Fira Code', mono`   | Headings, nav labels, badges, code |
-| Code            | `--font-geist-mono`         | `'Geist Mono', monospace`               | Code blocks                        |
+| Token           | CSS Variable                | Family                                          | Usage                              |
+|-----------------|-----------------------------|--------------------------------------------------|------------------------------------|
+| Display/Body    | `--font-geist-sans`         | `'Geist', sans-serif`                            | Body text, paragraphs, UI defaults |
+| Branded/Mono    | `--font-jetbrains-mono`     | `'JetBrains Mono', 'Fira Code', monospace`      | Headings, nav labels, badges, code |
+| Code            | `--font-geist-mono`         | `'Geist Mono', monospace`                       | Code blocks                        |
 
-Apply JetBrains Mono via inline style (it's a Next.js font variable, not a Tailwind utility):
+**Fira Code** is the required fallback for the branded/mono stack. Every `<h1>`, `<h2>`, `<h3>`, label, badge text, sidebar item, nav chip, modal title, and empty-state title MUST declare the stack inline (JetBrains Mono is a Next.js font variable, not a Tailwind utility):
+
 ```tsx
 style={{ fontFamily: "'JetBrains Mono', 'Fira Code', monospace" }}
 ```
+
+**Rule — headings without this style are a bug.** A missing inline fontFamily on a heading means the browser falls back to Geist Sans, breaking the branded feel. Review every heading you touch.
 
 ### 3.2 Type Scale
 
@@ -277,7 +280,9 @@ Blur values by context:
 
 ### 6.1 Button
 
-**Dashboard buttons use CSS classes from `globals.css`, NOT HeroUI `Button` variants.** HeroUI `Button` is reserved for landing pages and admin panel only.
+**Dashboard buttons MUST use the neumorphic CSS classes from `globals.css`. Using `<Button>` from `@heroui/react` in any file under `app/dashboard/**` or `components/**` (except `components/landing/` and `components/admin/`) is a bug.** HeroUI `Button` is reserved for landing pages and admin panel only.
+
+The neumorphic look is the dashboard's identity — a flat orange button or a `bg-[#ff6b2c]` rectangle breaks the visual language even if the color is right. If you find yourself writing `<Button className="bg-[#ff6b2c]...">` inside a dashboard component, stop and switch to `<button className="btn-neu">`.
 
 **CSS classes (defined in `globals.css`):**
 
@@ -316,6 +321,22 @@ Blur values by context:
   style={{ boxShadow: '3px 3px 7px rgba(0,0,0,0.45), -1px -1px 5px rgba(255,255,255,0.03)' }}
 >
   <Settings size={16} />
+</button>
+
+{/* Round neumorphic (meeting controls, floating actions) */}
+<button
+  className="w-11 h-11 rounded-full flex items-center justify-center bg-raised text-body hover:text-heading transition-all duration-200 active:scale-[0.97]"
+  style={{ boxShadow: '4px 4px 10px rgba(0,0,0,0.5), -2px -2px 8px rgba(255,255,255,0.04)' }}
+>
+  <Mic size={18} />
+</button>
+
+{/* Destructive round (hang up, off states) */}
+<button
+  className="w-11 h-11 rounded-full flex items-center justify-center bg-red-500 text-white hover:bg-red-600 transition-all duration-200 active:scale-[0.97]"
+  style={{ boxShadow: '4px 4px 10px rgba(0,0,0,0.5), -2px -2px 8px rgba(255,255,255,0.04)' }}
+>
+  <PhoneOff size={18} />
 </button>
 ```
 
@@ -698,6 +719,8 @@ No action needed per-component — this applies automatically.
 
 ## 13. Checklist — Before Every PR
 
+- [ ] **Dashboard buttons use `btn-neu` / `btn-neu-ghost` / neumorphic round — NOT `<Button>` from `@heroui/react`**
+- [ ] **Every `<h1>/<h2>/<h3>` and heading-role element has `style={{ fontFamily: "'JetBrains Mono', 'Fira Code', monospace" }}`**
 - [ ] Semantic color tokens used everywhere (no raw hex for surfaces/text)
 - [ ] JetBrains Mono applied to headings, labels, navigation, badges
 - [ ] Smooth transitions on ALL interactive elements (minimum `duration-200`)

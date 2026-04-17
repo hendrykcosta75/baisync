@@ -1116,6 +1116,30 @@ pub async fn process_incoming_message(
                         let date_time =
                             crate::services::appointment::parse_datetime_in_tz(date_time_str, &tz);
 
+                        // Extract auto-generated meeting info (if any) from the tool result
+                        // produced by execute_tool when auto_generate_meeting is enabled.
+                        let (meeting_id, meeting_code, meeting_url) = record
+                            .response_body
+                            .as_deref()
+                            .and_then(|body| serde_json::from_str::<serde_json::Value>(body).ok())
+                            .and_then(|v| v.get("meeting").cloned())
+                            .map(|m| {
+                                let id = m
+                                    .get("id")
+                                    .and_then(|v| v.as_str())
+                                    .and_then(|s| Uuid::parse_str(s).ok());
+                                let code = m
+                                    .get("code")
+                                    .and_then(|v| v.as_str())
+                                    .map(|s| s.to_string());
+                                let url = m
+                                    .get("share_url")
+                                    .and_then(|v| v.as_str())
+                                    .map(|s| s.to_string());
+                                (id, code, url)
+                            })
+                            .unwrap_or((None, None, None));
+
                         match date_time {
                             Some(dt_utc) => {
                                 let req = crate::models::appointment::CreateAppointmentRequest {
@@ -1130,6 +1154,9 @@ pub async fn process_incoming_message(
                                     origin_channel: Some(integration.channel.clone()),
                                     conversation_id: Some(conversation.id),
                                     is_manual: Some(false),
+                                    meeting_id,
+                                    meeting_code,
+                                    meeting_url,
                                 };
                                 match crate::services::appointment::create_appointment(
                                     db, &user_id, req,
@@ -2025,6 +2052,7 @@ async fn find_integration_for_conversation(
 pub async fn playground_chat(
     db: &DbSession,
     encryption: &EncryptionService,
+    config: &crate::config::Config,
     requesting_user_id: &Uuid,
     assistant_id: &Uuid,
     share_token: Option<&str>,
@@ -2130,9 +2158,9 @@ pub async fn playground_chat(
         db: Some(db),
         assistant_id: Some(*assistant_id),
         user_id: Some(owner_id),
-        conversation_id: None,
-        config: None,
-        encryption: None,
+        conversation_id: Some(conversation.id),
+        config: Some(config),
+        encryption: Some(encryption),
     };
     let llm_response = llm::call_llm_with_tools_ctx(
         &assistant.llm_provider,

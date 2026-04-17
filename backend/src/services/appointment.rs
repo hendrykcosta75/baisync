@@ -1,6 +1,7 @@
 use chrono::{DateTime, Datelike, NaiveDate, NaiveTime, TimeZone, Utc};
 use chrono_tz::Tz;
 use scylla::frame::value::CqlTimestamp;
+use scylla::DeserializeRow;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
@@ -13,24 +14,28 @@ use crate::models::appointment::{
 
 // ─── Row types ───────────────────────────────────────────────────────────────
 
-type AppointmentRow = (
-    Uuid,           // user_id
-    Uuid,           // id
-    Option<Uuid>,   // assistant_id
-    Option<String>, // client_name
-    Option<String>, // client_email
-    Option<String>, // client_phone
-    CqlTimestamp,   // date_time
-    Option<i32>,    // duration_minutes
-    Option<String>, // appointment_type
-    Option<String>, // notes
-    Option<String>, // origin_channel
-    Option<String>, // status
-    Option<Uuid>,   // conversation_id
-    Option<bool>,   // is_manual
-    CqlTimestamp,   // created_at
-    CqlTimestamp,   // updated_at
-);
+#[derive(DeserializeRow)]
+struct AppointmentRow {
+    user_id: Uuid,
+    id: Uuid,
+    assistant_id: Option<Uuid>,
+    client_name: Option<String>,
+    client_email: Option<String>,
+    client_phone: Option<String>,
+    date_time: CqlTimestamp,
+    duration_minutes: Option<i32>,
+    appointment_type: Option<String>,
+    notes: Option<String>,
+    origin_channel: Option<String>,
+    status: Option<String>,
+    conversation_id: Option<Uuid>,
+    is_manual: Option<bool>,
+    created_at: CqlTimestamp,
+    updated_at: CqlTimestamp,
+    meeting_id: Option<Uuid>,
+    meeting_code: Option<String>,
+    meeting_url: Option<String>,
+}
 
 type ByAssistantRow = (
     Uuid,           // assistant_id
@@ -91,28 +96,31 @@ pub async fn resolve_assistant_tz(db: &DbSession, assistant_id: &uuid::Uuid) -> 
 
 fn row_to_appointment(r: AppointmentRow) -> Appointment {
     Appointment {
-        user_id: r.0,
-        id: r.1,
-        assistant_id: r.2, // already Option<Uuid>
-        client_name: r.3.unwrap_or_default(),
-        client_email: r.4,
-        client_phone: r.5.unwrap_or_default(),
-        date_time: ts_to_dt(r.6),
-        duration_minutes: r.7.unwrap_or(30),
-        appointment_type: r.8,
-        notes: r.9,
-        origin_channel: r.10,
-        status: r.11.unwrap_or_else(|| "pending".into()),
-        conversation_id: r.12,
-        is_manual: r.13.unwrap_or(false),
-        created_at: ts_to_dt(r.14),
-        updated_at: ts_to_dt(r.15),
+        user_id: r.user_id,
+        id: r.id,
+        assistant_id: r.assistant_id,
+        client_name: r.client_name.unwrap_or_default(),
+        client_email: r.client_email,
+        client_phone: r.client_phone.unwrap_or_default(),
+        date_time: ts_to_dt(r.date_time),
+        duration_minutes: r.duration_minutes.unwrap_or(30),
+        appointment_type: r.appointment_type,
+        notes: r.notes,
+        origin_channel: r.origin_channel,
+        status: r.status.unwrap_or_else(|| "pending".into()),
+        conversation_id: r.conversation_id,
+        is_manual: r.is_manual.unwrap_or(false),
+        created_at: ts_to_dt(r.created_at),
+        updated_at: ts_to_dt(r.updated_at),
+        meeting_id: r.meeting_id,
+        meeting_code: r.meeting_code,
+        meeting_url: r.meeting_url,
     }
 }
 
 // ─── CRUD ────────────────────────────────────────────────────────────────────
 
-const APPOINTMENT_COLS: &str = "user_id, id, assistant_id, client_name, client_email, client_phone, date_time, duration_minutes, appointment_type, notes, origin_channel, status, conversation_id, is_manual, created_at, updated_at";
+const APPOINTMENT_COLS: &str = "user_id, id, assistant_id, client_name, client_email, client_phone, date_time, duration_minutes, appointment_type, notes, origin_channel, status, conversation_id, is_manual, created_at, updated_at, meeting_id, meeting_code, meeting_url";
 
 pub async fn create_appointment(
     db: &DbSession,
@@ -141,9 +149,7 @@ pub async fn create_appointment(
 
     // Insert into appointments
     db.query_unpaged(
-        format!(
-            "INSERT INTO inertial_eclipse.appointments ({APPOINTMENT_COLS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-        ),
+        "INSERT INTO inertial_eclipse.appointments (user_id, id, assistant_id, client_name, client_email, client_phone, date_time, duration_minutes, appointment_type, notes, origin_channel, status, conversation_id, is_manual, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             user_id, &id, &req.assistant_id,
             &req.client_name, &req.client_email, &req.client_phone,
@@ -156,11 +162,22 @@ pub async fn create_appointment(
     .await
     .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
+    // Set meeting fields via a follow-up UPDATE (kept separate to stay under
+    // the scylla driver's 16-column SerializeRow tuple limit).
+    if req.meeting_id.is_some() || req.meeting_code.is_some() || req.meeting_url.is_some() {
+        db.query_unpaged(
+            "UPDATE inertial_eclipse.appointments SET meeting_id = ?, meeting_code = ?, meeting_url = ? WHERE user_id = ? AND id = ?",
+            (&req.meeting_id, &req.meeting_code, &req.meeting_url, user_id, &id),
+        )
+        .await
+        .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+    }
+
     // Insert into appointments_by_assistant (denormalized) — only if associated
     if let Some(ref aid) = req.assistant_id {
         db.query_unpaged(
-            "INSERT INTO inertial_eclipse.appointments_by_assistant (assistant_id, date_time, id, user_id, client_name, client_phone, duration_minutes, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (aid, dt_ts, &id, user_id, &req.client_name, &req.client_phone, duration, &status),
+            "INSERT INTO inertial_eclipse.appointments_by_assistant (assistant_id, date_time, id, user_id, client_name, client_phone, duration_minutes, status, meeting_id, meeting_code) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (aid, dt_ts, &id, user_id, &req.client_name, &req.client_phone, duration, &status, &req.meeting_id, &req.meeting_code),
         )
         .await
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
@@ -183,6 +200,9 @@ pub async fn create_appointment(
         is_manual,
         created_at: now,
         updated_at: now,
+        meeting_id: req.meeting_id,
+        meeting_code: req.meeting_code,
+        meeting_url: req.meeting_url,
     })
 }
 
@@ -283,8 +303,8 @@ pub async fn update_appointment(
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
         db.query_unpaged(
-            "INSERT INTO inertial_eclipse.appointments_by_assistant (assistant_id, date_time, id, user_id, client_name, client_phone, duration_minutes, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (aid, new_dt_ts, appointment_id, user_id, &existing.client_name, &existing.client_phone, new_duration, &new_status),
+            "INSERT INTO inertial_eclipse.appointments_by_assistant (assistant_id, date_time, id, user_id, client_name, client_phone, duration_minutes, status, meeting_id, meeting_code) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (aid, new_dt_ts, appointment_id, user_id, &existing.client_name, &existing.client_phone, new_duration, &new_status, &existing.meeting_id, &existing.meeting_code),
         )
         .await
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
@@ -423,9 +443,24 @@ pub async fn validate_appointment(
 ) -> Result<Vec<String>, AppError> {
     let mut errors = Vec::new();
 
-    // No past dates
-    if *date_time < Utc::now() {
-        errors.push("Não é possível agendar em datas passadas".to_string());
+    // No past dates — include the current date so the LLM can self-correct if it
+    // hallucinated the year (common Gemini failure mode: picks a past year from
+    // its training data even after calling a get-current-date tool).
+    let now = Utc::now();
+    if *date_time < now {
+        let tz: Tz = match get_availability(db, assistant_id).await {
+            Ok(Some(avail)) => avail
+                .timezone
+                .parse()
+                .unwrap_or(chrono_tz::America::Sao_Paulo),
+            _ => chrono_tz::America::Sao_Paulo,
+        };
+        let now_local = now.with_timezone(&tz).format("%Y-%m-%d %H:%M");
+        errors.push(format!(
+            "Não é possível agendar em datas passadas. Data/hora atual: {} ({}). Use o ano atual ao montar date_time.",
+            now_local,
+            tz.name()
+        ));
     }
 
     // Conflict check

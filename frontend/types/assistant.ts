@@ -34,7 +34,7 @@ export interface ToolSettings {
   ignoreSSLErrors: boolean
 }
 
-export type ToolType = 'http_request' | 'send_document' | 'notify_human' | 'schedule_appointment' | 'pix_payment' | 'card_payment'
+export type ToolType = 'http_request' | 'send_document' | 'notify_human' | 'schedule_appointment' | 'pix_payment' | 'card_payment' | 'create_meeting' | 'current_datetime'
 
 export interface AssistantTool {
   id: string

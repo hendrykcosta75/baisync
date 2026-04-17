@@ -27,7 +27,12 @@ export async function apiFetch<T>(
   })
 
   if (res.status === 401) {
-    if (typeof window !== 'undefined' && !path.includes('/auth/login') && !path.includes('/auth/register')) {
+    if (
+      typeof window !== 'undefined' &&
+      !path.includes('/auth/login') &&
+      !path.includes('/auth/register') &&
+      !path.includes('/api/public/')
+    ) {
       localStorage.removeItem('auth-user')
       window.location.href = '/login'
     }

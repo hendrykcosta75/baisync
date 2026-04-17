@@ -19,6 +19,9 @@ pub struct Config {
     pub meta_app_secret: String,
     pub elevenlabs_api_key: String,
     pub elevenlabs_voice_id: String,
+    pub livekit_url: String,
+    pub livekit_api_key: String,
+    pub livekit_api_secret: String,
 }
 
 impl Config {
@@ -48,6 +51,9 @@ impl Config {
             elevenlabs_api_key: env::var("ELEVENLABS_API_KEY").unwrap_or_default(),
             elevenlabs_voice_id: env::var("ELEVENLABS_VOICE_ID")
                 .unwrap_or_else(|_| "21m00Tcm4TlvDq8ikWAM".into()),
+            livekit_url: env::var("LIVEKIT_URL").unwrap_or_else(|_| "ws://livekit:7880".into()),
+            livekit_api_key: env::var("LIVEKIT_API_KEY").unwrap_or_default(),
+            livekit_api_secret: env::var("LIVEKIT_API_SECRET").unwrap_or_default(),
         }
     }
 }

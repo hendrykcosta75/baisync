@@ -7,8 +7,8 @@ BLUE='\033[0;34m'
 YELLOW='\033[0;33m'
 NC='\033[0m'
 
-echo -e "${BLUE}1. Subindo infra (Cassandra, Redis, Baileys)...${NC}"
-docker compose up -d cassandra redis baileys
+echo -e "${BLUE}1. Subindo infra (Cassandra, Redis, Baileys, LiveKit)...${NC}"
+docker compose up -d cassandra redis baileys livekit
 
 echo -e "${BLUE}2. Aguardando Cassandra ficar healthy...${NC}"
 until docker compose exec cassandra cqlsh -e "DESCRIBE KEYSPACES" &>/dev/null; do

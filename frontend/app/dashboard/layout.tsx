@@ -10,6 +10,9 @@ import { BaisyncPanel } from '@/components/baisync/baisync-panel'
 import { useRealtimeEvents } from '@/lib/useRealtimeEvents'
 import { ErrorModal } from '@/components/error-modal'
 import { ToastContainer } from '@/components/toast-container'
+import { GuestApprovalToast } from '@/components/meetings/GuestApprovalToast'
+import { ActiveMeetingContainer } from '@/components/meetings/ActiveMeetingContainer'
+import { useApiKeysStore } from '@/store/useApiKeysStore'
 
 const DEFAULT_WIDTH = 220
 
@@ -53,6 +56,8 @@ export default function DashboardLayout({
   const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_WIDTH)
   const [mounted, setMounted] = useState(false)
   const { isAuthenticated, fetchMe } = useAuthStore()
+  const apiKeysHasFetched = useApiKeysStore(s => s.hasFetched)
+  const fetchApiKeys = useApiKeysStore(s => s.fetchKeys)
   const router = useRouter()
 
   // SSE connection for realtime updates across all dashboard pages
@@ -100,6 +105,15 @@ export default function DashboardLayout({
     fetchMe()
   }, [mounted, isAuthenticated, router, fetchMe])
 
+  // Fetch configured API keys once per session so any dashboard page that reads
+  // `configured[provider]` (model picker, assistant form, test panel) sees fresh
+  // backend state instead of the persisted default (which can flash a false
+  // "chave não configurada" warning until /dashboard/credentials is visited).
+  useEffect(() => {
+    if (!mounted || !isAuthenticated) return
+    if (!apiKeysHasFetched) fetchApiKeys()
+  }, [mounted, isAuthenticated, apiKeysHasFetched, fetchApiKeys])
+
   if (!mounted || !isAuthenticated) {
     return null
   }
@@ -134,6 +148,8 @@ export default function DashboardLayout({
       </BaisyncErrorBoundary>
       <ErrorModal />
       <ToastContainer />
+      <GuestApprovalToast />
+      <ActiveMeetingContainer />
     </div>
   )
 }

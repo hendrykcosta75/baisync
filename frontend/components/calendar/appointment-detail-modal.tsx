@@ -138,6 +138,24 @@ export function AppointmentDetailModal({ appointment, isOpen, onClose, assistant
                   <p className="text-foreground">{appointment.notes}</p>
                 </div>
               )}
+              {appointment.meetingUrl && (
+                <div className="col-span-2">
+                  <p className="text-muted text-xs">Reunião por vídeo</p>
+                  <div className="mt-1 flex items-center gap-2">
+                    <a
+                      href={appointment.meetingUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="btn-neu text-xs px-3 py-1.5"
+                    >
+                      Entrar na reunião
+                    </a>
+                    {appointment.meetingCode && (
+                      <span className="font-mono text-xs text-muted">{appointment.meetingCode}</span>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
 
             {appointment.status !== 'cancelled' && (

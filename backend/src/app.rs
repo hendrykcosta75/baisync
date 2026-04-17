@@ -71,6 +71,19 @@ pub fn build_router(
         .route(
             "/api/webhooks/mercadopago/card",
             post(handlers::card_payment::webhook_mercadopago_card),
+        )
+        // Public meeting routes (guest flow)
+        .route(
+            "/api/public/meetings/{code}",
+            get(handlers::meetings::public_info),
+        )
+        .route(
+            "/api/public/meetings/{code}/guest-join",
+            post(handlers::meetings::guest_join),
+        )
+        .route(
+            "/api/public/meetings/{code}/guest-status/{participant_id}",
+            get(handlers::meetings::guest_status),
         );
 
     // Protected routes (require auth)
@@ -267,6 +280,33 @@ pub fn build_router(
         .route(
             "/api/assistants/{id}/availability/slots",
             get(handlers::appointments::available_slots),
+        )
+        // Meetings
+        .route(
+            "/api/meetings",
+            get(handlers::meetings::list).post(handlers::meetings::create),
+        )
+        .route(
+            "/api/meetings/{id}",
+            get(handlers::meetings::get).delete(handlers::meetings::delete),
+        )
+        .route("/api/meetings/{id}/end", post(handlers::meetings::end))
+        .route("/api/meetings/{id}/join", post(handlers::meetings::join))
+        .route(
+            "/api/meetings/{id}/participants",
+            get(handlers::meetings::participants),
+        )
+        .route(
+            "/api/meetings/{id}/approve/{participant_id}",
+            post(handlers::meetings::approve_guest),
+        )
+        .route(
+            "/api/meetings/{id}/deny/{participant_id}",
+            post(handlers::meetings::deny_guest),
+        )
+        .route(
+            "/api/meetings/{id}/messages",
+            get(handlers::meetings::list_chat).post(handlers::meetings::send_chat),
         )
         // Financeiro (PIX charges)
         .route(

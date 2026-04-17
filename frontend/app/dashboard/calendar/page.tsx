@@ -8,11 +8,14 @@ import { useCalendarStore } from '@/store/useCalendarStore'
 import { useAssistantStore } from '@/store/useAssistantStore'
 import { useWorkspaceStore } from '@/store/useWorkspaceStore'
 import { useAuthStore } from '@/store/useAuthStore'
+import { useMeetingStore } from '@/store/useMeetingStore'
 import { apiFetch } from '@/lib/api'
 import { AppointmentDetailModal } from '@/components/calendar/appointment-detail-modal'
 import { CreateEventModal } from '@/components/calendar/create-event-modal'
 import { TaskDetailModal } from '@/components/teams/task-detail-modal'
+import { MeetingDetailModal } from '@/components/meetings/MeetingDetailModal'
 import type { Appointment } from '@/types/appointment'
+import type { Meeting } from '@/types/meeting'
 import type { Task, TeamWithStats, TeamMember } from '@/types/team'
 
 import type { EventClickArg, DateSelectArg } from '@fullcalendar/core'
@@ -51,6 +54,7 @@ const TASK_STATUS_COLORS: Record<string, { bg: string; border: string; text: str
 export default function CalendarPage() {
   const { appointments, isLoading, fetch, selectedAssistantId, setFilter } = useCalendarStore()
   const { assistants, fetchAssistants, hasFetched } = useAssistantStore()
+  const { meetings, fetchMeetings } = useMeetingStore()
 
   const { activeWorkspace } = useWorkspaceStore()
   const currentUserId = useAuthStore((s) => s.user?.id)
@@ -64,11 +68,14 @@ export default function CalendarPage() {
   const [selectedTask, setSelectedTask] = useState<Task | null>(null)
   const [taskModalOpen, setTaskModalOpen] = useState(false)
   const [taskMembers, setTaskMembers] = useState<TeamMember[]>([])
+  const [selectedMeeting, setSelectedMeeting] = useState<Meeting | null>(null)
+  const [meetingModalOpen, setMeetingModalOpen] = useState(false)
 
   useEffect(() => {
     fetch()
+    fetchMeetings()
     if (!hasFetched) fetchAssistants()
-  }, [fetch, fetchAssistants, hasFetched])
+  }, [fetch, fetchMeetings, fetchAssistants, hasFetched])
 
   // Fetch tasks across all teams
   useEffect(() => {
@@ -132,10 +139,40 @@ export default function CalendarPage() {
       }
     })
 
-    return [...appointmentEvents, ...taskEvents]
-  }, [filteredAppointments, allTasks])
+    // Meetings linked to an appointment are already represented by the appointment event
+    // (the appointment carries the meeting link). Skip those here so the calendar doesn't
+    // render two tiles at the same slot for the same call. Standalone meetings still show.
+    const linkedMeetingIds = new Set(
+      filteredAppointments.flatMap((a) => (a.meetingId ? [a.meetingId] : [])),
+    )
+    const linkedMeetingCodes = new Set(
+      filteredAppointments.flatMap((a) => (a.meetingCode ? [a.meetingCode] : [])),
+    )
+
+    const meetingEvents = meetings
+      .filter((m) => m.scheduledStart && m.status !== 'ended')
+      .filter((m) => !linkedMeetingIds.has(m.id) && !linkedMeetingCodes.has(m.code))
+      .map((m) => ({
+        id: `meeting-${m.id}`,
+        title: `${m.title || 'Reunião'} (Reunião)`,
+        start: m.scheduledStart!,
+        end: new Date(new Date(m.scheduledStart!).getTime() + 60 * 60000).toISOString(),
+        backgroundColor: '#1a1a2e',
+        borderColor: '#8b5cf6',
+        textColor: '#c4b5fd',
+        extendedProps: { meeting: m },
+      }))
+
+    return [...appointmentEvents, ...taskEvents, ...meetingEvents]
+  }, [filteredAppointments, allTasks, meetings])
 
   const handleEventClick = useCallback(async (info: EventClickArg) => {
+    if (info.event.extendedProps.meeting) {
+      const m = info.event.extendedProps.meeting as Meeting
+      setSelectedMeeting(m)
+      setMeetingModalOpen(true)
+      return
+    }
     if (info.event.extendedProps.task) {
       const task = info.event.extendedProps.task as Task & { team_name?: string }
       setSelectedTask(task)
@@ -282,6 +319,10 @@ export default function CalendarPage() {
           <div className="w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: '#ef4444' }} />
           <span className="text-[11px] text-muted">Atrasada</span>
         </div>
+        <div className="flex items-center gap-1.5">
+          <div className="w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: '#8b5cf6' }} />
+          <span className="text-[11px] text-muted">Reunião</span>
+        </div>
       </div>
 
       {/* Custom styles for FullCalendar — dark-first theme */}
@@ -414,6 +455,12 @@ export default function CalendarPage() {
         isOpen={detailOpen}
         onClose={() => { setDetailOpen(false); setSelectedAppointment(null) }}
         assistants={assistants}
+      />
+
+      <MeetingDetailModal
+        isOpen={meetingModalOpen}
+        meeting={selectedMeeting}
+        onClose={() => { setMeetingModalOpen(false); setSelectedMeeting(null) }}
       />
 
       <CreateEventModal

@@ -16,6 +16,9 @@ export interface Appointment {
   isManual: boolean
   createdAt: string
   updatedAt: string
+  meetingId?: string | null
+  meetingCode?: string | null
+  meetingUrl?: string | null
 }
 
 export interface AvailabilityConfig {

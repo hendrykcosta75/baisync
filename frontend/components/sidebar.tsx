@@ -6,7 +6,7 @@ import { usePathname } from 'next/navigation'
 import { useAuthStore } from '@/store/useAuthStore'
 import {
   LayoutDashboard, Bot, Banknote, CalendarDays, KeyRound, LogOut,
-  MessageSquare, Users, Target, Map, Crosshair,
+  MessageSquare, Users, Target, Map, Crosshair, Video,
   ChevronDown,
 } from 'lucide-react'
 import { WorkspaceSwitcher } from '@/components/workspace/workspace-switcher'
@@ -66,6 +66,7 @@ const sections: NavSection[] = [
     links: [
       { name: 'Financeiro', href: '/dashboard/financeiro', icon: Banknote },
       { name: 'Agenda', href: '/dashboard/calendar', icon: CalendarDays },
+      { name: 'Reuniões', href: '/dashboard/meetings', icon: Video },
     ],
   },
   {

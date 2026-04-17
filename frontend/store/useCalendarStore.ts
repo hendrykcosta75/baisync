@@ -39,6 +39,9 @@ function mapApiAppointment(a: Record<string, unknown>): Appointment {
     isManual: (a.is_manual ?? a.isManual ?? false) as boolean,
     createdAt: (a.created_at ?? a.createdAt ?? '') as string,
     updatedAt: (a.updated_at ?? a.updatedAt ?? '') as string,
+    meetingId: (a.meeting_id ?? a.meetingId ?? null) as string | null,
+    meetingCode: (a.meeting_code ?? a.meetingCode ?? null) as string | null,
+    meetingUrl: (a.meeting_url ?? a.meetingUrl ?? null) as string | null,
   }
 }
 

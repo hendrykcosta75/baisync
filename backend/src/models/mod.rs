@@ -5,6 +5,7 @@ pub mod card_charge;
 pub mod channel;
 pub mod conversation;
 pub mod integration;
+pub mod meeting;
 pub mod notification;
 pub mod okr;
 pub mod strategy_map;
