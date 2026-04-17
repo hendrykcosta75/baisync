@@ -2,7 +2,6 @@
 
 import React, { useState, useEffect } from 'react'
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
 import { Input, Button, Checkbox, Label } from '@heroui/react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
@@ -22,7 +21,6 @@ type LoginFormData = z.infer<typeof loginSchema>
 export default function LoginPage() {
   const [isVisible, setIsVisible] = useState(false)
   const [pwFocused, setPwFocused] = useState(false)
-  const router = useRouter()
   const { login, isLoading, error, clearError, isAuthenticated } = useAuthStore()
 
   const {
@@ -35,9 +33,9 @@ export default function LoginPage() {
 
   useEffect(() => {
     if (isAuthenticated) {
-      router.replace('/dashboard')
+      window.location.assign('/dashboard')
     }
-  }, [isAuthenticated, router])
+  }, [isAuthenticated])
 
   const toggleVisibility = () => setIsVisible(!isVisible)
 
@@ -45,7 +43,7 @@ export default function LoginPage() {
     clearError()
     try {
       await login(data.email, data.password)
-      router.push('/dashboard')
+      window.location.assign('/dashboard')
     } catch {
       // error is set in store
     }

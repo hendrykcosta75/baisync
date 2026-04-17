@@ -225,7 +225,7 @@ function LogEntry({ log }: { log: AssistantLog }) {
   const isError = !!log.error || (log.status_code !== null && log.status_code >= 400)
 
   return (
-    <div className={`rounded-xl overflow-hidden ${isError ? 'border-red-300 dark:border-red-800/60' : ''}`}>
+    <div className={`glass-card rounded-xl overflow-hidden transition-all duration-200 hover:border-[#ff6b2c]/30 ${isError ? '!border-red-500/40' : ''}`}>
       <button
         onClick={() => setExpanded(v => !v)}
         className="w-full flex items-center gap-3 px-4 py-3 hover:bg-raised/60 transition-colors text-left"
@@ -494,7 +494,10 @@ export function LogsTab({ assistant, shareToken }: LogsTabProps) {
             </p>
           </div>
         ) : (
-          <div className="space-y-2">
+          <div
+            className="space-y-2 overflow-y-auto pr-1"
+            style={{ maxHeight: 'calc(100vh - 420px)', minHeight: '300px' }}
+          >
             {filtered.map(log => <LogEntry key={log.id} log={log} />)}
             {hasMore && (
               <div ref={sentinelRef} className="flex justify-center py-4">

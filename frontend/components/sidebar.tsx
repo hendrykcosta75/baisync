@@ -235,7 +235,7 @@ export function Sidebar({
       <aside
         className={`
           fixed inset-y-0 left-0 z-50
-          transform lg:translate-x-0 lg:static flex flex-col
+          transform lg:translate-x-0 lg:static lg:h-screen flex flex-col shrink-0
           ${isOpen ? 'translate-x-0' : '-translate-x-full'}
         `}
         style={{

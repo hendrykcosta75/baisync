@@ -119,7 +119,7 @@ export default function DashboardLayout({
   }
 
   return (
-    <div className="flex min-h-screen font-[family-name:var(--font-jetbrains-mono)] selection:bg-orange-500/20 overflow-x-hidden" style={{ background: 'var(--c-app)' }}>
+    <div className="flex h-screen font-[family-name:var(--font-jetbrains-mono)] selection:bg-orange-500/20 overflow-hidden" style={{ background: 'var(--c-app)' }}>
       <Sidebar
         isOpen={isSidebarOpen}
         onClose={() => setIsSidebarOpen(false)}

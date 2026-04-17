@@ -437,9 +437,12 @@ export default function FinanceiroPage() {
                   </p>
                 </div>
               ) : (
-                <div className="overflow-x-auto">
+                <div
+                  className="overflow-auto"
+                  style={{ maxHeight: 'calc(100vh - 420px)', minHeight: '320px' }}
+                >
                   <table className="w-full">
-                    <thead>
+                    <thead className="sticky top-0 z-10" style={{ background: '#0a0a0a' }}>
                       <tr style={{ borderBottom: '1px solid rgba(255, 107, 44, 0.08)' }}>
                         <th className="text-left px-5 py-3 text-xs uppercase font-medium" style={{ fontFamily: monoFont, color: '#8a8a8a', letterSpacing: '0.05em' }}>Data</th>
                         <th className="text-left px-5 py-3 text-xs uppercase font-medium" style={{ fontFamily: monoFont, color: '#8a8a8a', letterSpacing: '0.05em' }}>Cliente</th>

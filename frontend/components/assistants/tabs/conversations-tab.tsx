@@ -2,7 +2,7 @@
 
 import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react'
 import { Assistant, Conversation, Message, MessageChannel, LLMProvider } from '@/types/assistant'
-import { Card, Button, Input, Modal, Select, ListBox, Label, Spinner } from '@heroui/react'
+import { Button, Input, Modal, Select, ListBox, Label, Spinner } from '@heroui/react'
 import { MessageSquare, Bot, BarChart3 } from 'lucide-react'
 import { apiFetch } from '@/lib/api'
 import { useApiKeysStore } from '@/store/useApiKeysStore'
@@ -371,54 +371,69 @@ export function ConversationsTab({ assistant, shareToken }: ConversationsTabProp
         </div>
       </div>
 
-      <div className="flex flex-col gap-3">
+      <div
+        className="flex flex-col gap-3 overflow-y-auto pr-1"
+        style={{ maxHeight: 'calc(100vh - 320px)', minHeight: '300px' }}
+      >
         {filtered.map((conv) => (
-          <Card
+          <div
             key={conv.id}
-            className="overflow-hidden cursor-pointer hover:bg-raised/50 transition-colors"
+            role="button"
+            tabIndex={0}
+            className="glass-card rounded-xl p-4 cursor-pointer transition-all duration-200 hover:border-[#ff6b2c]/30"
             onClick={() => handleOpenConversation(conv.id)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault()
+                handleOpenConversation(conv.id)
+              }
+            }}
           >
-            <div className="p-4">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-full bg-raised flex items-center justify-center text-sm font-bold text-subtle">
-                    {(conv.contactName || '?').split(' ').map(n => n[0]).join('').slice(0, 2)}
-                  </div>
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <span className="font-semibold text-foreground text-sm">{conv.contactName}</span>
-                      {channelColors[conv.channel] && (
-                        <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold uppercase ${channelColors[conv.channel]}`}>
-                          {channelLabels[conv.channel] || conv.channel}
-                        </span>
-                      )}
-                      <span className="px-1.5 py-0.5 rounded-full bg-raised text-[10px] font-semibold text-slate-500">
-                        {conv.messageCount} msgs
-                      </span>
-                      {conv.totalTokens > 0 && (
-                        <span className="px-1.5 py-0.5 rounded-full bg-[#ff6b2c]/10 dark:bg-[#ff6b2c]/10 text-[10px] font-semibold text-[#ff6b2c] dark:text-[#ff8533]">
-                          {conv.totalTokens > 1000 ? `${(conv.totalTokens / 1000).toFixed(1)}k` : conv.totalTokens} tokens
-                        </span>
-                      )}
-                    </div>
-                    <p className="text-xs text-muted mt-0.5 truncate max-w-xs">{conv.lastMessage}</p>
-                  </div>
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-3 min-w-0 flex-1">
+                <div className="w-10 h-10 rounded-full bg-raised flex items-center justify-center text-sm font-bold text-subtle shrink-0">
+                  {(conv.contactName || '?').split(' ').map(n => n[0]).join('').slice(0, 2)}
                 </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-xs text-muted whitespace-nowrap">{formatDate(conv.lastMessageAt)}</span>
-                  <div onClick={(e) => e.stopPropagation()}>
-                    <Button
-                      variant="ghost"
-                      className="text-xs text-red-500 hover:text-red-700 px-2 py-1 min-w-0"
-                      onPress={() => setDeleteModalConvId(conv.id)}
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span
+                      className="font-semibold text-heading text-sm"
+                      style={{ fontFamily: "'JetBrains Mono', 'Fira Code', monospace" }}
                     >
-                      Excluir
-                    </Button>
+                      {conv.contactName}
+                    </span>
+                    {channelColors[conv.channel] && (
+                      <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold uppercase ${channelColors[conv.channel]}`}>
+                        {channelLabels[conv.channel] || conv.channel}
+                      </span>
+                    )}
+                    <span className="px-1.5 py-0.5 rounded-full bg-raised text-[10px] font-semibold text-subtle">
+                      {conv.messageCount} msgs
+                    </span>
+                    {conv.totalTokens > 0 && (
+                      <span className="px-1.5 py-0.5 rounded-full bg-[#ff6b2c]/10 text-[10px] font-semibold text-[#ff6b2c]">
+                        {conv.totalTokens > 1000 ? `${(conv.totalTokens / 1000).toFixed(1)}k` : conv.totalTokens} tokens
+                      </span>
+                    )}
                   </div>
+                  <p className="text-xs text-subtle mt-0.5 truncate">{conv.lastMessage}</p>
                 </div>
               </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <span className="text-xs text-subtle whitespace-nowrap">{formatDate(conv.lastMessageAt)}</span>
+                <button
+                  type="button"
+                  className="btn-neu-ghost !text-red-400 hover:!text-red-300 text-xs px-2 py-1"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    setDeleteModalConvId(conv.id)
+                  }}
+                >
+                  Excluir
+                </button>
+              </div>
             </div>
-          </Card>
+          </div>
         ))}
 
         {filtered.length === 0 && !isLoadingConversations && (

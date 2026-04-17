@@ -831,3 +831,45 @@
 .react-flow__connectionline {
   z-index: 1001;
 }
+
+/* ============================================================
+   SWITCH — neumorphic override
+   ============================================================ */
+.switch .switch__control,
+.switch:hover .switch__control,
+.switch[data-hovered="true"] .switch__control {
+  background-color: #121212;
+  box-shadow:
+    inset 2px 2px 5px rgba(0, 0, 0, 0.6),
+    inset -1px -1px 3px rgba(255, 255, 255, 0.03);
+}
+
+.switch[aria-checked="true"] .switch__control,
+.switch[data-selected="true"] .switch__control,
+.switch[aria-checked="true"]:hover .switch__control,
+.switch[data-selected="true"]:hover .switch__control,
+.switch[aria-checked="true"][data-hovered="true"] .switch__control,
+.switch[data-selected="true"][data-hovered="true"] .switch__control {
+  background-color: rgba(232, 113, 42, 0.35);
+  box-shadow:
+    inset 2px 2px 5px rgba(0, 0, 0, 0.45),
+    inset -1px -1px 3px rgba(255, 107, 44, 0.25);
+}
+
+.switch .switch__thumb {
+  background-color: #3a3a3a;
+  color: inherit;
+  box-shadow:
+    2px 2px 5px rgba(0, 0, 0, 0.55),
+    -1px -1px 3px rgba(255, 255, 255, 0.04);
+}
+
+.switch[aria-checked="true"] .switch__thumb,
+.switch[data-selected="true"] .switch__thumb {
+  background-color: #D4835A;
+  color: inherit;
+  box-shadow:
+    2px 2px 5px rgba(0, 0, 0, 0.55),
+    -1px -1px 3px rgba(255, 255, 255, 0.06),
+    0 0 10px rgba(255, 107, 44, 0.35);
+}

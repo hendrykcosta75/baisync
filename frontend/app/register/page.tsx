@@ -2,7 +2,6 @@
 
 import React, { useState, useEffect } from 'react'
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
 import { Input, Button, Label } from '@heroui/react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
@@ -27,7 +26,6 @@ type RegisterFormData = z.infer<typeof registerSchema>
 export default function RegisterPage() {
   const [isVisible, setIsVisible] = useState(false)
   const [pwFocused, setPwFocused] = useState(false)
-  const router = useRouter()
   const { register: registerUser, isLoading, error, clearError, isAuthenticated } = useAuthStore()
 
   const {
@@ -40,9 +38,9 @@ export default function RegisterPage() {
 
   useEffect(() => {
     if (isAuthenticated) {
-      router.replace('/dashboard')
+      window.location.assign('/dashboard')
     }
-  }, [isAuthenticated, router])
+  }, [isAuthenticated])
 
   const toggleVisibility = () => setIsVisible(!isVisible)
 
@@ -50,7 +48,7 @@ export default function RegisterPage() {
     clearError()
     try {
       await registerUser(data.email, data.password, data.name)
-      router.push('/dashboard')
+      window.location.assign('/dashboard')
     } catch {
       // error is set in store
     }
