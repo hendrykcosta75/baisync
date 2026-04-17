@@ -435,11 +435,9 @@ pub async fn sync_from_okr_data(
     let channels = channel_service::list_channels(db, workspace_id)
         .await
         .unwrap_or_default();
-    let ws = workspace_service::get_workspace(db, workspace_id)
-        .await
-        .ok();
-    let owner_id = ws.map(|w| w.owner_id).unwrap_or(*workspace_id);
-    let assistants = assistant_service::list_assistants(db, &owner_id)
+    // Assistants' partition key is the active workspace_id (same column name `user_id`
+    // in the table, but populated from the JWT's workspace_id — see other handlers).
+    let assistants = assistant_service::list_assistants(db, workspace_id)
         .await
         .unwrap_or_default();
     let members = workspace_service::list_members(db, workspace_id)
@@ -495,7 +493,8 @@ pub async fn sync_from_okr_data(
         let name = member.user_name.as_deref().unwrap_or("Membro");
         ensure_node!(member.user_id, "member", name, None);
     }
-    // Objectives + KRs
+    // Objectives + KRs (cache KRs to avoid double-fetching when building edges)
+    let mut krs_by_obj: HashMap<Uuid, Vec<crate::models::okr::OkrKeyResult>> = HashMap::new();
     for obj in &objectives {
         let meta = serde_json::json!({
             "progress": obj.progress, "confidence": obj.confidence,
@@ -517,6 +516,7 @@ pub async fn sync_from_okr_data(
             .to_string();
             ensure_node!(kr.id, "key_result", &kr.title, Some(kr_meta.as_str()));
         }
+        krs_by_obj.insert(obj.id, krs);
     }
     // Tasks
     for team in &teams {
@@ -580,6 +580,72 @@ pub async fn sync_from_okr_data(
         ensure_node!(analysis.id, "swot", &analysis.title, Some(meta.as_str()));
     }
 
+    // ─── 4.5. Delete stale auto-synced nodes ───
+    // Any existing auto-synced node whose entity no longer exists in the live domain
+    // data is removed so the map reflects the current reality.
+    // Preserves `workspace` and user-created `sticky_note` nodes.
+    let auto_synced_types: &[&str] = &[
+        "team",
+        "channel",
+        "assistant",
+        "member",
+        "objective",
+        "key_result",
+        "task",
+        "swot",
+    ];
+    let mut live_entity_ids: HashSet<Uuid> = HashSet::new();
+    live_entity_ids.insert(*workspace_id);
+    for team in &teams {
+        live_entity_ids.insert(team.id);
+    }
+    for ch in &channels {
+        live_entity_ids.insert(ch.id);
+    }
+    for asst in &assistants {
+        live_entity_ids.insert(asst.id);
+    }
+    for member in &members {
+        live_entity_ids.insert(member.user_id);
+    }
+    for obj in &objectives {
+        live_entity_ids.insert(obj.id);
+        if let Some(krs) = krs_by_obj.get(&obj.id) {
+            for kr in krs {
+                live_entity_ids.insert(kr.id);
+            }
+        }
+    }
+    for tasks in tasks_by_team.values() {
+        for task in tasks {
+            live_entity_ids.insert(task.id);
+        }
+    }
+    for analysis in &swot_analyses {
+        live_entity_ids.insert(analysis.id);
+    }
+
+    for node in &existing_nodes {
+        if !auto_synced_types.contains(&node.node_type.as_str()) {
+            continue;
+        }
+        let stale = match node.entity_id {
+            Some(eid) => !live_entity_ids.contains(&eid),
+            None => true,
+        };
+        if stale {
+            let _ = db
+                .query_unpaged(
+                    "DELETE FROM inertial_eclipse.strategy_map_nodes WHERE workspace_id = ? AND id = ?",
+                    (workspace_id, &node.id),
+                )
+                .await;
+            if let Some(eid) = node.entity_id {
+                entity_to_node.remove(&eid);
+            }
+        }
+    }
+
     // ─── 5. Build edges based on real relationships ───
     // Track which entities have a parent (not directly connected to workspace)
     let mut has_parent: HashSet<Uuid> = HashSet::new();
@@ -588,9 +654,7 @@ pub async fn sync_from_okr_data(
 
     // KRs → their objective
     for obj in &objectives {
-        let krs = okr_service::list_key_results(db, &obj.id)
-            .await
-            .unwrap_or_default();
+        let krs = krs_by_obj.get(&obj.id).cloned().unwrap_or_default();
         for kr in &krs {
             if let (Some(src), Some(tgt)) =
                 (entity_to_node.get(&obj.id), entity_to_node.get(&kr.id))

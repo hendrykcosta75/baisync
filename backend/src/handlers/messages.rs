@@ -855,6 +855,7 @@ pub async fn playground_chat(
 
 pub async fn list_conversations(
     Extension(db): Extension<DbSession>,
+    Extension(config): Extension<Config>,
     Extension(auth_user): Extension<AuthUser>,
     Path(assistant_id): Path<Uuid>,
     Query(query): Query<ConversationListQuery>,
@@ -879,6 +880,7 @@ pub async fn list_conversations(
     .await?;
 
     let mut responses = Vec::new();
+    let mut backfill_targets: Vec<(Uuid, String)> = Vec::new();
     for conv in &paginated.items {
         let messages = messaging::get_recent_messages(&db, &conv.id, 1)
             .await
@@ -889,6 +891,13 @@ pub async fn list_conversations(
             .first()
             .and_then(|m| m.content.clone())
             .unwrap_or_default();
+
+        if conv.contact_avatar_url.is_none()
+            && (conv.channel == "baileys" || conv.channel == "whatsapp")
+            && !conv.contact_number.is_empty()
+        {
+            backfill_targets.push((conv.id, conv.contact_number.clone()));
+        }
 
         responses.push(ConversationResponse {
             id: conv.id.to_string(),
@@ -904,6 +913,43 @@ pub async fn list_conversations(
             total_tokens,
             ai_enabled: conv.ai_enabled,
             messages: vec![],
+        });
+    }
+
+    // Fire-and-forget: backfill missing WhatsApp profile pictures for future loads.
+    if !backfill_targets.is_empty() {
+        let db_bg = db.clone();
+        let config_bg = config.clone();
+        let owner_id_bg = owner_id;
+        let assistant_id_bg = assistant_id;
+        tokio::spawn(async move {
+            let Ok(result) = db_bg.query_unpaged(
+                "SELECT config_phone_number FROM inertial_eclipse.assistant_integrations WHERE assistant_id = ? AND user_id = ? ALLOW FILTERING",
+                (&assistant_id_bg, &owner_id_bg),
+            ).await else { return };
+            let Ok(rows) = result.into_rows_result() else { return };
+            let mut connection_phone: Option<String> = None;
+            for row in rows.rows::<(Option<String>,)>().into_iter().flatten().flatten() {
+                if let Some(phone) = row.0.filter(|s| !s.is_empty()) {
+                    connection_phone = Some(phone);
+                    break;
+                }
+            }
+            let Some(connection_phone) = connection_phone else { return };
+            for (conv_id, contact_number) in backfill_targets {
+                if let Some(url) = messaging::fetch_baileys_profile_picture(
+                    &config_bg,
+                    &connection_phone,
+                    &contact_number,
+                )
+                .await
+                {
+                    let _ = db_bg.query_unpaged(
+                        "UPDATE inertial_eclipse.conversations SET contact_avatar_url = ? WHERE assistant_id = ? AND user_id = ? AND id = ?",
+                        (&url, &assistant_id_bg, &owner_id_bg, &conv_id),
+                    ).await;
+                }
+            }
         });
     }
 

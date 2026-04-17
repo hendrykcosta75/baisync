@@ -1857,25 +1857,25 @@ pub async fn list_conversations(
     assistant_id: &Uuid,
     user_id: &Uuid,
     limit: i32,
-    cursor: Option<&str>,
+    _cursor: Option<&str>,
     search: Option<&str>,
 ) -> Result<crate::models::pagination::PaginatedResponse<Conversation>, AppError> {
-    let (result, next_cursor) = crate::db::query_paged(
-        db,
-        "SELECT assistant_id, user_id, id, contact_number, channel, started_at, last_message_at, summary, ai_enabled, contact_name, contact_avatar_url FROM inertial_eclipse.conversations WHERE assistant_id = ? AND user_id = ?",
-        (assistant_id, user_id),
-        limit,
-        cursor,
-    )
-    .await
-    .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+    // The table's clustering key is `id` (random UUIDv4) so Cassandra cannot order by
+    // `last_message_at` directly. Fetch all rows for the assistant and sort in memory.
+    // Volume per assistant stays small in practice; revisit with a dedicated view if it grows.
+    let result = db
+        .query_unpaged(
+            "SELECT assistant_id, user_id, id, contact_number, channel, started_at, last_message_at, summary, ai_enabled, contact_name, contact_avatar_url FROM inertial_eclipse.conversations WHERE assistant_id = ? AND user_id = ?",
+            (assistant_id, user_id),
+        )
+        .await
+        .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     let rows = result.into_rows_result()?;
     let mut conversations = Vec::new();
     for row in rows.rows::<ConversationRow>()? {
         let r = row.map_err(|e| AppError::DatabaseError(e.to_string()))?;
         let conv = row_to_conversation(r);
-        // Application-level search filter (Cassandra can't efficiently filter text fields)
         if let Some(q) = search {
             if !q.is_empty() {
                 let q_lower = q.to_lowercase();
@@ -1893,9 +1893,15 @@ pub async fn list_conversations(
         conversations.push(conv);
     }
 
+    // Most recent first
+    conversations.sort_by(|a, b| b.last_message_at.cmp(&a.last_message_at));
+    if limit > 0 {
+        conversations.truncate(limit as usize);
+    }
+
     Ok(crate::models::pagination::PaginatedResponse {
         items: conversations,
-        cursor: next_cursor,
+        cursor: None,
     })
 }
 
@@ -2329,7 +2335,7 @@ pub struct PlaygroundResponse {
 
 /// Fetch the WhatsApp profile picture URL for a contact via the Baileys API.
 /// Returns None if the contact has no picture, privacy-hidden, or the request fails.
-async fn fetch_baileys_profile_picture(
+pub async fn fetch_baileys_profile_picture(
     config: &Config,
     connection_phone: &str,
     contact_phone: &str,

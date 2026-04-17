@@ -64,6 +64,20 @@ function loadActiveWorkspaceId(): string | null {
   return localStorage.getItem('active-workspace-id')
 }
 
+// Routes that are hidden from the sidebar when in a personal workspace
+// (mirrors the filter in components/sidebar.tsx).
+const WORKSPACE_ONLY_PATHS = [
+  '/dashboard/planning',
+  '/dashboard/strategy-map',
+  '/dashboard/swot',
+  '/dashboard/teams',
+  '/dashboard/chat',
+]
+
+function isWorkspaceOnlyPath(pathname: string): boolean {
+  return WORKSPACE_ONLY_PATHS.some(p => pathname === p || pathname.startsWith(p + '/'))
+}
+
 export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
   workspaces: [],
   activeWorkspace: null,
@@ -117,8 +131,13 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
       const active = workspaces.find(w => w.workspace_id === workspaceId) || null
       set({ activeWorkspace: active })
 
-      // Reload page to refresh all data with new workspace context
-      window.location.reload()
+      // Navigate away from workspace-only routes when switching into a personal workspace
+      const currentPath = typeof window !== 'undefined' ? window.location.pathname : ''
+      if (active?.workspace_type === 'personal' && isWorkspaceOnlyPath(currentPath)) {
+        window.location.assign('/dashboard')
+      } else {
+        window.location.reload()
+      }
     } catch (err) {
       console.error('Failed to switch workspace:', err)
     }
