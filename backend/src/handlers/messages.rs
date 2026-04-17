@@ -25,6 +25,7 @@ use crate::services::{email, notification};
 pub struct ConversationResponse {
     pub id: String,
     pub contact_name: String,
+    pub profile_picture_url: Option<String>,
     pub channel: String,
     pub last_message: String,
     pub last_message_at: String,
@@ -895,6 +896,7 @@ pub async fn list_conversations(
                 .contact_name
                 .clone()
                 .unwrap_or_else(|| conv.contact_number.clone()),
+            profile_picture_url: conv.contact_avatar_url.clone(),
             channel: conv.channel.clone(),
             last_message,
             last_message_at: conv.last_message_at.to_rfc3339(),

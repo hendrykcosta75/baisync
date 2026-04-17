@@ -106,6 +106,7 @@ export interface Message {
 export interface Conversation {
   id: string
   contactName: string
+  profilePictureUrl?: string | null
   channel: MessageChannel
   lastMessage: string
   lastMessageAt: string

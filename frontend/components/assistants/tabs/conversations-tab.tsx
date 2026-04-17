@@ -41,6 +41,45 @@ const channelLabels: Record<string, string> = {
   telegram: 'Telegram',
 }
 
+function initialsFrom(name?: string | null) {
+  return (name || '?').split(' ').map(n => n[0]).join('').slice(0, 2)
+}
+
+function ContactAvatar({
+  url,
+  name,
+  wrapperClass,
+  wrapperStyle,
+  initialsClass,
+  initialsStyle,
+}: {
+  url?: string | null
+  name?: string | null
+  wrapperClass: string
+  wrapperStyle?: React.CSSProperties
+  initialsClass: string
+  initialsStyle?: React.CSSProperties
+}) {
+  const [failedUrl, setFailedUrl] = useState<string | null>(null)
+  const showImg = !!url && failedUrl !== url
+  return (
+    <div className={`${wrapperClass} overflow-hidden flex items-center justify-center shrink-0`} style={wrapperStyle}>
+      {showImg ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={url as string}
+          alt=""
+          referrerPolicy="no-referrer"
+          className="w-full h-full object-cover"
+          onError={() => setFailedUrl(url ?? null)}
+        />
+      ) : (
+        <span className={initialsClass} style={initialsStyle}>{initialsFrom(name)}</span>
+      )}
+    </div>
+  )
+}
+
 function SummaryProviderPicker({ onGenerate, isGenerating }: { onGenerate: (provider: LLMProvider, model: string) => void, isGenerating: boolean }) {
   const [provider, setProvider] = useState<LLMProvider>('openai')
   const { models, isLoading: modelsLoading } = useModels(provider)
@@ -175,19 +214,25 @@ export function ConversationsTab({ assistant, shareToken }: ConversationsTabProp
       })
   }, [assistant.id, qsPrefix])
 
-  // Update contact name in conversation list from SSE events
+  // Update contact name / avatar in conversation list from SSE events
   useEffect(() => {
     const handler = (e: Event) => {
       const detail = (e as CustomEvent).detail
       if (!detail?.conversationId) return
-      // Update contactName if the SSE event includes it
-      if (detail.contactName) {
-        setConversations(prev => prev.map(c =>
-          c.id === detail.conversationId && c.contactName !== detail.contactName
-            ? { ...c, contactName: detail.contactName }
-            : c
-        ))
-      }
+      setConversations(prev => prev.map(c => {
+        if (c.id !== detail.conversationId) return c
+        const next = { ...c }
+        let changed = false
+        if (detail.contactName && c.contactName !== detail.contactName) {
+          next.contactName = detail.contactName
+          changed = true
+        }
+        if (detail.profilePictureUrl !== undefined && c.profilePictureUrl !== detail.profilePictureUrl) {
+          next.profilePictureUrl = detail.profilePictureUrl
+          changed = true
+        }
+        return changed ? next : c
+      }))
     }
     window.addEventListener('sse:conversation_updated', handler)
     return () => window.removeEventListener('sse:conversation_updated', handler)
@@ -391,9 +436,12 @@ export function ConversationsTab({ assistant, shareToken }: ConversationsTabProp
           >
             <div className="flex items-center justify-between gap-3">
               <div className="flex items-center gap-3 min-w-0 flex-1">
-                <div className="w-10 h-10 rounded-full bg-raised flex items-center justify-center text-sm font-bold text-subtle shrink-0">
-                  {(conv.contactName || '?').split(' ').map(n => n[0]).join('').slice(0, 2)}
-                </div>
+                <ContactAvatar
+                  url={conv.profilePictureUrl}
+                  name={conv.contactName}
+                  wrapperClass="w-10 h-10 rounded-full bg-raised"
+                  initialsClass="text-sm font-bold text-subtle"
+                />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2 flex-wrap">
                     <span
@@ -464,9 +512,14 @@ export function ConversationsTab({ assistant, shareToken }: ConversationsTabProp
                       ← Voltar
                     </button>
                     <div className="flex items-center gap-3 flex-1 min-w-0">
-                      <div className="w-10 h-10 rounded-[10px] flex items-center justify-center text-sm font-semibold shrink-0" style={{ background: '#121212', boxShadow: '3px 3px 7px rgba(0,0,0,0.45), -1px -1px 5px rgba(255,255,255,0.03)', color: '#D4835A' }}>
-                        {(openConv.contactName || '?').split(' ').map(n => n[0]).join('').slice(0, 2)}
-                      </div>
+                      <ContactAvatar
+                        url={openConv.profilePictureUrl}
+                        name={openConv.contactName}
+                        wrapperClass="w-10 h-10 rounded-[10px]"
+                        wrapperStyle={{ background: '#121212', boxShadow: '3px 3px 7px rgba(0,0,0,0.45), -1px -1px 5px rgba(255,255,255,0.03)' }}
+                        initialsClass="text-sm font-semibold"
+                        initialsStyle={{ color: '#D4835A' }}
+                      />
                       <div className="min-w-0">
                         <div className="flex items-center gap-2">
                           <span className="font-semibold text-foreground">{openConv.contactName}</span>

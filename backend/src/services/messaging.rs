@@ -165,7 +165,7 @@ pub async fn process_incoming_message(
         }
     }
 
-    let conversation = get_or_create_conversation(
+    let mut conversation = get_or_create_conversation(
         db,
         &assistant_id,
         &user_id,
@@ -174,6 +174,25 @@ pub async fn process_incoming_message(
         webhook.contact_name.as_deref(),
     )
     .await?;
+
+    // Fetch profile picture from Baileys on first contact (one-shot; stored in DB).
+    if conversation.channel == "baileys" && conversation.contact_avatar_url.is_none() {
+        let connection_phone = integration
+            .config_phone_number
+            .as_deref()
+            .unwrap_or_default();
+        if let Some(url) =
+            fetch_baileys_profile_picture(config, connection_phone, &webhook.phone).await
+        {
+            let _ = db
+                .query_unpaged(
+                    "UPDATE inertial_eclipse.conversations SET contact_avatar_url = ? WHERE assistant_id = ? AND user_id = ? AND id = ?",
+                    (&url, &assistant_id, &user_id, &conversation.id),
+                )
+                .await;
+            conversation.contact_avatar_url = Some(url);
+        }
+    }
 
     // Resolve the effective user message (transcribe audio if needed)
     let is_audio = webhook
@@ -1386,6 +1405,7 @@ pub async fn process_incoming_message(
             "conversationId": conversation.id.to_string(),
             "assistantId": assistant_id.to_string(),
             "contactName": conversation.contact_name.as_deref().unwrap_or(&conversation.contact_number),
+            "profilePictureUrl": conversation.contact_avatar_url,
         }).to_string(),
     }).await;
 
@@ -1640,6 +1660,7 @@ type ConversationRow = (
     Option<String>,
     Option<bool>,
     Option<String>,
+    Option<String>,
 );
 
 fn row_to_conversation(r: ConversationRow) -> Conversation {
@@ -1650,6 +1671,7 @@ fn row_to_conversation(r: ConversationRow) -> Conversation {
         id: r.2,
         contact_number: r.3.unwrap_or_default(),
         contact_name: r.9,
+        contact_avatar_url: r.10,
         channel: r.4.unwrap_or_default(),
         started_at: r.5.unwrap_or(fallback),
         last_message_at: r.6.unwrap_or(fallback),
@@ -1668,7 +1690,7 @@ async fn get_or_create_conversation(
 ) -> Result<Conversation, AppError> {
     let result = db
         .query_unpaged(
-            "SELECT assistant_id, user_id, id, contact_number, channel, started_at, last_message_at, summary, ai_enabled, contact_name FROM inertial_eclipse.conversations WHERE assistant_id = ? AND user_id = ? AND contact_number = ? ALLOW FILTERING",
+            "SELECT assistant_id, user_id, id, contact_number, channel, started_at, last_message_at, summary, ai_enabled, contact_name, contact_avatar_url FROM inertial_eclipse.conversations WHERE assistant_id = ? AND user_id = ? AND contact_number = ? ALLOW FILTERING",
             (assistant_id, user_id, contact_number),
         )
         .await
@@ -1706,6 +1728,7 @@ async fn get_or_create_conversation(
         id,
         contact_number: contact_number.to_string(),
         contact_name: contact_name.map(|s| s.to_string()),
+        contact_avatar_url: None,
         channel: channel.to_string(),
         started_at: Utc::now(),
         last_message_at: Utc::now(),
@@ -1839,7 +1862,7 @@ pub async fn list_conversations(
 ) -> Result<crate::models::pagination::PaginatedResponse<Conversation>, AppError> {
     let (result, next_cursor) = crate::db::query_paged(
         db,
-        "SELECT assistant_id, user_id, id, contact_number, channel, started_at, last_message_at, summary, ai_enabled, contact_name FROM inertial_eclipse.conversations WHERE assistant_id = ? AND user_id = ?",
+        "SELECT assistant_id, user_id, id, contact_number, channel, started_at, last_message_at, summary, ai_enabled, contact_name, contact_avatar_url FROM inertial_eclipse.conversations WHERE assistant_id = ? AND user_id = ?",
         (assistant_id, user_id),
         limit,
         cursor,
@@ -1978,6 +2001,7 @@ pub async fn send_direct_message(
                 "conversationId": conversation_id.to_string(),
                 "assistantId": assistant_id.to_string(),
                 "contactName": conv.contact_name.as_deref().unwrap_or(&conv.contact_number),
+                "profilePictureUrl": conv.contact_avatar_url,
             })
             .to_string(),
         },
@@ -2000,7 +2024,7 @@ pub async fn get_conversation(
 ) -> Result<Conversation, AppError> {
     let result = db
         .query_unpaged(
-            "SELECT assistant_id, user_id, id, contact_number, channel, started_at, last_message_at, summary, ai_enabled, contact_name FROM inertial_eclipse.conversations WHERE assistant_id = ? AND user_id = ? AND id = ?",
+            "SELECT assistant_id, user_id, id, contact_number, channel, started_at, last_message_at, summary, ai_enabled, contact_name, contact_avatar_url FROM inertial_eclipse.conversations WHERE assistant_id = ? AND user_id = ? AND id = ?",
             (assistant_id, user_id, conversation_id),
         )
         .await
@@ -2301,6 +2325,39 @@ pub struct PlaygroundResponse {
     pub tokens_used: i32,
     /// Base64-encoded MP3 audio, present when the assistant has audio mode enabled
     pub audio_base64: Option<String>,
+}
+
+/// Fetch the WhatsApp profile picture URL for a contact via the Baileys API.
+/// Returns None if the contact has no picture, privacy-hidden, or the request fails.
+async fn fetch_baileys_profile_picture(
+    config: &Config,
+    connection_phone: &str,
+    contact_phone: &str,
+) -> Option<String> {
+    if config.baileys_url.is_empty() || connection_phone.is_empty() {
+        return None;
+    }
+    let jid = format!("{}@s.whatsapp.net", contact_phone.trim_start_matches('+'));
+    let url = format!(
+        "{}/connections/{}/profile-picture-url?jid={}&type=image",
+        config.baileys_url, connection_phone, jid
+    );
+    let client = Client::new();
+    let resp = client
+        .get(&url)
+        .header("x-api-key", &config.baileys_api_key)
+        .timeout(std::time::Duration::from_secs(8))
+        .send()
+        .await
+        .ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    let body: serde_json::Value = resp.json().await.ok()?;
+    body["data"]["profilePictureUrl"]
+        .as_str()
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
 }
 
 /// Send a "composing" (typing) presence indicator before sending a message.
