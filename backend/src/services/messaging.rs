@@ -418,11 +418,31 @@ pub async fn process_incoming_message(
 
     // If AI is disabled for this conversation, save the message but skip LLM response
     if !conversation.ai_enabled {
-        let now = ts_now();
+        let now_ts = ts_now();
+        let now_dt = Utc::now();
         db.query_unpaged(
             "UPDATE inertial_eclipse.conversations SET last_message_at = ? WHERE assistant_id = ? AND user_id = ? AND id = ?",
-            (now, &assistant_id, &user_id, &conversation.id),
+            (now_ts, &assistant_id, &user_id, &conversation.id),
         ).await.map_err(|e| AppError::DatabaseError(e.to_string()))?;
+
+        event_bus
+            .publish(
+                &user_id,
+                crate::services::events::SseEvent {
+                    event_type: "conversation_updated".into(),
+                    data: serde_json::json!({
+                        "conversationId": conversation.id.to_string(),
+                        "assistantId": assistant_id.to_string(),
+                        "contactName": conversation.contact_name.as_deref().unwrap_or(&conversation.contact_number),
+                        "profilePictureUrl": conversation.contact_avatar_url,
+                        "lastMessage": effective_message,
+                        "lastMessageAt": now_dt.to_rfc3339(),
+                    })
+                    .to_string(),
+                },
+            )
+            .await;
+
         return Ok(WebhookResponse {
             status: "ok".into(),
             message_id: Some(conversation.id.to_string()),
@@ -1383,10 +1403,11 @@ pub async fn process_incoming_message(
     )
     .await?;
 
-    let now = ts_now();
+    let now_ts = ts_now();
+    let now_dt = Utc::now();
     db.query_unpaged(
         "UPDATE inertial_eclipse.conversations SET last_message_at = ? WHERE assistant_id = ? AND user_id = ? AND id = ?",
-        (now, &assistant_id, &user_id, &conversation.id),
+        (now_ts, &assistant_id, &user_id, &conversation.id),
     ).await.map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     update_usage_stats(
@@ -1406,6 +1427,8 @@ pub async fn process_incoming_message(
             "assistantId": assistant_id.to_string(),
             "contactName": conversation.contact_name.as_deref().unwrap_or(&conversation.contact_number),
             "profilePictureUrl": conversation.contact_avatar_url,
+            "lastMessage": llm_response.content,
+            "lastMessageAt": now_dt.to_rfc3339(),
         }).to_string(),
     }).await;
 
@@ -1992,10 +2015,11 @@ pub async fn send_direct_message(
     }
 
     // Update last_message_at
-    let now = ts_now();
+    let now_ts = ts_now();
+    let now_dt = Utc::now();
     db.query_unpaged(
         "UPDATE inertial_eclipse.conversations SET last_message_at = ? WHERE assistant_id = ? AND user_id = ? AND id = ?",
-        (now, assistant_id, user_id, conversation_id),
+        (now_ts, assistant_id, user_id, conversation_id),
     ).await.map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     // Publish SSE event (includes contact name for live refresh)
@@ -2008,6 +2032,8 @@ pub async fn send_direct_message(
                 "assistantId": assistant_id.to_string(),
                 "contactName": conv.contact_name.as_deref().unwrap_or(&conv.contact_number),
                 "profilePictureUrl": conv.contact_avatar_url,
+                "lastMessage": message_text,
+                "lastMessageAt": now_dt.to_rfc3339(),
             })
             .to_string(),
         },

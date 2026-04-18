@@ -202,7 +202,7 @@ export function ConversationsTab({ assistant, shareToken }: ConversationsTabProp
     return { items: res.items || [], cursor: res.cursor }
   }, [assistant.id, shareToken])
 
-  const { items: conversations, setItems: setConversations, isLoading: isLoadingConversations, isLoadingMore, hasMore, sentinelRef } = useInfiniteScroll<Conversation>({
+  const { items: conversations, setItems: setConversations, isLoading: isLoadingConversations, isLoadingMore, hasMore, sentinelRef, reset: reloadConversations } = useInfiniteScroll<Conversation>({
     fetchFn: fetchConversations,
   })
 
@@ -214,29 +214,53 @@ export function ConversationsTab({ assistant, shareToken }: ConversationsTabProp
       })
   }, [assistant.id, qsPrefix])
 
-  // Update contact name / avatar in conversation list from SSE events
+  // Update conversation list from SSE events — keeps list sorted by most recent
   useEffect(() => {
     const handler = (e: Event) => {
       const detail = (e as CustomEvent).detail
       if (!detail?.conversationId) return
-      setConversations(prev => prev.map(c => {
-        if (c.id !== detail.conversationId) return c
-        const next = { ...c }
+
+      setConversations(prev => {
+        const idx = prev.findIndex(c => c.id === detail.conversationId)
+        // Unknown conversation (new contact arrived) — refetch the list
+        if (idx === -1) {
+          reloadConversations()
+          return prev
+        }
+
+        const current = prev[idx]
+        const next = { ...current }
         let changed = false
-        if (detail.contactName && c.contactName !== detail.contactName) {
+        if (detail.contactName && current.contactName !== detail.contactName) {
           next.contactName = detail.contactName
           changed = true
         }
-        if (detail.profilePictureUrl !== undefined && c.profilePictureUrl !== detail.profilePictureUrl) {
+        if (detail.profilePictureUrl !== undefined && current.profilePictureUrl !== detail.profilePictureUrl) {
           next.profilePictureUrl = detail.profilePictureUrl
           changed = true
         }
-        return changed ? next : c
-      }))
+        if (detail.lastMessage !== undefined && current.lastMessage !== detail.lastMessage) {
+          next.lastMessage = detail.lastMessage
+          changed = true
+        }
+        if (detail.lastMessageAt && current.lastMessageAt !== detail.lastMessageAt) {
+          next.lastMessageAt = detail.lastMessageAt
+          changed = true
+        }
+        if (!changed) return prev
+
+        const without = prev.filter((_, i) => i !== idx)
+        const sortKey = (c: Conversation) => new Date(c.lastMessageAt).getTime()
+        const nextKey = sortKey(next)
+        const insertAt = without.findIndex(c => sortKey(c) < nextKey)
+        return insertAt === -1
+          ? [...without, next]
+          : [...without.slice(0, insertAt), next, ...without.slice(insertAt)]
+      })
     }
     window.addEventListener('sse:conversation_updated', handler)
     return () => window.removeEventListener('sse:conversation_updated', handler)
-  }, [setConversations])
+  }, [setConversations, reloadConversations])
 
   // Poll for new messages while conversation is open
   useEffect(() => {
@@ -290,13 +314,16 @@ export function ConversationsTab({ assistant, shareToken }: ConversationsTabProp
         ...prev,
         [convId]: [...(prev[convId] || []), msg],
       }))
-      setConversations(prev =>
-        prev.map(c =>
-          c.id === convId
-            ? { ...c, lastMessage: msg.content, lastMessageAt: msg.timestamp, messageCount: c.messageCount + 1 }
-            : c
-        )
-      )
+      setConversations(prev => {
+        const idx = prev.findIndex(c => c.id === convId)
+        if (idx === -1) return prev
+        const updated = { ...prev[idx], lastMessage: msg.content, lastMessageAt: msg.timestamp, messageCount: prev[idx].messageCount + 1 }
+        const without = prev.filter((_, i) => i !== idx)
+        const sortKey = (c: Conversation) => new Date(c.lastMessageAt).getTime()
+        const updatedKey = sortKey(updated)
+        const insertAt = without.findIndex(c => sortKey(c) < updatedKey)
+        return insertAt === -1 ? [...without, updated] : [...without.slice(0, insertAt), updated, ...without.slice(insertAt)]
+      })
       setMessageInput('')
       setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100)
     } catch (err) {
