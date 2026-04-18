@@ -44,12 +44,21 @@ function MicStatusBadge({ muted }: { muted: boolean }) {
   )
 }
 
-interface MicMutedProbeProps {
+interface MutedProbeProps {
   trackRef: TrackReference
   onChange: (identity: string, muted: boolean) => void
 }
 
-function MicMutedProbe({ trackRef, onChange }: MicMutedProbeProps) {
+function MicMutedProbe({ trackRef, onChange }: MutedProbeProps) {
+  const { isMuted } = useTrackMutedIndicator(trackRef)
+  const identity = trackRef.participant.identity
+  React.useEffect(() => {
+    onChange(identity, isMuted)
+  }, [identity, isMuted, onChange])
+  return null
+}
+
+function CamMutedProbe({ trackRef, onChange }: MutedProbeProps) {
   const { isMuted } = useTrackMutedIndicator(trackRef)
   const identity = trackRef.participant.identity
   React.useEffect(() => {
@@ -162,10 +171,23 @@ export function ParticipantGrid() {
     [micTracks]
   )
 
+  const camTrackRefs = React.useMemo(
+    () =>
+      mediaTracks.filter(
+        (t) => t.source === Track.Source.Camera && Boolean(t.publication)
+      ) as TrackReference[],
+    [mediaTracks]
+  )
+
   const [mutedMap, setMutedMap] = React.useState<Record<string, boolean>>({})
+  const [camMutedMap, setCamMutedMap] = React.useState<Record<string, boolean>>({})
 
   const handleMuteChange = React.useCallback((identity: string, muted: boolean) => {
     setMutedMap((prev) => (prev[identity] === muted ? prev : { ...prev, [identity]: muted }))
+  }, [])
+
+  const handleCamMuteChange = React.useCallback((identity: string, muted: boolean) => {
+    setCamMutedMap((prev) => (prev[identity] === muted ? prev : { ...prev, [identity]: muted }))
   }, [])
 
   const count = mediaTracks.length || 1
@@ -178,6 +200,13 @@ export function ParticipantGrid() {
           key={`mic-${t.participant.identity}-${t.publication?.trackSid ?? 'x'}`}
           trackRef={t}
           onChange={handleMuteChange}
+        />
+      ))}
+      {camTrackRefs.map((t) => (
+        <CamMutedProbe
+          key={`cam-${t.participant.identity}-${t.publication?.trackSid ?? 'x'}`}
+          trackRef={t}
+          onChange={handleCamMuteChange}
         />
       ))}
       <div
@@ -198,6 +227,8 @@ export function ParticipantGrid() {
           const displayLabel = isScreenShare ? `Tela de ${name}` : name
           const hasMicTrack = mutedMap[id] !== undefined
           const micMuted = !hasMicTrack || mutedMap[id]
+          const camMuted = camMutedMap[id] ?? track.publication?.isMuted ?? false
+          const showVideo = hasPublication && (isScreenShare || !camMuted)
 
           return (
             <TileWrapper
@@ -207,7 +238,7 @@ export function ParticipantGrid() {
               label={displayLabel}
               isScreenShare={isScreenShare}
             >
-              {hasPublication ? (
+              {showVideo ? (
                 <ParticipantTile
                   trackRef={track}
                   className="absolute inset-0 w-full h-full"
