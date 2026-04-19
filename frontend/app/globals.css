@@ -451,6 +451,23 @@
   0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(16,185,129,0.5); }
   50% { opacity: 0.8; box-shadow: 0 0 0 4px rgba(16,185,129,0); }
 }
+@keyframes baisync-caret-blink {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
+@keyframes baisync-rec-blink {
+  0%, 50% { opacity: 1; }
+  50.01%, 100% { opacity: 0.2; }
+}
+@keyframes baisync-bar-pulse {
+  0%, 100% { transform: scaleY(1); }
+  50% { transform: scaleY(0.4); }
+}
+/* Terminal-style thick block caret is rendered as a DOM overlay in
+   baisync-panel.tsx — the native caret is hidden so only the overlay shows. */
+.baisync-term-caret {
+  caret-color: transparent;
+}
 
 .animate-gradient-shift {
   background-size: 200% 200%;

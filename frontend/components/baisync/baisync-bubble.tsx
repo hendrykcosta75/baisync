@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { useBaisyncStore } from '@/store/useBaisyncStore'
-import { Sparkles } from 'lucide-react'
+import { PixelGirl } from './pixel-girl'
 
 const PARTICLES = [
   { anim: 'baisync-p0', delay: 0, dur: 3.2 },
@@ -87,7 +87,12 @@ export function BaisyncBubble() {
           boxShadow: '0 4px 24px rgba(0,0,0,0.4), 0 0 0 1px rgba(255,255,255,0.06)',
         }}
       >
-        <Sparkles size={22} className="text-[#ff6b2c] transition-transform duration-300 group-hover:scale-110" />
+        <span
+          className="flex items-center justify-center overflow-hidden transition-transform duration-300 group-hover:scale-110"
+          style={{ width: 56, height: 56, borderRadius: '50%' }}
+        >
+          <PixelGirl size={52} crop="full" />
+        </span>
 
         {/* Unread / warning badge */}
         {(showWarning || unreadCount > 0) && (
@@ -114,7 +119,7 @@ export function BaisyncBubble() {
             color: '#EDF0F7',
           }}
         >
-          Baisync Agent
+          Sophie
         </span>
       </button>
 

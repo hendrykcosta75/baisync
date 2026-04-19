@@ -53,6 +53,8 @@ interface BaisyncState {
   clearMessages: () => void
   fetchRateLimit: () => Promise<void>
   setActiveSkill: (skill: string | null) => void
+  pushLocalMessage: (msg: Omit<BaisyncMessage, 'id' | 'timestamp'>) => void
+  appendLiveTranscript: (role: 'user' | 'assistant', text: string) => void
 }
 
 function generateId(): string {
@@ -143,6 +145,31 @@ export const useBaisyncStore = create<BaisyncState>()(
   setActiveSkill: (skill) => set({ activeSkill: skill }),
 
   clearMessages: () => set({ messages: [], streamingContent: '', activeSkill: null }),
+
+  pushLocalMessage: (msg) => set((s) => ({
+    messages: [...s.messages, { ...msg, id: generateId(), timestamp: Date.now() }],
+  })),
+
+  // Merge streaming voice transcript chunks into the conversation: append to
+  // the last message if the role matches, otherwise start a new message.
+  appendLiveTranscript: (role, text) => set((s) => {
+    const msgs = s.messages
+    const last = msgs[msgs.length - 1]
+    if (last && last.role === role) {
+      return {
+        messages: [
+          ...msgs.slice(0, -1),
+          { ...last, content: last.content + text },
+        ],
+      }
+    }
+    return {
+      messages: [
+        ...msgs,
+        { id: generateId(), role, content: text, timestamp: Date.now() },
+      ],
+    }
+  }),
 
   fetchRateLimit: async () => {
     try {
@@ -385,6 +412,9 @@ export const useBaisyncStore = create<BaisyncState>()(
       }
 
       set({ isStreaming: false, streamingContent: '' })
+      // Backend only emits rate_limit SSE above 60% usage. Refresh explicitly
+      // so /status and the rate-limit bar reflect reality after every message.
+      void get().fetchRateLimit()
     } catch (err) {
       console.error('[baisync] stream error:', err)
       set((s) => ({
@@ -400,6 +430,7 @@ export const useBaisyncStore = create<BaisyncState>()(
         isStreaming: false,
         streamingContent: '',
       }))
+      void get().fetchRateLimit()
     }
   },
 

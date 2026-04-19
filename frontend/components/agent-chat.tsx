@@ -341,7 +341,7 @@ export function AgentChat() {
           </div>
           <div>
             <div style={{ fontFamily: mono, fontSize: 13, fontWeight: 700, color: '#fff', letterSpacing: 0.3 }}>
-              Baisync Agent
+              Sophie
             </div>
             <div style={{ fontFamily: mono, fontSize: 10, color: '#22c55e', display: 'flex', alignItems: 'center', gap: 4 }}>
               <span style={{ display: 'inline-block', width: 5, height: 5, borderRadius: '50%', background: '#22c55e' }} />

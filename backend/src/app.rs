@@ -84,6 +84,19 @@ pub fn build_router(
         .route(
             "/api/public/meetings/{code}/guest-status/{participant_id}",
             get(handlers::meetings::guest_status),
+        )
+        // SWOT interview Live API WebSocket — authenticates via short-lived
+        // ticket (issued by the protected `/live-ticket` route), so it lives
+        // outside the Authorization-header middleware.
+        .route(
+            "/api/workspaces/{id}/swot/interview/live",
+            get(handlers::swot_interview_live::interview_live_ws),
+        )
+        // Baisync Agent (Sophie) voice WebSocket — same ticket pattern, but
+        // per-user instead of per-workspace.
+        .route(
+            "/api/baisync/voice/live",
+            get(handlers::baisync_voice_live::voice_live_ws),
         );
 
     // Protected routes (require auth)
@@ -576,13 +589,13 @@ pub fn build_router(
             post(handlers::swot_interview::interview_chat),
         )
         .route(
-            "/api/workspaces/{id}/swot/interview/tts",
-            post(handlers::swot_interview::interview_tts),
+            "/api/workspaces/{id}/swot/interview/live-ticket",
+            post(handlers::swot_interview_live::live_ticket),
         )
+        // Baisync Agent (Sophie) voice live ticket — per-user, no workspace
         .route(
-            "/api/workspaces/{id}/swot/interview/stt",
-            post(handlers::swot_interview::interview_stt)
-                .layer(DefaultBodyLimit::max(11 * 1024 * 1024)),
+            "/api/baisync/voice/live-ticket",
+            post(handlers::baisync_voice_live::voice_ticket),
         )
         // Playground chat
         .route(

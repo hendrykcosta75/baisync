@@ -66,25 +66,51 @@ const FRAGMENT_SHADER = `
   }
 
   void main() {
+    // Normalize intensity: u_intensity is already >= 1.0; map to [0,1] energy.
+    float energy = clamp((u_intensity - 1.0) / 3.0, 0.0, 1.0);
+
     vec2 uv = (vUv * 2.0 - 1.0);
     uv.x *= u_resolution.x / u_resolution.y;
+
+    // Breathing: orb visibly expands with audio energy.
+    float breath = 1.0 + 0.10 * energy;
+    uv /= breath;
+
     float dist = length(uv);
     float circleRadius = 0.95;
     if (dist > circleRadius) { gl_FragColor = vec4(0.0); return; }
 
-    vec2 q = vec2(fbm(uv + 0.1 * u_time), fbm(uv + vec2(1.0)));
-    vec2 r = vec2(
-      fbm(uv + 1.0 * q + vec2(1.7, 9.2) + 0.15 * u_time),
-      fbm(uv + 1.0 * q + vec2(8.3, 2.8) + 0.126 * u_time)
+    // Audio-driven turbulence warps the noise field.
+    float timeBoost = u_time * (1.0 + 0.8 * energy);
+    float warp = 0.12 * energy;
+    vec2 q = vec2(
+      fbm(uv + 0.1 * timeBoost + vec2(warp * sin(u_time * 3.0), 0.0)),
+      fbm(uv + vec2(1.0) + vec2(0.0, warp * cos(u_time * 2.4)))
     );
-    float f = fbm(uv + r);
+    vec2 r = vec2(
+      fbm(uv + 1.0 * q + vec2(1.7, 9.2) + 0.15 * timeBoost),
+      fbm(uv + 1.0 * q + vec2(8.3, 2.8) + 0.126 * timeBoost)
+    );
+    float f = fbm(uv + r + warp * q);
 
-    vec3 color = mix(vec3(0.25, 0.06, 0.0), vec3(1.0, 0.55, 0.1), clamp(f * f * 4.0, 0.0, 1.0));
-    color = mix(color, vec3(1.0, 0.78, 0.2), clamp(length(q) * length(r), 0.0, 1.0));
-    color = color * (1.2 + 0.4 * sin(u_time * 2.0) * u_intensity);
+    vec3 baseLow  = vec3(0.25, 0.06, 0.0);
+    vec3 baseMid  = vec3(1.0, 0.55, 0.1);
+    vec3 baseHigh = vec3(1.0, 0.85, 0.35);
+
+    vec3 color = mix(baseLow, baseMid, clamp(f * f * 4.0, 0.0, 1.0));
+    color = mix(color, baseHigh, clamp(length(q) * length(r), 0.0, 1.0));
+
+    // Overall brightness responds strongly to energy; sin pulse stays subtle.
+    float pulse = 1.0 + 0.15 * sin(u_time * 2.0);
+    color *= pulse * (1.0 + 1.3 * energy);
 
     float sphereShading = sqrt(1.0 - dist * dist);
     color *= sphereShading * 1.5;
+
+    // Rim glow intensifies with energy.
+    float rim = smoothstep(circleRadius - 0.22, circleRadius, dist);
+    color += rim * vec3(1.0, 0.45, 0.1) * (0.45 * energy);
+
     float alpha = smoothstep(circleRadius, circleRadius - 0.05, dist);
     gl_FragColor = vec4(color, alpha);
   }
@@ -145,9 +171,12 @@ function InterviewOrb({
     const animate = () => {
       animRef.current = requestAnimationFrame(animate)
       const target = intensityRef.current
-      const speed = target > 1.5 ? 0.022 : 0.012
+      const speed = target > 1.5 ? 0.028 : 0.012
       uniforms.u_time.value += speed
-      currentIntensity.current += (target - currentIntensity.current) * 0.08
+      // Fast attack, slow release so the orb reacts snappily to peaks
+      // but decays smoothly between syllables.
+      const attack = target > currentIntensity.current ? 0.45 : 0.12
+      currentIntensity.current += (target - currentIntensity.current) * attack
       uniforms.u_intensity.value = currentIntensity.current
       renderer.render(scene, camera)
     }
@@ -267,82 +296,67 @@ export default function SwotInterview({
   const [inputValue, setInputValue] = useState('')
   const [isStreaming, setIsStreaming] = useState(false)
   const [questions, setQuestions] = useState<QuestionBox | null>(null)
-  const [isRecording, setIsRecording] = useState(false)
   const [isSpeaking, setIsSpeaking] = useState(false)
-  const [audioStatus, setAudioStatus] = useState('Toque no orbe para falar')
+  // Mic starts muted so Sophie's opening turn isn't interrupted by silence
+  // being captured while she speaks (Gemini VAD treats any audio as a
+  // user interruption). Auto-unmutes after her first turnComplete.
+  const [micMuted, setMicMuted] = useState(true)
+  const firstTurnDoneRef = useRef(false)
+  const [liveStatus, setLiveStatus] = useState<'idle' | 'connecting' | 'connected' | 'closed'>('idle')
+  const [audioStatus, setAudioStatus] = useState('Fale com a Sophie')
+  const [sophieReady, setSophieReady] = useState(false)
+  const [loadingMsgIndex, setLoadingMsgIndex] = useState(0)
 
   const chatBodyRef = useRef<HTMLDivElement>(null)
-  const currentAudioRef = useRef<HTMLAudioElement | null>(null)
-  const speakGenRef = useRef(0)
   const streamingContentRef = useRef('')
   // Use refs for latest values to avoid stale closures in callbacks
   const messagesRef = useRef<ChatMessage[]>([])
   const tabRef = useRef(tab)
   const isStreamingRef = useRef(false)
+  const micMutedRef = useRef(false)
   messagesRef.current = messages
   tabRef.current = tab
+  micMutedRef.current = micMuted
 
-  // Audio analysis (orb reactivity + VAD)
+  // Audio analysis (orb reactivity)
   const audioCtxRef = useRef<AudioContext | null>(null)
   const analyserRef = useRef<AnalyserNode | null>(null)
   const orbIntensityRef = useRef(1.0)
   const orbRafRef = useRef(0)
-  const silenceStartRef = useRef(0)
-  const speechDetectedRef = useRef(false)
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const startRecordingRef = useRef<() => void>(null as any)
 
-  const getAudioCtx = useCallback(() => {
-    if (!audioCtxRef.current || audioCtxRef.current.state === 'closed') {
-      audioCtxRef.current = new AudioContext()
-    }
-    if (audioCtxRef.current.state === 'suspended') {
-      audioCtxRef.current.resume()
-    }
-    return audioCtxRef.current
-  }, [])
+  // Live session
+  const wsRef = useRef<WebSocket | null>(null)
+  const micStreamRef = useRef<MediaStream | null>(null)
+  const workletNodeRef = useRef<AudioWorkletNode | null>(null)
+  const playbackEndRef = useRef(0)
 
-  const startAnalysis = useCallback((mode: 'tts' | 'mic') => {
+  const startAnalysis = useCallback(() => {
     cancelAnimationFrame(orbRafRef.current)
-    silenceStartRef.current = 0
-    speechDetectedRef.current = false
-
-    const modeRef = { current: mode }
-    const data = new Uint8Array(256)
+    const data = new Uint8Array(512)
 
     const tick = () => {
       const analyser = analyserRef.current
       if (!analyser) {
         orbIntensityRef.current = 1.0
-        return // self-terminate
+        return
       }
 
       analyser.getByteTimeDomainData(data)
       let sum = 0
+      let peak = 0
       for (let i = 0; i < data.length; i++) {
         const v = (data[i] - 128) / 128
         sum += v * v
+        const abs = v < 0 ? -v : v
+        if (abs > peak) peak = abs
       }
       const rms = Math.sqrt(sum / data.length)
-      orbIntensityRef.current = 1.0 + Math.min(rms * 12, 3.5)
-
-      // VAD: auto-stop recording after 1.5s of silence
-      if (modeRef.current === 'mic' && mediaRecorderRef.current?.state === 'recording') {
-        if (rms > 0.015) {
-          speechDetectedRef.current = true
-          silenceStartRef.current = 0
-        } else if (speechDetectedRef.current) {
-          if (!silenceStartRef.current) silenceStartRef.current = Date.now()
-          if (Date.now() - silenceStartRef.current > 1500) {
-            mediaRecorderRef.current.stop()
-            mediaRecorderRef.current = null
-            setIsRecording(false)
-            setAudioStatus('Transcrevendo...')
-            return // onstop handler cleans up analyser
-          }
-        }
-      }
-
+      // Blend RMS (body/volume) with peak (attack/transients) for a lively
+      // response. Non-linear curve gives big swings for loud audio without
+      // collapsing quiet parts to zero.
+      const mix = rms * 0.6 + peak * 0.4
+      const shaped = Math.pow(mix, 0.7) * 6.0
+      orbIntensityRef.current = 1.0 + Math.min(shaped, 3.5)
       orbRafRef.current = requestAnimationFrame(tick)
     }
     tick()
@@ -358,110 +372,276 @@ export default function SwotInterview({
     scrollToBottom()
   }, [messages, scrollToBottom])
 
-  // ── TTS ──
+  // ── Live session (Google AI Studio Live API via backend WS proxy) ──
 
-  const stopSpeaking = useCallback(() => {
-    speakGenRef.current++
-    if (currentAudioRef.current) {
-      currentAudioRef.current.pause()
-      currentAudioRef.current = null
-    }
+  const cleanupLiveSession = useCallback(() => {
+    try { wsRef.current?.close() } catch { /* ignore */ }
+    wsRef.current = null
+    try {
+      workletNodeRef.current?.disconnect()
+      workletNodeRef.current?.port.close()
+    } catch { /* ignore */ }
+    workletNodeRef.current = null
+    try {
+      micStreamRef.current?.getTracks().forEach((t) => t.stop())
+    } catch { /* ignore */ }
+    micStreamRef.current = null
+    try { audioCtxRef.current?.close() } catch { /* ignore */ }
+    audioCtxRef.current = null
     analyserRef.current = null
     cancelAnimationFrame(orbRafRef.current)
     orbIntensityRef.current = 1.0
+    playbackEndRef.current = 0
+    firstTurnDoneRef.current = false
     setIsSpeaking(false)
+    setSophieReady(false)
+    setMicMuted(true)
   }, [])
 
-  const speakText = useCallback(
-    async (text: string) => {
-      if (!wsId) return
+  const enqueueAudio = useCallback((b64: string, mimeType?: string) => {
+    const ctx = audioCtxRef.current
+    const analyser = analyserRef.current
+    if (!ctx || !analyser) return
 
-      const cleanText = text.replace(/<[^>]+>/g, '').trim()
-      if (!cleanText) return
+    // Parse sample rate from mimeType (e.g. "audio/pcm;rate=24000"). Google
+    // returns 24 kHz for native-audio models and 16 kHz for cascaded Live
+    // models — decoding at the wrong rate pitches/mutes the playback.
+    let outRate = 24000
+    if (mimeType) {
+      const m = mimeType.match(/rate=(\d+)/)
+      if (m) outRate = parseInt(m[1], 10) || 24000
+    }
 
-      // Cancel any previous speak call
-      stopSpeaking()
-      const gen = ++speakGenRef.current
+    const bin = atob(b64)
+    const bytes = new Uint8Array(bin.length)
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
 
-      setIsSpeaking(true)
-      setAudioStatus('IA respondendo...')
+    const view = new DataView(bytes.buffer)
+    const sampleCount = Math.floor(bytes.byteLength / 2)
+    if (sampleCount === 0) return
+    const floats = new Float32Array(sampleCount)
+    for (let i = 0; i < sampleCount; i++) {
+      floats[i] = view.getInt16(i * 2, true) / 32768
+    }
 
-      try {
-        const resp = await fetch(`/api/workspaces/${wsId}/swot/interview/tts`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'same-origin',
-          body: JSON.stringify({ text: cleanText }),
-        })
+    const audioBuf = ctx.createBuffer(1, sampleCount, outRate)
+    audioBuf.copyToChannel(floats, 0)
 
-        if (!resp.ok) throw new Error('TTS request failed')
+    const source = ctx.createBufferSource()
+    source.buffer = audioBuf
+    source.connect(analyser)
 
-        // Abort if a newer speak was triggered while we were fetching
-        if (speakGenRef.current !== gen) return
-
-        const blob = await resp.blob()
-        const url = URL.createObjectURL(blob)
-        const audio = new Audio(url)
-
-        // Connect to AudioContext analyser so orb reacts to voice
-        const ctx = getAudioCtx()
-        const source = ctx.createMediaElementSource(audio)
-        const analyser = ctx.createAnalyser()
-        analyser.fftSize = 256
-        source.connect(analyser)
-        analyser.connect(ctx.destination)
-        analyserRef.current = analyser
-        startAnalysis('tts')
-
-        // Wait for audio to fully buffer before playing (prevents cut-off at start)
-        await new Promise<void>((resolve, reject) => {
-          audio.addEventListener('canplaythrough', () => resolve(), { once: true })
-          audio.addEventListener('error', () => reject(new Error('audio load error')), { once: true })
-          audio.load()
-        })
-
-        // Abort if a newer speak was triggered while we were buffering
-        if (speakGenRef.current !== gen) {
-          analyserRef.current = null
-          URL.revokeObjectURL(url)
-          return
-        }
-
-        currentAudioRef.current = audio
-
-        audio.onended = () => {
-          setIsSpeaking(false)
-          URL.revokeObjectURL(url)
-          currentAudioRef.current = null
-          analyserRef.current = null
-          orbIntensityRef.current = 1.0
-          // Auto-start recording in audio mode
-          if (tabRef.current === 'audio' && !isStreamingRef.current) {
-            startRecordingRef.current?.()
-          } else {
-            setAudioStatus('Toque no orbe para falar')
-          }
-        }
-
-        audio.onerror = () => {
-          setIsSpeaking(false)
-          setAudioStatus('Toque no orbe para falar')
-          URL.revokeObjectURL(url)
-          currentAudioRef.current = null
-          analyserRef.current = null
-          orbIntensityRef.current = 1.0
-        }
-
-        await audio.play()
-      } catch (err) {
-        if (speakGenRef.current !== gen) return
-        console.error('TTS error:', err)
+    const startAt = Math.max(ctx.currentTime, playbackEndRef.current)
+    source.start(startAt)
+    playbackEndRef.current = startAt + audioBuf.duration
+    setIsSpeaking(true)
+    setSophieReady(true)
+    source.onended = () => {
+      if (ctx.currentTime >= playbackEndRef.current - 0.02) {
         setIsSpeaking(false)
-        setAudioStatus('Toque no orbe para falar')
       }
-    },
-    [wsId, stopSpeaking, getAudioCtx, startAnalysis]
-  )
+    }
+  }, [])
+
+  const handleLiveMessage = useCallback((raw: string) => {
+    let msg: { type: string; data?: string; mimeType?: string; role?: string; text?: string; message?: string; payload?: unknown }
+    try {
+      msg = JSON.parse(raw)
+    } catch {
+      return
+    }
+
+    switch (msg.type) {
+      case 'ready':
+        // Backend auto-primes Sophie's greeting right after setupComplete.
+        setIsStreaming(true)
+        isStreamingRef.current = true
+        break
+      case 'audio':
+        if (msg.data) enqueueAudio(msg.data, msg.mimeType)
+        break
+      case 'transcript': {
+        const role = msg.role as 'assistant' | 'user' | undefined
+        const text = msg.text
+        if (!role || !text) break
+        setMessages((prev) => {
+          const updated = [...prev]
+          const last = updated[updated.length - 1]
+          if (last && last.role === role) {
+            updated[updated.length - 1] = { ...last, content: last.content + text }
+          } else {
+            updated.push({ role, content: text })
+          }
+          return updated
+        })
+        break
+      }
+      case 'questions':
+        if (msg.payload && typeof msg.payload === 'object') {
+          setQuestions(msg.payload as QuestionBox)
+        }
+        break
+      case 'swot_create':
+        if (msg.payload && typeof msg.payload === 'object') {
+          onSwotCreated?.(msg.payload as { title: string; items: { quadrant: string; content: string }[] })
+        }
+        break
+      case 'turn_complete':
+        setIsStreaming(false)
+        isStreamingRef.current = false
+        // Auto-unmute mic after Sophie's first complete turn so the user
+        // can start the conversation. Keep starting muted to stop VAD from
+        // interrupting the greeting.
+        if (!firstTurnDoneRef.current) {
+          firstTurnDoneRef.current = true
+          setMicMuted(false)
+        }
+        break
+      case 'interrupted': {
+        const ctx = audioCtxRef.current
+        if (ctx) playbackEndRef.current = ctx.currentTime
+        setIsSpeaking(false)
+        break
+      }
+      case 'error': {
+        const detail = msg.message || 'Erro desconhecido da API'
+        console.error('Live API error:', detail)
+        setAudioStatus(`Erro: ${detail.slice(0, 120)}`)
+        setIsStreaming(false)
+        isStreamingRef.current = false
+        break
+      }
+    }
+  }, [enqueueAudio, onSwotCreated])
+
+  const startLiveSession = useCallback(async () => {
+    if (!wsId) return
+    if (wsRef.current) return
+
+    setLiveStatus('connecting')
+    setAudioStatus('Conectando...')
+
+    try {
+      // 1. Audio setup — must happen while the user-gesture context is still
+      // fresh so the AudioContext starts in "running" state. Creating the
+      // AudioWorkletNode on a suspended context throws "No execution context
+      // available", hence the explicit resume() before instantiation.
+      const ctx = new AudioContext()
+      audioCtxRef.current = ctx
+      await ctx.audioWorklet.addModule('/worklets/pcm-downsample.js')
+      if (ctx.state === 'suspended') {
+        await ctx.resume()
+      }
+
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      micStreamRef.current = stream
+
+      const analyser = ctx.createAnalyser()
+      analyser.fftSize = 1024
+      analyser.smoothingTimeConstant = 0.2
+      analyser.connect(ctx.destination)
+      analyserRef.current = analyser
+      startAnalysis()
+
+      const micSource = ctx.createMediaStreamSource(stream)
+      const workletNode = new AudioWorkletNode(ctx, 'pcm-downsample')
+      workletNodeRef.current = workletNode
+      micSource.connect(workletNode)
+      // Silent sink keeps the worklet scheduled without audible feedback.
+      const silent = ctx.createGain()
+      silent.gain.value = 0
+      workletNode.connect(silent)
+      silent.connect(ctx.destination)
+
+      // 2. Ticket + WebSocket.
+      const ticketRes = await fetch(`/api/workspaces/${wsId}/swot/interview/live-ticket`, {
+        method: 'POST',
+        credentials: 'same-origin',
+      })
+      if (!ticketRes.ok) throw new Error('ticket request failed')
+      const { ticket } = await ticketRes.json() as { ticket: string }
+
+      // Same-origin: next.config.ts rewrites forward the WS upgrade to the
+      // Rust backend in dev and prod.
+      const origin = typeof window !== 'undefined' ? window.location.origin : ''
+      const wsUrl = origin.replace(/^http/, 'ws') +
+        `/api/workspaces/${wsId}/swot/interview/live?ticket=${encodeURIComponent(ticket)}`
+
+      const ws = new WebSocket(wsUrl)
+      wsRef.current = ws
+
+      workletNode.port.onmessage = (ev) => {
+        if (ws.readyState !== WebSocket.OPEN) return
+        const buf = ev.data as ArrayBuffer
+        // Keep streaming even when muted: Google Live API closes the
+        // connection (Policy: "client failed to close") if audio stops
+        // mid-session. Silence is ignored by VAD, so zero-filled frames
+        // are safe and preserve user privacy.
+        const bytes = micMutedRef.current
+          ? new Uint8Array(buf.byteLength)
+          : new Uint8Array(buf)
+        let bin = ''
+        const chunkSize = 0x8000
+        for (let i = 0; i < bytes.length; i += chunkSize) {
+          bin += String.fromCharCode(...bytes.subarray(i, i + chunkSize))
+        }
+        ws.send(JSON.stringify({ type: 'audio', data: btoa(bin) }))
+      }
+
+      ws.onopen = () => {
+        setLiveStatus('connected')
+        setAudioStatus('Fale com a Sophie')
+      }
+      ws.onmessage = (ev) => handleLiveMessage(ev.data)
+      ws.onerror = () => {
+        setAudioStatus('Erro de conexão')
+      }
+      ws.onclose = () => {
+        setLiveStatus('closed')
+        cleanupLiveSession()
+      }
+    } catch (err) {
+      console.error('Failed to start live session:', err)
+      const msg = err instanceof Error && err.name === 'NotAllowedError'
+        ? 'Permissão do microfone negada'
+        : 'Falha ao conectar. Tente novamente.'
+      setAudioStatus(msg)
+      setLiveStatus('closed')
+      cleanupLiveSession()
+    }
+  }, [wsId, startAnalysis, handleLiveMessage, cleanupLiveSession])
+
+  useEffect(() => () => cleanupLiveSession(), [cleanupLiveSession])
+
+  // Rotate through loading messages while waiting for Sophie's first audio.
+  useEffect(() => {
+    const loading = !sophieReady && liveStatus !== 'closed' && liveStatus !== 'idle'
+    if (!loading) {
+      setLoadingMsgIndex(0)
+      return
+    }
+    const id = setInterval(() => {
+      setLoadingMsgIndex((i) => i + 1)
+    }, 2200)
+    return () => clearInterval(id)
+  }, [sophieReady, liveStatus])
+
+  const LOADING_MESSAGES = [
+    'Iniciando entrevista...',
+    'Sophie está se preparando...',
+    'Quase lá...',
+    'Aquecendo os microfones...',
+    'Organizando as perguntas...',
+  ]
+
+  const sendTextToLive = useCallback((text: string) => {
+    const ws = wsRef.current
+    if (!ws || ws.readyState !== WebSocket.OPEN) return false
+    ws.send(JSON.stringify({ type: 'text', text }))
+    setIsStreaming(true)
+    isStreamingRef.current = true
+    return true
+  }, [])
 
   // ── Send message to backend SSE ──
 
@@ -566,10 +746,6 @@ export default function SwotInterview({
           }
         }
 
-        // Trigger TTS for audio tab — AI speaks immediately
-        if (tabRef.current === 'audio' && fullContent) {
-          speakText(fullContent)
-        }
       } catch (err) {
         console.error('Interview chat error:', err)
         const errMsg = err instanceof Error ? err.message : 'Erro ao conectar. Tente novamente.'
@@ -586,117 +762,28 @@ export default function SwotInterview({
         isStreamingRef.current = false
       }
     },
-    [wsId, speakText, onSwotCreated]
+    [wsId, onSwotCreated]
   )
 
-  // ── STT via MediaRecorder + Gemini transcription ──
+  // ── Mic toggle (audio mode) ──
 
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
-  const audioChunksRef = useRef<Blob[]>([])
-
-  const transcribeAudio = useCallback(async (audioBlob: Blob) => {
-    setAudioStatus('Transcrevendo...')
-    try {
-      const formData = new FormData()
-      formData.append('audio', audioBlob, 'audio.webm')
-
-      const res = await fetch(`/api/workspaces/${wsId}/swot/interview/stt`, {
-        method: 'POST',
-        body: formData,
-      })
-
-      if (!res.ok) {
-        const err = await res.text().catch(() => '')
-        throw new Error(err || `STT failed: ${res.status}`)
-      }
-
-      const data = await res.json()
-      const text = (data.text || '').trim()
-
-      if (text) {
-        setAudioStatus('')
-        const currentHistory = messagesRef.current
-        setMessages((prev) => [...prev, { role: 'user' as const, content: text }])
-        await sendToBackend(text, currentHistory)
-      } else {
-        setAudioStatus('Nao entendi. Toque no orbe para tentar novamente.')
-      }
-    } catch (e) {
-      console.error('STT error:', e)
-      setAudioStatus('Erro na transcricao. Tente novamente.')
-    }
-  }, [wsId, sendToBackend])
-
-  const startRecording = useCallback(async () => {
-    // Stop any playing audio
-    stopSpeaking()
-
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-      const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' })
-      audioChunksRef.current = []
-
-      // Connect mic to analyser for orb reactivity + VAD
-      const ctx = getAudioCtx()
-      const source = ctx.createMediaStreamSource(stream)
-      const analyser = ctx.createAnalyser()
-      analyser.fftSize = 256
-      source.connect(analyser)
-      analyserRef.current = analyser
-      startAnalysis('mic')
-
-      recorder.ondataavailable = (e) => {
-        if (e.data.size > 0) audioChunksRef.current.push(e.data)
-      }
-
-      recorder.onstop = () => {
-        stream.getTracks().forEach((t) => t.stop())
-        analyserRef.current = null
-        orbIntensityRef.current = 1.0
-        const blob = new Blob(audioChunksRef.current, { type: 'audio/webm' })
-        if (blob.size > 0) {
-          transcribeAudio(blob)
-        }
-      }
-
-      recorder.start(250)
-      mediaRecorderRef.current = recorder
-      setIsRecording(true)
-      setAudioStatus('Ouvindo...')
-    } catch {
-      setAudioStatus('Permissao do microfone negada')
-    }
-  }, [stopSpeaking, transcribeAudio, getAudioCtx, startAnalysis])
-
-  startRecordingRef.current = startRecording
-
-  const stopRecording = useCallback(() => {
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
-      mediaRecorderRef.current.stop()
-      mediaRecorderRef.current = null
-      setIsRecording(false)
-      setAudioStatus('Transcrevendo...')
-    }
+  const toggleMic = useCallback(() => {
+    setMicMuted((m) => !m)
   }, [])
 
-  const toggleRecording = useCallback(() => {
-    if (isStreaming) return
-    if (isRecording) {
-      stopRecording()
-    } else {
-      startRecording()
-    }
-  }, [isRecording, isStreaming, startRecording, stopRecording])
-
-  // ── Start Interview — AI speaks immediately ──
+  // ── Start Interview — branches on selected mode ──
 
   const handleStart = useCallback(async () => {
     setStarted(true)
-    const initMsg = 'Iniciar entrevista SWOT'
-    const userMsg: ChatMessage = { role: 'user', content: initMsg }
-    setMessages([userMsg])
-    await sendToBackend(initMsg, [])
-  }, [sendToBackend])
+    if (tab === 'audio') {
+      await startLiveSession()
+    } else {
+      const initMsg = 'Iniciar entrevista SWOT'
+      const userMsg: ChatMessage = { role: 'user', content: initMsg }
+      setMessages([userMsg])
+      await sendToBackend(initMsg, [])
+    }
+  }, [tab, startLiveSession, sendToBackend])
 
   // ── Send text message ──
 
@@ -708,21 +795,23 @@ export default function SwotInterview({
     const currentHistory = messagesRef.current
     const userMsg: ChatMessage = { role: 'user', content: text }
     setMessages((prev) => [...prev, userMsg])
+
+    if (sendTextToLive(text)) return
     await sendToBackend(text, currentHistory)
-  }, [inputValue, isStreaming, sendToBackend])
+  }, [inputValue, isStreaming, sendTextToLive, sendToBackend])
 
   // ── Handle question selection ──
 
   const handleQuestionSelect = useCallback(
     async (option: string) => {
-      stopSpeaking()
       setQuestions(null)
       const currentHistory = messagesRef.current
-      const userMsg: ChatMessage = { role: 'user', content: option }
-      setMessages((prev) => [...prev, userMsg])
+      setMessages((prev) => [...prev, { role: 'user' as const, content: option }])
+
+      if (sendTextToLive(option)) return
       await sendToBackend(option, currentHistory)
     },
-    [stopSpeaking, sendToBackend]
+    [sendTextToLive, sendToBackend]
   )
 
   // ── Clean display text (strip XML tags) ──
@@ -909,18 +998,30 @@ export default function SwotInterview({
               /* Audio View */
               <div className="flex-1 flex flex-col items-center justify-center gap-5 px-6 py-6">
                 <InterviewOrb
-                  active={isRecording || isSpeaking}
+                  active={liveStatus === 'connected' && !micMuted}
                   intensityRef={orbIntensityRef}
-                  onPress={toggleRecording}
+                  onPress={toggleMic}
                   size={160}
                 />
-                <p className="text-sm text-subtle font-medium text-center">
-                  {audioStatus}
+                <p
+                  key={`status-${loadingMsgIndex}-${sophieReady}`}
+                  className="text-sm text-subtle font-medium text-center"
+                  style={{ animation: 'baisync-msg-in 0.35s ease-out' }}
+                >
+                  {!sophieReady && liveStatus !== 'closed'
+                    ? LOADING_MESSAGES[loadingMsgIndex % LOADING_MESSAGES.length]
+                    : audioStatus}
                 </p>
                 {isSpeaking && (
                   <div className="flex items-center gap-1.5 text-xs text-subtle">
                     <Volume2 size={13} className="text-[#ff6b2c]" />
-                    <span>IA falando...</span>
+                    <span>Sophie está falando...</span>
+                  </div>
+                )}
+                {liveStatus === 'connected' && sophieReady && micMuted && (
+                  <div className="flex items-center gap-1.5 text-xs text-subtle">
+                    <Mic size={13} className="text-red-500" />
+                    <span>Microfone silenciado</span>
                   </div>
                 )}
 
@@ -995,7 +1096,7 @@ export default function SwotInterview({
                               className="text-[10px] font-bold"
                               style={{ color: '#ff6b2c' }}
                             >
-                              Axel
+                              Sophie
                             </span>
                           </div>
                         )}

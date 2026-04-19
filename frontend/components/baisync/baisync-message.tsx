@@ -8,7 +8,7 @@ import { useCalendarStore } from '@/store/useCalendarStore'
 import { useNotificationStore } from '@/store/useNotificationStore'
 import { useBaisyncStore } from '@/store/useBaisyncStore'
 import { useWorkspaceStore } from '@/store/useWorkspaceStore'
-import { apiFetch } from '@/lib/api'
+import { apiFetch, ApiError } from '@/lib/api'
 
 const PHRASES = [
   'Analisando pedido',
@@ -344,7 +344,15 @@ function ActionSequence({ actions }: { actions: BaisyncAction[] }) {
           setResults((prev) => new Map(prev).set(i, { status: result.status }))
           if (result.status === 'error') break
         } catch (err) {
-          console.error('[baisync] action failed:', err)
+          // Backend 4xx/5xx: surface the message to Sophie so she can retry
+          // with corrected args instead of letting Next's dev overlay show it.
+          if (err instanceof ApiError) {
+            useBaisyncStore.getState().sendActionResult(
+              `Erro ao executar ${action.action}: ${err.message} (HTTP ${err.status}). Revise os argumentos (IDs, nomes) e tente de novo.`,
+            )
+          } else {
+            console.error('[baisync] action failed:', err)
+          }
           setResults((prev) => new Map(prev).set(i, { status: 'error' }))
           break
         }
@@ -356,17 +364,41 @@ function ActionSequence({ actions }: { actions: BaisyncAction[] }) {
 
     const executeAction = async (action: BaisyncAction, contextAssistantId: string | null): Promise<ActionResult> => {
 
-      const resolveAssistantId = (dataId?: string): string | null => {
-        const id = contextAssistantId || dataId || null
-        if (!id) {
-          useBaisyncStore.getState().sendActionResult('Erro: nenhum assistente especificado. Use list_assistants para ver os IDs disponíveis.')
-          return null
+      // Resolves the target assistant ID for a tool call:
+      //   1. A context ID from a prior create_assistant (if still in store)
+      //   2. The dataId provided by Sophie, validated as UUID *and* existing
+      //   3. A name-hint fallback (assistant_name / name fields Sophie sometimes
+      //      passes instead of an ID)
+      // Any failure sends a helpful message back to Sophie so she can retry
+      // with the correct ID, instead of letting apiFetch throw a 404.
+      const resolveAssistantId = (dataId?: string, nameHint?: string): string | null => {
+        const assistants = useAssistantStore.getState().assistants
+
+        if (contextAssistantId && assistants.find((a) => a.id === contextAssistantId)) {
+          return contextAssistantId
         }
-        if (!isValidUUID(id)) {
-          useBaisyncStore.getState().sendActionResult(`Erro: "${id}" não é um ID válido. Use o UUID real do assistente (ex: listado em "Contexto do Usuário").`)
-          return null
+
+        if (dataId) {
+          if (!isValidUUID(dataId)) {
+            useBaisyncStore.getState().sendActionResult(
+              `Erro: "${dataId}" não é um ID válido. Use o UUID real do assistente (listado em "Contexto do Usuário" ou via list_assistants).`,
+            )
+            return null
+          }
+          if (assistants.find((a) => a.id === dataId)) return dataId
         }
-        return id
+
+        if (nameHint) {
+          const byName = assistants.find((a) => a.name === nameHint)
+          if (byName) return byName.id
+        }
+
+        useBaisyncStore.getState().sendActionResult(
+          dataId
+            ? `Erro: assistente com id "${dataId}" não existe. Use list_assistants para ver os IDs atuais.`
+            : 'Erro: nenhum assistente especificado. Use list_assistants para ver os IDs disponíveis.',
+        )
+        return null
       }
       if (action.action === 'create_assistant') {
         const data = action.data as {
@@ -398,14 +430,7 @@ function ActionSequence({ actions }: { actions: BaisyncAction[] }) {
           assistant_id?: string; assistant_name?: string; name?: string; description?: string
           system_prompt?: string; model?: string; temperature?: number; max_tokens?: number
         }
-        // Resolve ID: context > provided ID > name-based lookup
-        let targetId = resolveAssistantId(data.assistant_id)
-        if (!targetId || !useAssistantStore.getState().assistants.find((a) => a.id === targetId)) {
-          const byName = useAssistantStore.getState().assistants.find(
-            (a) => a.name === (data.assistant_name || data.name)
-          )
-          if (byName) targetId = byName.id
-        }
+        const targetId = resolveAssistantId(data.assistant_id, data.assistant_name || data.name)
         if (!targetId) return { status: 'error' }
         const updates: Record<string, unknown> = {}
         if (data.name !== undefined) updates.name = data.name
@@ -420,13 +445,7 @@ function ActionSequence({ actions }: { actions: BaisyncAction[] }) {
 
       if (action.action === 'delete_assistant') {
         const data = action.data as { assistant_id?: string; assistant_name?: string }
-        let targetId = data.assistant_id
-        if (!targetId || !useAssistantStore.getState().assistants.find((a) => a.id === targetId)) {
-          const byName = useAssistantStore.getState().assistants.find(
-            (a) => a.name === data.assistant_name
-          )
-          if (byName) targetId = byName.id
-        }
+        const targetId = resolveAssistantId(data.assistant_id, data.assistant_name)
         if (!targetId) return { status: 'error' }
         await deleteAssistant(targetId)
         return { status: 'done' }
@@ -1422,15 +1441,20 @@ function ActionSequence({ actions }: { actions: BaisyncAction[] }) {
   )
 }
 
-function formatTimestamp(ts: number): string {
-  const d = new Date(ts)
-  return d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
-}
-
 export function BaisyncMessageComponent({ message }: MessageProps) {
   if (message.role === 'status') {
     return (
-      <div className="flex justify-start px-1 py-2" style={{ animation: 'baisync-msg-in 0.2s ease-out' }}>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 6,
+          marginBottom: 10,
+          fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+          animation: 'baisync-msg-in 0.2s ease-out',
+        }}
+      >
+        <span style={{ color: '#ff7a1a', fontSize: 13, flexShrink: 0 }}>&gt;</span>
         <ThinkingAnimation />
       </div>
     )
@@ -1439,54 +1463,55 @@ export function BaisyncMessageComponent({ message }: MessageProps) {
   if (message.role === 'user') {
     const hasAttachments = message.attachments && message.attachments.length > 0
     return (
-      <div className="flex justify-end" style={{ animation: 'baisync-msg-in 0.2s ease-out' }}>
-        <div
-          className="max-w-[80%] px-4 py-2 text-sm leading-relaxed flex flex-col gap-2"
-          style={{
-            background: 'rgba(255,107,0,0.12)',
-            border: '1px solid rgba(255,107,0,0.25)',
-            borderRadius: '14px 14px 4px 14px',
-            color: '#ffcea0',
-            overflowWrap: 'break-word',
-            wordBreak: 'break-word',
-          }}
-        >
-          {hasAttachments && (
-            <div className="flex flex-wrap gap-1.5">
-              {message.attachments!.map((att: BaisyncAttachment, i: number) =>
-                att.mime_type.startsWith('image/') && att.data_base64 ? (
-                  /* eslint-disable-next-line @next/next/no-img-element */
-                  <img
-                    key={i}
-                    src={`data:${att.mime_type};base64,${att.data_base64}`}
-                    alt={att.name}
-                    className="rounded-lg object-cover"
-                    style={{ maxWidth: 180, maxHeight: 140 }}
-                  />
-                ) : (
-                  <div
-                    key={i}
-                    className="flex items-center gap-1.5 px-2 py-1 rounded-md text-[11px]"
-                    style={{ background: 'rgba(255,255,255,0.08)' }}
-                  >
-                    {att.mime_type.startsWith('image/') ? (
-                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 opacity-60"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>
-                    ) : (
-                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 opacity-60"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/></svg>
-                    )}
-                    <span className="truncate max-w-[120px]">{att.name}</span>
-                  </div>
-                )
-              )}
-            </div>
-          )}
-          <div className="flex items-end gap-3">
-            <span className="flex-1">{message.content}</span>
-            <span className="text-[10px] opacity-40 leading-none shrink-0 pb-0.5">
-              {formatTimestamp(message.timestamp)}
-            </span>
-          </div>
+      <div
+        className="flex flex-col"
+        style={{
+          animation: 'baisync-msg-in 0.2s ease-out',
+          gap: 4,
+          marginBottom: 10,
+          fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+          fontSize: 13,
+          lineHeight: 1.6,
+          overflowWrap: 'break-word',
+          wordBreak: 'break-word',
+        }}
+      >
+        <div>
+          <span style={{ color: '#6b6b72' }}>$ </span>
+          <span style={{ color: '#e6e6e6' }}>{message.content}</span>
         </div>
+        {hasAttachments && (
+          <div className="flex flex-wrap" style={{ gap: 6, paddingLeft: 14 }}>
+            {message.attachments!.map((att: BaisyncAttachment, i: number) =>
+              att.mime_type.startsWith('image/') && att.data_base64 ? (
+                /* eslint-disable-next-line @next/next/no-img-element */
+                <img
+                  key={i}
+                  src={`data:${att.mime_type};base64,${att.data_base64}`}
+                  alt={att.name}
+                  style={{ maxWidth: 160, maxHeight: 120, borderRadius: 4, border: '0.5px solid #2a2a30' }}
+                />
+              ) : (
+                <span
+                  key={i}
+                  className="flex items-center"
+                  style={{
+                    gap: 4,
+                    padding: '2px 6px',
+                    fontSize: 11,
+                    color: '#b5b5bc',
+                    background: '#111114',
+                    border: '0.5px solid #2a2a30',
+                    borderRadius: 4,
+                  }}
+                >
+                  <span style={{ color: '#ff7a1a' }}>📎</span>
+                  <span className="truncate" style={{ maxWidth: 120 }}>{att.name}</span>
+                </span>
+              )
+            )}
+          </div>
+        )}
       </div>
     )
   }
@@ -1494,35 +1519,35 @@ export function BaisyncMessageComponent({ message }: MessageProps) {
   // Assistant message
   const cleanText = stripBaisyncBlocks(message.content)
   return (
-    <div className="flex justify-start" style={{ animation: 'baisync-msg-in 0.25s ease-out' }}>
-      <div className="max-w-[85%] flex flex-col gap-2">
-        {cleanText && (
-          <div
-            className="px-4 py-2 rounded-2xl rounded-bl-md text-sm leading-relaxed text-heading"
-            style={{
-              background: 'rgba(255,255,255,0.04)',
-              border: '1px solid rgba(255,255,255,0.06)',
-              overflowWrap: 'break-word',
-              wordBreak: 'break-word',
-            }}
-          >
-            {renderMarkdown(cleanText)}
-            <span className="float-right text-[10px] mt-1 ml-3 opacity-30 leading-none" style={{ color: '#EDF0F7' }}>
-              {formatTimestamp(message.timestamp)}
-            </span>
-          </div>
-        )}
+    <div
+      className="flex flex-col"
+      style={{
+        animation: 'baisync-msg-in 0.25s ease-out',
+        gap: 6,
+        marginBottom: 10,
+        fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+        fontSize: 13,
+        lineHeight: 1.6,
+        overflowWrap: 'break-word',
+        wordBreak: 'break-word',
+      }}
+    >
+      {cleanText && (
+        <div style={{ display: 'flex', gap: 6, color: '#e6e6e6' }}>
+          <span style={{ color: '#ff7a1a', flexShrink: 0 }}>&gt;</span>
+          <div style={{ flex: 1, minWidth: 0 }}>{renderMarkdown(cleanText)}</div>
+        </div>
+      )}
 
-        {/* UI Blocks */}
-        {message.uiBlocks?.map((block: BaisyncUIBlock, i: number) => (
-          <BaisyncUIBlockRenderer key={i} block={block} />
-        ))}
+      {/* UI Blocks */}
+      {message.uiBlocks?.map((block: BaisyncUIBlock, i: number) => (
+        <BaisyncUIBlockRenderer key={i} block={block} />
+      ))}
 
-        {/* Actions — auto-execute sequentially */}
-        {message.actions && message.actions.length > 0 && (
-          <ActionSequence actions={message.actions} />
-        )}
-      </div>
+      {/* Actions — auto-execute sequentially */}
+      {message.actions && message.actions.length > 0 && (
+        <ActionSequence actions={message.actions} />
+      )}
     </div>
   )
 }
@@ -1553,24 +1578,40 @@ export function TypingIndicator() {
   )
 }
 
-// Streaming content display
+// Streaming content display — terminal "> ..." with blinking caret
 export function StreamingMessage({ content }: { content: string }) {
   const cleaned = stripBaisyncBlocks(content)
   if (!cleaned) return null
 
   return (
-    <div className="flex justify-start" style={{ animation: 'baisync-msg-in 0.2s ease-out' }}>
-      <div
-        className="max-w-[85%] px-4 py-2.5 rounded-2xl rounded-bl-md text-sm leading-relaxed text-heading"
-        style={{
-          background: 'rgba(255,255,255,0.04)',
-          border: '1px solid rgba(255,255,255,0.06)',
-          overflowWrap: 'break-word',
-          wordBreak: 'break-word',
-        }}
-      >
+    <div
+      style={{
+        display: 'flex',
+        gap: 6,
+        marginBottom: 10,
+        fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+        fontSize: 13,
+        lineHeight: 1.6,
+        color: '#e6e6e6',
+        overflowWrap: 'break-word',
+        wordBreak: 'break-word',
+        animation: 'baisync-msg-in 0.2s ease-out',
+      }}
+    >
+      <span style={{ color: '#ff7a1a', flexShrink: 0 }}>&gt;</span>
+      <div style={{ flex: 1, minWidth: 0 }}>
         {renderMarkdown(cleaned)}
-        <span className="inline-block w-1.5 h-4 ml-0.5 rounded-sm" style={{ background: '#ff6b2c', animation: 'blink-cursor 0.8s infinite' }} />
+        <span
+          style={{
+            display: 'inline-block',
+            width: 7,
+            height: 14,
+            marginLeft: 2,
+            verticalAlign: 'text-bottom',
+            background: '#ff7a1a',
+            animation: 'baisync-caret-blink 1s step-end infinite',
+          }}
+        />
       </div>
     </div>
   )

@@ -5,6 +5,7 @@ pub mod appointments;
 pub mod assistants;
 pub mod auth;
 pub mod baisync;
+pub mod baisync_voice_live;
 pub mod channels;
 pub mod elevenlabs;
 pub mod events;
@@ -20,6 +21,7 @@ pub mod openai_audio;
 pub mod strategy_map;
 pub mod swot;
 pub mod swot_interview;
+pub mod swot_interview_live;
 
 pub mod card_payment;
 pub mod pix;

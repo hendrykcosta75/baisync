@@ -31,7 +31,7 @@ class BaisyncErrorBoundary extends Component<{ children: ReactNode }, { hasError
     if (this.state.hasError) {
       return (
         <div className="fixed bottom-6 right-6 z-50 p-4 rounded-xl max-w-[350px] glass-card" style={{ border: '1px solid rgba(239,68,68,0.3)' }}>
-          <p className="text-xs text-red-400 font-medium mb-1">Baisync Agent encontrou um erro</p>
+          <p className="text-xs text-red-400 font-medium mb-1">Sophie encontrou um erro</p>
           <p className="text-[10px] text-[#5a5a5a] break-all">{this.state.error}</p>
           <button
             className="mt-2 px-3 py-1 rounded-lg text-xs cursor-pointer"

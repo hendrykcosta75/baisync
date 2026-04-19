@@ -1,8 +1,5 @@
-use axum::body::Body;
-use axum::extract::{Extension, Multipart, Path};
-use axum::http::header;
+use axum::extract::{Extension, Path};
 use axum::response::sse::{Event, KeepAlive, Sse};
-use axum::response::Response;
 use axum::Json;
 use futures::stream::Stream;
 use serde::{Deserialize, Serialize};
@@ -34,14 +31,9 @@ pub struct InterviewMessage {
     pub content: String,
 }
 
-#[derive(Debug, Deserialize)]
-pub struct TtsRequest {
-    pub text: String,
-}
-
 // ─── System Prompt ──────────────────────────────────────────────────────────
 
-fn build_system_prompt(workspace_name: &str) -> String {
+pub(crate) fn build_system_prompt(workspace_name: &str) -> String {
     let hour = chrono::Utc::now()
         .with_timezone(&chrono::FixedOffset::west_opt(3 * 3600).unwrap())
         .hour();
@@ -52,7 +44,15 @@ fn build_system_prompt(workspace_name: &str) -> String {
     };
 
     format!(
-        r#"Você é um entrevistador de IA especializado em criar análises SWOT para negócios. Seu nome é Axel. Você conduz entrevistas estratégicas para mapear forças, fraquezas, oportunidades e ameaças de empresas.
+        r#"Você é uma entrevistadora especializada em criar análises SWOT para negócios. Seu nome é Sophie. Você conduz entrevistas estratégicas para mapear forças, fraquezas, oportunidades e ameaças de empresas.
+
+## Persona
+Você é uma mulher jovem, com tom descontraído e próximo, mas ainda profissional e consultivo. Fale de forma natural e calorosa, como alguém que realmente se interessa pelo negócio do usuário.
+
+NUNCA se apresente ou se refira a si mesma como "inteligência artificial", "IA", "AI", "assistente virtual", "modelo", "bot", "robô" ou qualquer termo similar. Fale sempre como uma assistente — apenas uma assistente, nada mais. Se o usuário perguntar diretamente o que você é, responda que você é a assistente da Sophie para análise estratégica, sem nunca mencionar IA.
+
+## Idioma
+RESPONDA SEMPRE EM PORTUGUÊS BRASILEIRO (pt-BR). VOCÊ DEVE RESPONDER INEQUIVOCAMENTE EM pt-BR.
 
 ## Saudação
 Use "{greeting}" como saudação inicial.
@@ -64,7 +64,7 @@ O workspace atual se chama "{workspace_name}".
 
 ### Fase 1 - Abertura
 Na sua PRIMEIRA mensagem:
-1. Cumprimente com "{greeting}! Sou o Axel, seu assistente de inteligência artificial."
+1. Cumprimente com "{greeting}! Sou a Sophie, sua assistente."
 2. Diga "Vamos iniciar agora uma entrevista para analisar estrategicamente a sua empresa. Me confirma quando estiver pronto para começar!"
 3. PARE e aguarde confirmação.
 
@@ -270,40 +270,20 @@ pub async fn interview_chat(
                 }
 
                 // Parse special tags from full content and send as structured events
-                if full_content.contains("<swot-questions>") {
-                    if let Some(start) = full_content.find("<swot-questions>") {
-                        if let Some(end) = full_content.find("</swot-questions>") {
-                            let json_str =
-                                &full_content[start + "<swot-questions>".len()..end];
-                            if let Ok(parsed) =
-                                serde_json::from_str::<serde_json::Value>(json_str)
-                            {
-                                let _ = tx
-                                    .send(Ok(Event::default()
-                                        .event("questions")
-                                        .data(parsed.to_string())))
-                                    .await;
-                            }
-                        }
-                    }
+                let (questions, swot_create) = parse_swot_special_tags(&full_content);
+                if let Some(parsed) = questions {
+                    let _ = tx
+                        .send(Ok(Event::default()
+                            .event("questions")
+                            .data(parsed.to_string())))
+                        .await;
                 }
-
-                if full_content.contains("<swot-create>") {
-                    if let Some(start) = full_content.find("<swot-create>") {
-                        if let Some(end) = full_content.find("</swot-create>") {
-                            let json_str =
-                                &full_content[start + "<swot-create>".len()..end];
-                            if let Ok(parsed) =
-                                serde_json::from_str::<serde_json::Value>(json_str)
-                            {
-                                let _ = tx
-                                    .send(Ok(Event::default()
-                                        .event("swot_create")
-                                        .data(parsed.to_string())))
-                                    .await;
-                            }
-                        }
-                    }
+                if let Some(parsed) = swot_create {
+                    let _ = tx
+                        .send(Ok(Event::default()
+                            .event("swot_create")
+                            .data(parsed.to_string())))
+                        .await;
                 }
 
                 let _ = tx
@@ -327,174 +307,6 @@ pub async fn interview_chat(
 
     let stream = ReceiverStream::new(rx);
     Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
-}
-
-// ─── TTS Streaming (ElevenLabs with OpenAI fallback) ────────────────────────
-
-pub async fn interview_tts(
-    Extension(db): Extension<DbSession>,
-    Extension(config): Extension<Config>,
-    Extension(auth_user): Extension<AuthUser>,
-    Path(workspace_id): Path<Uuid>,
-    Json(req): Json<TtsRequest>,
-) -> Result<Response, AppError> {
-    let _ = ws_service::get_member_role(&db, &workspace_id, &auth_user.user_id).await?;
-
-    let text = req.text.trim();
-    if text.is_empty() {
-        return Err(AppError::BadRequest("Text is required".into()));
-    }
-
-    // Strip XML tags from text before TTS
-    let clean_text = strip_xml_tags(text);
-    if clean_text.is_empty() {
-        return Err(AppError::BadRequest("No speakable text".into()));
-    }
-
-    // Try ElevenLabs first
-    if !config.elevenlabs_api_key.is_empty() {
-        let client = reqwest::Client::new();
-        let url = format!(
-            "https://api.elevenlabs.io/v1/text-to-speech/{}/stream?output_format=mp3_44100_128&optimize_streaming_latency=3",
-            config.elevenlabs_voice_id
-        );
-
-        let resp = client
-            .post(&url)
-            .header("xi-api-key", &config.elevenlabs_api_key)
-            .header("Content-Type", "application/json")
-            .json(&serde_json::json!({
-                "text": clean_text,
-                "model_id": "eleven_multilingual_v2",
-                "voice_settings": {
-                    "stability": 0.5,
-                    "similarity_boost": 0.75,
-                    "style": 0.0,
-                    "use_speaker_boost": true
-                }
-            }))
-            .send()
-            .await;
-
-        if let Ok(response) = resp {
-            if response.status().is_success() {
-                let stream = response.bytes_stream();
-                let body = Body::from_stream(stream);
-
-                return Ok(Response::builder()
-                    .header(header::CONTENT_TYPE, "audio/mpeg")
-                    .header(header::TRANSFER_ENCODING, "chunked")
-                    .header(header::CACHE_CONTROL, "no-cache")
-                    .body(body)
-                    .unwrap());
-            } else {
-                let status = response.status();
-                let err = response.text().await.unwrap_or_default();
-                tracing::warn!("ElevenLabs TTS failed ({status}): {err}, falling back to OpenAI");
-            }
-        } else {
-            tracing::warn!("ElevenLabs TTS request failed, falling back to OpenAI");
-        }
-    }
-
-    // No fallback — ElevenLabs is required for TTS
-    Err(AppError::InternalError(
-        "TTS nao disponivel. Configure a chave da ElevenLabs.".into(),
-    ))
-}
-
-// ─── STT (Speech to Text via Gemini) ────────────────────────────────────────
-
-pub async fn interview_stt(
-    Extension(db): Extension<DbSession>,
-    Extension(config): Extension<Config>,
-    Extension(auth_user): Extension<AuthUser>,
-    Path(workspace_id): Path<Uuid>,
-    mut multipart: Multipart,
-) -> Result<Json<serde_json::Value>, AppError> {
-    let _ = ws_service::get_member_role(&db, &workspace_id, &auth_user.user_id).await?;
-
-    let api_key = &config.baisync_api_key;
-    if api_key.is_empty() {
-        return Err(AppError::InternalError("API key not configured".into()));
-    }
-
-    let mut audio_bytes: Option<Vec<u8>> = None;
-    let mut mime = "audio/webm".to_string();
-
-    while let Ok(Some(field)) = multipart.next_field().await {
-        let name = field.name().unwrap_or("").to_string();
-        if name == "audio" {
-            if let Some(ct) = field.content_type() {
-                mime = ct.to_string();
-            }
-            if let Ok(data) = field.bytes().await {
-                audio_bytes = Some(data.to_vec());
-            }
-        }
-    }
-
-    let audio_data =
-        audio_bytes.ok_or_else(|| AppError::BadRequest("No audio file provided".into()))?;
-
-    if audio_data.is_empty() {
-        return Err(AppError::BadRequest("Audio file is empty".into()));
-    }
-
-    tracing::info!("SWOT STT: received {} bytes, mime={}", audio_data.len(), mime);
-
-    // Encode audio as base64 and send to Gemini for transcription
-    use base64::Engine;
-    let audio_b64 = base64::engine::general_purpose::STANDARD.encode(&audio_data);
-
-    let client = reqwest::Client::new();
-    let body = serde_json::json!({
-        "contents": [{
-            "role": "user",
-            "parts": [
-                {"text": "Transcreva o audio a seguir em portugues brasileiro. Retorne APENAS o texto transcrito, sem explicacoes, aspas ou formatacao."},
-                {"inline_data": {"mime_type": mime, "data": audio_b64}}
-            ]
-        }],
-        "generationConfig": {
-            "temperature": 0.0,
-            "maxOutputTokens": 1024,
-        }
-    });
-
-    let url = format!(
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key={}",
-        api_key
-    );
-
-    let resp = client
-        .post(&url)
-        .header("Content-Type", "application/json")
-        .json(&body)
-        .send()
-        .await
-        .map_err(|e| AppError::InternalError(format!("Gemini STT request failed: {e}")))?;
-
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let err = resp.text().await.unwrap_or_default();
-        return Err(AppError::InternalError(format!(
-            "Gemini STT error {status}: {err}"
-        )));
-    }
-
-    let data: serde_json::Value = resp
-        .json()
-        .await
-        .map_err(|e| AppError::InternalError(format!("Failed to parse Gemini STT response: {e}")))?;
-
-    let text = data["candidates"][0]["content"]["parts"][0]["text"]
-        .as_str()
-        .unwrap_or("")
-        .trim()
-        .to_string();
-
-    Ok(Json(serde_json::json!({ "text": text })))
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -525,18 +337,22 @@ fn coalesce_contents(contents: Vec<serde_json::Value>) -> Vec<serde_json::Value>
     coalesced
 }
 
-fn strip_xml_tags(input: &str) -> String {
-    let mut result = String::with_capacity(input.len());
-    let mut inside_tag = false;
-
-    for ch in input.chars() {
-        match ch {
-            '<' => inside_tag = true,
-            '>' => inside_tag = false,
-            _ if !inside_tag => result.push(ch),
-            _ => {}
-        }
-    }
-
-    result.trim().to_string()
+/// Extract <swot-questions> and <swot-create> payloads from the assistant's
+/// accumulated output. Returns (questions, swot_create) as parsed JSON when present.
+pub(crate) fn parse_swot_special_tags(
+    full_content: &str,
+) -> (Option<serde_json::Value>, Option<serde_json::Value>) {
+    let questions = extract_tag(full_content, "swot-questions");
+    let swot_create = extract_tag(full_content, "swot-create");
+    (questions, swot_create)
 }
+
+fn extract_tag(text: &str, tag: &str) -> Option<serde_json::Value> {
+    let open = format!("<{tag}>");
+    let close = format!("</{tag}>");
+    let start = text.find(&open)?;
+    let end = text[start..].find(&close)? + start;
+    let json_str = &text[start + open.len()..end];
+    serde_json::from_str(json_str).ok()
+}
+
