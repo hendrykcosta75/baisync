@@ -3,7 +3,7 @@
 import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react'
 import { Assistant, Conversation, Message, MessageChannel, LLMProvider } from '@/types/assistant'
 import { Button, Input, Modal, Select, ListBox, Label, Spinner } from '@heroui/react'
-import { MessageSquare, Bot, BarChart3, FileText, Film, Paperclip, Download } from 'lucide-react'
+import { MessageSquare, Bot, BarChart3, FileText, Paperclip, Download } from 'lucide-react'
 import { apiFetch } from '@/lib/api'
 import { useApiKeysStore } from '@/store/useApiKeysStore'
 import { useInfiniteScroll } from '@/lib/useInfiniteScroll'
