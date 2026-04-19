@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react'
 import { Modal } from '@heroui/react'
 import { useApiKeysStore } from '@/store/useApiKeysStore'
-import { Settings, MoreVertical, Eye, EyeOff, Trash2, TestTube, Save, ChevronDown } from 'lucide-react'
+import { Settings, MoreVertical, Eye, EyeOff, Trash2, TestTube, Save, ChevronDown, BookOpen, ExternalLink, AlertTriangle } from 'lucide-react'
 import { PageTransition, StaggerContainer, StaggerItem } from '@/lib/motion'
 
 // ─── Provider logos (larger, in icon boxes) ──────────────────────────────────
@@ -182,6 +182,185 @@ const PROVIDER_ACCENT: Record<AnyProvider, string> = {
   stripe: '#635BFF',
 }
 
+// ─── Documentation content per provider ─────────────────────────────────────
+
+interface ProviderDocs {
+  dashboardUrl: string
+  dashboardLabel: string
+  keyFormat: string
+  steps: string[]
+  limitations?: string[]
+  notes?: string[]
+}
+
+const PROVIDER_DOCS: Record<AnyProvider, ProviderDocs> = {
+  openai: {
+    dashboardUrl: 'https://platform.openai.com/api-keys',
+    dashboardLabel: 'platform.openai.com/api-keys',
+    keyFormat: 'sk-...',
+    steps: [
+      'Acesse platform.openai.com/api-keys e faça login na sua conta.',
+      'Clique em "Create new secret key", escolha um nome e deixe as permissões em "All" (padrão).',
+      'Copie a chave (começa com sk-) imediatamente — ela não é exibida novamente.',
+      'Configure billing em platform.openai.com/settings/organization/billing antes do primeiro uso.',
+      'Cole a chave no campo abaixo e salve.',
+    ],
+    limitations: [
+      'Não há free tier — é obrigatório adicionar crédito/cartão antes de fazer qualquer chamada.',
+      'Rate limits variam por Tier (1 a 5) conforme o histórico de gastos; contas novas começam no Tier 1.',
+      'Modelos de raciocínio (o1, o3, GPT-5) não aceitam temperatura personalizada.',
+    ],
+    notes: [
+      'Modelos suportados: GPT-4o, GPT-4o-mini, GPT-4.1, o1, o3, o4.',
+      'Envio de imagem e PDF ocorre inline (data URL) via /v1/chat/completions.',
+    ],
+  },
+  claude: {
+    dashboardUrl: 'https://console.anthropic.com/settings/keys',
+    dashboardLabel: 'console.anthropic.com',
+    keyFormat: 'sk-ant-...',
+    steps: [
+      'Acesse console.anthropic.com e entre com sua conta.',
+      'Vá em Settings → API Keys → "Create Key".',
+      'Dê um nome, copie a chave que começa com sk-ant- e cole no campo abaixo.',
+      'Adicione crédito em Settings → Billing (nenhum tier gratuito na API).',
+    ],
+    limitations: [
+      'Máximo de 100 imagens por request.',
+      'Documentos (PDF) contam como tokens de texto após extração.',
+      'Rate limits baseados em tier de pagamento.',
+    ],
+    notes: [
+      'Modelos suportados: Claude Opus 4.7, Sonnet 4.6, Haiku 4.5.',
+      'Mensagens precisam alternar user/assistant — o backend já coalesce automaticamente.',
+    ],
+  },
+  gemini: {
+    dashboardUrl: 'https://aistudio.google.com/app/apikey',
+    dashboardLabel: 'aistudio.google.com',
+    keyFormat: 'AIza...',
+    steps: [
+      'Acesse aistudio.google.com/app/apikey com uma conta Google.',
+      'Clique em "Create API key" e escolha um projeto Google Cloud (ou crie um novo).',
+      'Copie a chave (começa com AIza) e cole no campo abaixo.',
+    ],
+    limitations: [
+      'Free tier gera rate limits bem baixos — para produção, ative billing no projeto GCP.',
+      'Modelos Gemini 2.5+ são "thinking": temperatura funciona mas o Google recomenda manter em 1.0.',
+      'Geolocalização pode restringir acesso em alguns países.',
+    ],
+    notes: [
+      'Modelos suportados: Gemini 2.5 Pro, 2.5 Flash, 3.x.',
+      'Suporte nativo a imagem, vídeo, PDF e áudio como input multimodal.',
+    ],
+  },
+  grok: {
+    dashboardUrl: 'https://console.x.ai',
+    dashboardLabel: 'console.x.ai',
+    keyFormat: 'xai-...',
+    steps: [
+      'Acesse console.x.ai e entre com uma conta X (antigo Twitter).',
+      'Crie uma aplicação e gere uma API Key.',
+      'Copie a chave (começa com xai-) e cole no campo abaixo.',
+      'Adicione crédito no painel antes do primeiro uso.',
+    ],
+    limitations: [
+      'Input multimodal aceita SOMENTE imagens em JPG/JPEG ou PNG (máx. 20 MiB por imagem).',
+      'PDFs não são suportados nativamente — o backend extrai o texto localmente e concatena no prompt.',
+      'WebP, GIF e outros formatos de imagem são descartados com aviso.',
+    ],
+    notes: [
+      'Modelos suportados: grok-4.20-*, grok-4-1-fast-*.',
+      'API compatível com formato OpenAI em /v1/chat/completions.',
+    ],
+  },
+  deepseek: {
+    dashboardUrl: 'https://platform.deepseek.com/api_keys',
+    dashboardLabel: 'platform.deepseek.com',
+    keyFormat: 'sk-...',
+    steps: [
+      'Acesse platform.deepseek.com/api_keys e crie uma conta.',
+      'Clique em "Create new API key", escolha um nome e copie a chave.',
+      'Cole no campo abaixo e salve.',
+    ],
+    limitations: [
+      'API é text-only — não aceita imagens, vídeo, áudio ou PDF nativamente.',
+      'PDFs são extraídos localmente pelo backend e concatenados ao prompt.',
+      'Imagens enviadas pelo usuário são descartadas com aviso (modelo não tem vision).',
+      'deepseek-reasoner não suporta tool calling e ignora temperatura silenciosamente.',
+    ],
+    notes: [
+      'Modelos suportados: deepseek-chat (com tools), deepseek-reasoner (sem tools, com raciocínio).',
+      'Janela de contexto de 128K tokens.',
+    ],
+  },
+  elevenlabs: {
+    dashboardUrl: 'https://elevenlabs.io/app/settings/api-keys',
+    dashboardLabel: 'elevenlabs.io',
+    keyFormat: 'sk_...',
+    steps: [
+      'Acesse elevenlabs.io/app/settings/api-keys.',
+      'Clique em "Create API key" e copie a chave (começa com sk_).',
+      'Cole no campo abaixo e salve.',
+    ],
+    limitations: [
+      'Plano free tem quota mensal de caracteres limitada — esgotado, síntese de voz falha.',
+      'Clonagem de voz requer plano Creator ou superior.',
+    ],
+    notes: [
+      'Usado pelos assistentes para respostas em áudio e a voz ao vivo da Sophie.',
+    ],
+  },
+  mercadopago: {
+    dashboardUrl: 'https://www.mercadopago.com.br/developers/panel/app',
+    dashboardLabel: 'mercadopago.com.br/developers',
+    keyFormat: 'APP_USR-...',
+    steps: [
+      'Acesse o painel em mercadopago.com.br/developers/panel/app e faça login.',
+      'Clique em "Criar aplicação" (ou selecione uma existente).',
+      'No menu lateral, vá em "Credenciais de produção" e preencha Indústria + Website para ativá-las.',
+      'Copie o Access Token (APP_USR-...) e cole no primeiro campo; copie a Public Key (APP_USR-...) e cole no segundo.',
+      'Configure o webhook apontando para seu endpoint em "Webhooks" dentro da aplicação.',
+    ],
+    limitations: [
+      'Precisa de conta Mercado Pago Brasil (MLB) para aceitar PIX.',
+      'Credenciais de produção precisam ser ativadas manualmente (preencher Indústria + URL do negócio).',
+      'Ao renovar credenciais, há janela de 12h em que as antigas continuam ativas — atualize a integração nesse prazo.',
+      'Nunca envie o Access Token no frontend; apenas a Public Key pode ser exposta.',
+    ],
+    notes: [
+      'PIX é nativo e gratuito no Brasil — verificação automática via webhook em ~1s.',
+      'Também aceita cartão de crédito/débito com tokenização via Public Key.',
+      'Credenciais de teste existem em paralelo às de produção para desenvolvimento.',
+    ],
+  },
+  stripe: {
+    dashboardUrl: 'https://dashboard.stripe.com/apikeys',
+    dashboardLabel: 'dashboard.stripe.com',
+    keyFormat: 'sk_live_... / pk_live_...',
+    steps: [
+      'Acesse dashboard.stripe.com/apikeys.',
+      'Garanta que está em modo Live (toggle "View test data" desligado) para produção.',
+      'Em "Standard keys", copie a Publishable key (pk_live_...) e a Secret key (sk_live_...).',
+      'Cole a Secret key no primeiro campo e a Publishable key no segundo. Salve.',
+      'Para receber PIX, ative o método em Settings → Payment methods → Pix → Enable.',
+    ],
+    limitations: [
+      'A Secret key só pode ser revelada UMA vez após criação — salve imediatamente ou gere uma nova.',
+      'PIX no Brasil via Stripe é intermediado pela EBANX (não é integração direta com Banco Central).',
+      'PIX mínimo por transação: R$ 0,50. Máximo por transação: USD 3.000.',
+      'Limite mensal por comprador: USD 10.000 com um mesmo negócio.',
+      'Pagamentos são processados em BRL; settlement na moeda configurada da conta Stripe.',
+      'Stripe cobra taxa própria + taxa EBANX — comparar custo com Mercado Pago antes de escolher.',
+      'PIX Saque e PIX Troco NÃO são suportados via Stripe.',
+    ],
+    notes: [
+      'Test mode e Live mode têm chaves diferentes — não misture.',
+      'Também aceita cartão de crédito/débito globalmente com tokenização via Publishable key.',
+    ],
+  },
+}
+
 // ─── Provider Card ───────────────────────────────────────────────────────────
 
 function ProviderCard({
@@ -205,6 +384,7 @@ function ProviderCard({
   const [, setTesting] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const [confirmOpen, setConfirmOpen] = useState(false)
+  const [docsOpen, setDocsOpen] = useState(false)
   const [removing, setRemoving] = useState(false)
   const [feedback, setFeedback] = useState<{ ok: boolean; msg: string } | null>(null)
 
@@ -275,16 +455,29 @@ function ProviderCard({
             {provider.logo}
           </div>
 
-          <div className="relative">
+          <div className="flex items-center gap-1">
             <button
-              className="p-1 rounded-md transition-colors cursor-pointer"
+              type="button"
+              className="p-1.5 rounded-md transition-colors cursor-pointer flex items-center gap-1"
               style={{ color: '#5a5a5a' }}
-              onClick={() => setMenuOpen(!menuOpen)}
+              onClick={() => setDocsOpen(true)}
               onMouseEnter={(e) => (e.currentTarget.style.color = '#999')}
               onMouseLeave={(e) => (e.currentTarget.style.color = '#5a5a5a')}
+              aria-label={`Documentação de ${provider.name}`}
+              title="Documentação"
             >
-              <MoreVertical size={16} />
+              <BookOpen size={15} />
             </button>
+            <div className="relative">
+              <button
+                className="p-1 rounded-md transition-colors cursor-pointer"
+                style={{ color: '#5a5a5a' }}
+                onClick={() => setMenuOpen(!menuOpen)}
+                onMouseEnter={(e) => (e.currentTarget.style.color = '#999')}
+                onMouseLeave={(e) => (e.currentTarget.style.color = '#5a5a5a')}
+              >
+                <MoreVertical size={16} />
+              </button>
             {menuOpen && (
               <>
                 <div className="fixed inset-0 z-10" onClick={() => setMenuOpen(false)} />
@@ -324,6 +517,7 @@ function ProviderCard({
                 </div>
               </>
             )}
+            </div>
           </div>
         </div>
 
@@ -480,6 +674,139 @@ function ProviderCard({
           )}
         </div>
       </div>
+
+      {/* Documentation modal */}
+      <Modal>
+        <Modal.Backdrop isOpen={docsOpen} onOpenChange={setDocsOpen}>
+          <Modal.Container>
+            <Modal.Dialog className="max-w-xl w-full">
+              <Modal.CloseTrigger className="absolute right-4 top-4 z-10 flex items-center justify-center w-8 h-8 rounded-full hover:bg-raised transition-colors cursor-pointer text-subtle hover:text-heading">
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+                  <path d="M4 4L12 12M12 4L4 12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                </svg>
+              </Modal.CloseTrigger>
+              <Modal.Header>
+                <Modal.Heading
+                  className="text-base font-semibold flex items-center gap-2"
+                  style={{ fontFamily: "'JetBrains Mono', 'Fira Code', monospace" }}
+                >
+                  <BookOpen size={16} style={{ color: accent }} />
+                  Documentação · {provider.name}
+                </Modal.Heading>
+              </Modal.Header>
+              <Modal.Body className="pb-2 max-h-[70vh] overflow-y-auto">
+                {(() => {
+                  const docs = PROVIDER_DOCS[provider.key]
+                  return (
+                    <div className="flex flex-col gap-5">
+                      {/* Dashboard link */}
+                      <a
+                        href={docs.dashboardUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center justify-between gap-2 px-3 py-2.5 rounded-lg border border-dim hover:border-[#ff6b2c]/40 transition-colors"
+                        style={{ background: '#141414' }}
+                      >
+                        <div className="flex items-center gap-2 min-w-0">
+                          <ExternalLink size={14} className="text-[#ff6b2c] shrink-0" />
+                          <span className="text-xs text-body truncate">{docs.dashboardLabel}</span>
+                        </div>
+                        <span
+                          className="text-[10px] text-subtle shrink-0"
+                          style={{ fontFamily: "'JetBrains Mono', 'Fira Code', monospace" }}
+                        >
+                          {docs.keyFormat}
+                        </span>
+                      </a>
+
+                      {/* Steps */}
+                      <div className="flex flex-col gap-2">
+                        <p
+                          className="text-[11px] font-semibold uppercase tracking-wider text-subtle"
+                          style={{ fontFamily: "'JetBrains Mono', 'Fira Code', monospace" }}
+                        >
+                          Como configurar
+                        </p>
+                        <ol className="flex flex-col gap-2">
+                          {docs.steps.map((step, i) => (
+                            <li key={i} className="flex gap-2.5 text-sm text-body leading-relaxed">
+                              <span
+                                className="shrink-0 w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold"
+                                style={{ background: 'rgba(255,107,44,0.15)', color: '#ff6b2c' }}
+                              >
+                                {i + 1}
+                              </span>
+                              <span>{step}</span>
+                            </li>
+                          ))}
+                        </ol>
+                      </div>
+
+                      {/* Limitations */}
+                      {docs.limitations && docs.limitations.length > 0 && (
+                        <div className="flex flex-col gap-2">
+                          <p
+                            className="text-[11px] font-semibold uppercase tracking-wider flex items-center gap-1.5"
+                            style={{
+                              color: '#f59e0b',
+                              fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+                            }}
+                          >
+                            <AlertTriangle size={12} />
+                            Limitações
+                          </p>
+                          <ul className="flex flex-col gap-1.5">
+                            {docs.limitations.map((lim, i) => (
+                              <li key={i} className="flex gap-2 text-xs text-body leading-relaxed">
+                                <span className="shrink-0 text-yellow-500">•</span>
+                                <span>{lim}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+
+                      {/* Notes */}
+                      {docs.notes && docs.notes.length > 0 && (
+                        <div className="flex flex-col gap-2">
+                          <p
+                            className="text-[11px] font-semibold uppercase tracking-wider text-subtle"
+                            style={{ fontFamily: "'JetBrains Mono', 'Fira Code', monospace" }}
+                          >
+                            Notas
+                          </p>
+                          <ul className="flex flex-col gap-1.5">
+                            {docs.notes.map((note, i) => (
+                              <li key={i} className="flex gap-2 text-xs text-subtle leading-relaxed">
+                                <span className="shrink-0">•</span>
+                                <span>{note}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                    </div>
+                  )
+                })()}
+              </Modal.Body>
+              <Modal.Footer className="flex justify-end gap-2 pt-4 pb-5 px-6">
+                <button type="button" className="btn-neu-ghost text-sm" onClick={() => setDocsOpen(false)}>
+                  Fechar
+                </button>
+                <a
+                  href={PROVIDER_DOCS[provider.key].dashboardUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="btn-neu text-sm flex items-center gap-1.5"
+                >
+                  Abrir painel
+                  <ExternalLink size={12} />
+                </a>
+              </Modal.Footer>
+            </Modal.Dialog>
+          </Modal.Container>
+        </Modal.Backdrop>
+      </Modal>
 
       {/* Confirm removal modal */}
       <Modal>

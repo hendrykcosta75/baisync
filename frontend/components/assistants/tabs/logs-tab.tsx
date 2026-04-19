@@ -5,7 +5,7 @@ import { Card, Button, Spinner } from '@heroui/react'
 import { apiFetch } from '@/lib/api'
 import { useInfiniteScroll } from '@/lib/useInfiniteScroll'
 import type { Assistant } from '@/types/assistant'
-import { AlertTriangle, Wrench, Check, BookOpen, BarChart2, MessageSquare, Zap } from 'lucide-react'
+import { AlertTriangle, Wrench, Check, BookOpen, BarChart2, MessageSquare, Zap, Cpu } from 'lucide-react'
 
 interface LogsTabProps {
   assistant: Assistant
@@ -42,6 +42,40 @@ interface AssistantStats {
   daily: DailyPoint[]
   last_interaction_at: string | null
   channel_breakdown: ChannelCount[]
+}
+
+interface LlmCallLog {
+  id: string
+  conversation_id: string | null
+  provider: string
+  model: string
+  tokens_used: number
+  duration_ms: number
+  tool_rounds: number
+  tool_names: string[]
+  error: string | null
+  created_at: string
+}
+
+type LlmProviderFilter = 'all' | 'openai' | 'claude' | 'gemini' | 'grok' | 'deepseek'
+
+const LLM_PROVIDERS: { id: LlmProviderFilter; label: string; dot: string }[] = [
+  { id: 'all',      label: 'Todos',    dot: 'bg-subtle' },
+  { id: 'openai',   label: 'OpenAI',   dot: 'bg-emerald-500' },
+  { id: 'claude',   label: 'Claude',   dot: 'bg-orange-400' },
+  { id: 'gemini',   label: 'Gemini',   dot: 'bg-blue-500' },
+  { id: 'grok',     label: 'Grok',     dot: 'bg-neutral-400' },
+  { id: 'deepseek', label: 'Deepseek', dot: 'bg-indigo-500' },
+]
+
+function providerLabel(p: string): string {
+  const m = LLM_PROVIDERS.find(x => x.id === p)
+  return m?.label ?? p
+}
+
+function providerDotClass(p: string): string {
+  const m = LLM_PROVIDERS.find(x => x.id === p)
+  return m?.dot ?? 'bg-subtle'
 }
 
 // ─── Utilities ────────────────────────────────────────────────────────────────
@@ -289,6 +323,115 @@ function LogEntry({ log }: { log: AssistantLog }) {
   )
 }
 
+// ─── LLM call log entry ──────────────────────────────────────────────────────
+
+function LlmLogEntry({ log }: { log: LlmCallLog }) {
+  const [expanded, setExpanded] = useState(false)
+  const isError = !!log.error
+
+  return (
+    <div className={`glass-card rounded-xl overflow-hidden transition-all duration-200 hover:border-[#ff6b2c]/30 ${isError ? '!border-red-500/40' : ''}`}>
+      <button
+        onClick={() => setExpanded(v => !v)}
+        className="w-full flex items-center gap-3 px-4 py-3 hover:bg-raised/60 transition-colors text-left"
+      >
+        <div className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 ${
+          isError ? 'bg-red-100 dark:bg-red-900/30' : 'bg-[#ff6b2c]/10'
+        }`}>
+          {isError
+            ? <AlertTriangle size={14} className="text-red-500" />
+            : <Cpu size={14} className="text-[#ff6b2c]" />}
+        </div>
+
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className={`w-1.5 h-1.5 rounded-full ${providerDotClass(log.provider)}`} />
+            <span className="text-sm font-medium text-heading">
+              {providerLabel(log.provider)}
+            </span>
+            <span className="text-xs text-subtle font-mono truncate">{log.model}</span>
+            {log.tool_rounds > 0 && (
+              <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-[#ff6b2c]/10 text-[#ff6b2c]">
+                {log.tool_rounds} tool{log.tool_rounds > 1 ? 's' : ''}
+              </span>
+            )}
+            {isError && (
+              <span className="text-[10px] text-red-500 truncate max-w-[200px]">{log.error}</span>
+            )}
+          </div>
+          <p className="text-[11px] text-subtle mt-0.5">{formatDate(log.created_at)}</p>
+        </div>
+
+        <div className="shrink-0 text-right">
+          <p className="text-xs font-mono text-subtle">
+            {formatNumber(log.tokens_used)} tok · {log.duration_ms}ms
+          </p>
+          <p className="text-[10px] text-subtle">{relativeTime(log.created_at)}</p>
+        </div>
+
+        <span className={`text-subtle text-xs transition-transform ${expanded ? 'rotate-180' : ''}`}>▼</span>
+      </button>
+
+      {expanded && (
+        <div className="border-t border-dim px-4 py-3 space-y-3 bg-raised/30">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div>
+              <p className="text-[10px] font-semibold text-subtle uppercase tracking-wider mb-0.5">Provedor</p>
+              <p className="text-xs text-heading font-mono">{log.provider}</p>
+            </div>
+            <div>
+              <p className="text-[10px] font-semibold text-subtle uppercase tracking-wider mb-0.5">Modelo</p>
+              <p className="text-xs text-heading font-mono break-all">{log.model}</p>
+            </div>
+            <div>
+              <p className="text-[10px] font-semibold text-subtle uppercase tracking-wider mb-0.5">Tokens</p>
+              <p className="text-xs text-heading font-mono">{formatNumber(log.tokens_used)}</p>
+            </div>
+            <div>
+              <p className="text-[10px] font-semibold text-subtle uppercase tracking-wider mb-0.5">Duração</p>
+              <p className="text-xs text-heading font-mono">{log.duration_ms}ms</p>
+            </div>
+          </div>
+
+          {log.tool_names.length > 0 && (
+            <div>
+              <p className="text-[10px] font-semibold text-subtle uppercase tracking-wider mb-1">
+                Tools chamadas ({log.tool_rounds})
+              </p>
+              <div className="flex flex-wrap gap-1.5">
+                {log.tool_names.map((name, i) => (
+                  <span
+                    key={`${name}-${i}`}
+                    className="px-2 py-0.5 rounded text-[10px] font-mono bg-surface text-heading border border-dim"
+                  >
+                    {name}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {log.error && (
+            <div>
+              <p className="text-[10px] font-semibold text-red-500 uppercase tracking-wider mb-1">Erro</p>
+              <pre className="text-[11px] font-mono text-red-400 bg-red-50 dark:bg-red-900/20 rounded-lg px-3 py-2 overflow-x-auto whitespace-pre-wrap break-all">
+                {log.error}
+              </pre>
+            </div>
+          )}
+
+          {log.conversation_id && (
+            <div>
+              <p className="text-[10px] font-semibold text-subtle uppercase tracking-wider mb-0.5">Conversa</p>
+              <p className="text-[11px] text-subtle font-mono break-all">{log.conversation_id}</p>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── Tab ─────────────────────────────────────────────────────────────────────
 
 type LogFilter = 'all' | 'errors' | 'slow'
@@ -318,6 +461,32 @@ export function LogsTab({ assistant, shareToken }: LogsTabProps) {
     fetchFn: fetchLogs,
   })
 
+  const [llmFilter, setLlmFilter] = useState<LlmProviderFilter>('all')
+
+  const fetchLlmLogs = useCallback(async (cursor?: string) => {
+    const offset = cursor ? parseInt(cursor, 10) : 0
+    const providerQs = llmFilter !== 'all' ? `&provider=${llmFilter}` : ''
+    const res = await apiFetch<{ items: LlmCallLog[]; nextOffset?: number | null }>(
+      `/api/assistants/${assistant.id}/llm-logs?limit=50&offset=${offset}${providerQs}${stqs}`
+    )
+    return {
+      items: res.items || [],
+      cursor: res.nextOffset != null ? String(res.nextOffset) : null,
+    }
+  }, [assistant.id, llmFilter, stqs])
+
+  const {
+    items: llmLogs,
+    isLoading: llmLoading,
+    isLoadingMore: llmLoadingMore,
+    hasMore: llmHasMore,
+    sentinelRef: llmSentinelRef,
+    reset: resetLlmLogs,
+  } = useInfiniteScroll<LlmCallLog>({
+    fetchFn: fetchLlmLogs,
+    resetKey: llmFilter,
+  })
+
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setStatsLoading(true)
@@ -332,9 +501,10 @@ export function LogsTab({ assistant, shareToken }: LogsTabProps) {
     const id = setInterval(() => {
       setRefreshKey(k => k + 1)
       resetLogs()
+      resetLlmLogs()
     }, 30_000)
     return () => clearInterval(id)
-  }, [resetLogs])
+  }, [resetLogs, resetLlmLogs])
 
   const filtered = logs.filter(l => {
     if (filter === 'errors') return !!l.error || (l.status_code !== null && l.status_code >= 400)
@@ -446,6 +616,82 @@ export function LogsTab({ assistant, shareToken }: LogsTabProps) {
           </div>
         </div>
       )}
+
+      {/* LLM API call logs */}
+      <div className="flex flex-col gap-3">
+        <div className="flex items-center gap-2 flex-wrap">
+          <p
+            className="text-sm font-semibold text-heading"
+            style={{ fontFamily: "'JetBrains Mono', 'Fira Code', monospace" }}
+          >
+            Chamadas de API (LLM)
+          </p>
+          <div className="ml-auto flex gap-1 flex-wrap">
+            <button
+              type="button"
+              onClick={() => resetLlmLogs()}
+              disabled={llmLoading}
+              className="btn-neu-ghost text-xs disabled:opacity-40"
+              aria-label="Atualizar chamadas de API"
+            >
+              {llmLoading ? '↻' : '↻ Atualizar'}
+            </button>
+            {LLM_PROVIDERS.map(p => {
+              const active = llmFilter === p.id
+              return (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() => setLlmFilter(p.id)}
+                  className={`${active ? 'btn-neu' : 'btn-neu-ghost'} text-xs flex items-center gap-1.5`}
+                >
+                  <span className={`w-1.5 h-1.5 rounded-full ${p.dot}`} />
+                  {p.label}
+                </button>
+              )
+            })}
+          </div>
+        </div>
+
+        {llmLoading ? (
+          <div className="space-y-2">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <div key={i} className="h-14 rounded-xl bg-raised animate-pulse" />
+            ))}
+          </div>
+        ) : llmLogs.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-12 text-center">
+            <div className="w-14 h-14 rounded-xl bg-raised flex items-center justify-center mb-3">
+              <Cpu size={22} className="text-subtle" />
+            </div>
+            <p
+              className="text-sm font-semibold text-heading"
+              style={{ fontFamily: "'JetBrains Mono', 'Fira Code', monospace" }}
+            >
+              {llmFilter === 'all'
+                ? 'Nenhuma chamada de API registrada'
+                : `Nenhuma chamada para ${providerLabel(llmFilter)}`}
+            </p>
+            <p className="text-xs text-subtle mt-1 max-w-xs">
+              {llmFilter === 'all'
+                ? 'As chamadas ao provedor de LLM aparecerão aqui assim que o assistente responder a uma mensagem.'
+                : 'Tente selecionar outro provedor.'}
+            </p>
+          </div>
+        ) : (
+          <div
+            className="space-y-2 overflow-y-auto pr-1"
+            style={{ maxHeight: 'calc(100vh - 420px)', minHeight: '300px' }}
+          >
+            {llmLogs.map(log => <LlmLogEntry key={log.id} log={log} />)}
+            {llmHasMore && (
+              <div ref={llmSentinelRef} className="flex justify-center py-4">
+                {llmLoadingMore && <Spinner size="sm" />}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
 
       {/* Tool call logs */}
       <div className="flex flex-col gap-3">

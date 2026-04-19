@@ -109,6 +109,10 @@ export interface Message {
   sender: 'user' | 'assistant'
   timestamp: string
   tokens_used?: number | null
+  /** MIME type of the attached media (e.g. "image/jpeg", "application/pdf"). */
+  media_type?: string | null
+  /** True when raw media bytes are available via the media endpoint. */
+  has_media?: boolean
 }
 
 export interface Conversation {

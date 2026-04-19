@@ -3,7 +3,7 @@
 import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react'
 import { Assistant, Conversation, Message, MessageChannel, LLMProvider } from '@/types/assistant'
 import { Button, Input, Modal, Select, ListBox, Label, Spinner } from '@heroui/react'
-import { MessageSquare, Bot, BarChart3 } from 'lucide-react'
+import { MessageSquare, Bot, BarChart3, FileText, Film, Paperclip, Download } from 'lucide-react'
 import { apiFetch } from '@/lib/api'
 import { useApiKeysStore } from '@/store/useApiKeysStore'
 import { useInfiniteScroll } from '@/lib/useInfiniteScroll'
@@ -168,6 +168,71 @@ function SummaryProviderPicker({ onGenerate, isGenerating }: { onGenerate: (prov
         {isGenerating ? 'Gerando resumo...' : 'Gerar Resumo'}
       </button>
     </div>
+  )
+}
+
+function mediaKindFromMime(mime: string | null | undefined): 'image' | 'video' | 'pdf' | 'other' {
+  if (!mime) return 'other'
+  if (mime.startsWith('image/')) return 'image'
+  if (mime.startsWith('video/')) return 'video'
+  if (mime === 'application/pdf') return 'pdf'
+  return 'other'
+}
+
+function MessageMedia({
+  assistantId,
+  conversationId,
+  messageId,
+  mediaType,
+  shareToken,
+}: {
+  assistantId: string
+  conversationId: string
+  messageId: string
+  mediaType: string | null | undefined
+  shareToken?: string
+}) {
+  const stqs = shareToken ? `?share_token=${encodeURIComponent(shareToken)}` : ''
+  const src = `/api/assistants/${assistantId}/conversations/${conversationId}/messages/${messageId}/media${stqs}`
+  const kind = mediaKindFromMime(mediaType)
+
+  if (kind === 'image') {
+    return (
+      <div className="mt-1 mb-2 overflow-hidden rounded-lg border border-dim">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={src}
+          alt="Anexo enviado pelo contato"
+          className="max-h-72 w-auto block"
+          loading="lazy"
+        />
+      </div>
+    )
+  }
+
+  if (kind === 'video') {
+    return (
+      <div className="mt-1 mb-2 overflow-hidden rounded-lg border border-dim">
+        <video src={src} controls className="max-h-72 w-auto block" preload="metadata" />
+      </div>
+    )
+  }
+
+  const icon = kind === 'pdf' ? <FileText size={16} /> : <Paperclip size={16} />
+  const label = kind === 'pdf' ? 'Documento PDF' : (mediaType || 'Arquivo')
+
+  return (
+    <a
+      href={src}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="mt-1 mb-2 flex items-center gap-2 px-3 py-2 rounded-lg bg-raised border border-dim text-body hover:border-[#ff6b2c]/30 transition-colors"
+      style={{ fontFamily: "'JetBrains Mono', 'Fira Code', monospace" }}
+    >
+      <span className="text-[#ff6b2c]">{icon}</span>
+      <span className="text-xs flex-1 truncate">{label}</span>
+      <Download size={14} className="text-subtle" />
+    </a>
   )
 }
 
@@ -585,7 +650,18 @@ export function ConversationsTab({ assistant, shareToken }: ConversationsTabProp
                         >
                           {msg.sender === 'user' ? (
                             <div className="max-w-[75%] px-4 py-2.5 rounded-2xl text-sm text-body" style={{ background: '#1e1e1e', border: '1px solid #282828' }}>
-                              <p className="whitespace-pre-wrap">{msg.content}</p>
+                              {msg.has_media && (
+                                <MessageMedia
+                                  assistantId={assistant.id}
+                                  conversationId={openConv.id}
+                                  messageId={msg.id}
+                                  mediaType={msg.media_type}
+                                  shareToken={shareToken}
+                                />
+                              )}
+                              {msg.content && (
+                                <p className="whitespace-pre-wrap">{msg.content}</p>
+                              )}
                               <div className="flex items-center gap-2 mt-1 text-subtle">
                                 <span className="text-[10px]">
                                   {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}

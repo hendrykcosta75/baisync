@@ -235,6 +235,10 @@ pub fn build_router(
             "/api/assistants/{id}/logs",
             get(handlers::stats::assistant_logs),
         )
+        .route(
+            "/api/assistants/{id}/llm-logs",
+            get(handlers::stats::assistant_llm_logs),
+        )
         // Sharing / access control
         .route(
             "/api/assistants/{id}/share-token",
@@ -632,6 +636,10 @@ pub fn build_router(
         .route(
             "/api/assistants/{id}/conversations/{conv_id}/messages",
             get(handlers::messages::list_messages).post(handlers::messages::send_message),
+        )
+        .route(
+            "/api/assistants/{id}/conversations/{conv_id}/messages/{msg_id}/media",
+            get(handlers::messages::get_message_media),
         )
         .route(
             "/api/assistants/{id}/conversations/{conv_id}/summary",

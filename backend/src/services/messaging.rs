@@ -310,6 +310,23 @@ pub async fn process_incoming_message(
         .unwrap_or(false)
         && (webhook.media_base64.is_some() || webhook.media_url.is_some());
 
+    // Resolve the raw media bytes once — we need them for DB persistence (so
+    // the UI can render images and the LLM can re-attach on follow-up turns)
+    // as well as for the current-turn LLM attach. For Meta Official this
+    // triggers a Graph API download; for Baileys/Telegram the webhook already
+    // carries base64.
+    let resolved_media_b64: Option<String> = if is_non_audio_media {
+        if let Some(ref b64) = webhook.media_base64 {
+            Some(b64.clone())
+        } else {
+            resolve_audio_bytes(&webhook, &integration, encryption)
+                .await
+                .map(|bytes| base64::engine::general_purpose::STANDARD.encode(&bytes))
+        }
+    } else {
+        None
+    };
+
     if is_non_audio_media && !assistant.config_interpret_documents {
         // Document interpretation disabled — send error message
         let default_msg =
@@ -320,13 +337,14 @@ pub async fn process_incoming_message(
             .filter(|s| !s.is_empty())
             .unwrap_or(default_msg);
 
-        save_message(
+        save_message_with_media(
             db,
             &conversation.id,
             "user",
             &effective_message,
             webhook.media_url.as_deref(),
             webhook.media_type.as_deref(),
+            resolved_media_b64.as_deref(),
             None,
         )
         .await?;
@@ -348,13 +366,14 @@ pub async fn process_incoming_message(
             .unwrap_or(false);
         if is_video && assistant.llm_provider != "gemini" {
             let reply = "Este assistente não suporta processamento de vídeos.";
-            save_message(
+            save_message_with_media(
                 db,
                 &conversation.id,
                 "user",
                 &effective_message,
                 webhook.media_url.as_deref(),
                 webhook.media_type.as_deref(),
+                resolved_media_b64.as_deref(),
                 None,
             )
             .await?;
@@ -366,17 +385,8 @@ pub async fn process_incoming_message(
             });
         }
 
-        // Resolve media bytes if not already available (Meta Official sends media_id)
-        let media_b64 = if let Some(ref b64) = webhook.media_base64 {
-            Some(b64.clone())
-        } else {
-            resolve_audio_bytes(&webhook, &integration, encryption)
-                .await
-                .map(|bytes| base64::engine::general_purpose::STANDARD.encode(&bytes))
-        };
-
         // Check media size limit (10MB)
-        if let Some(ref b64) = media_b64 {
+        if let Some(ref b64) = resolved_media_b64 {
             let estimated_size = b64.len() * 3 / 4;
             if estimated_size > 10 * 1024 * 1024 {
                 let reply = "O arquivo enviado é muito grande para processamento. Limite: 10MB.";
@@ -400,13 +410,14 @@ pub async fn process_incoming_message(
         }
     }
 
-    save_message(
+    save_message_with_media(
         db,
         &conversation.id,
         "user",
         &effective_message,
         webhook.media_url.as_deref(),
         webhook.media_type.as_deref(),
+        resolved_media_b64.as_deref(),
         None,
     )
     .await?;
@@ -521,31 +532,38 @@ pub async fn process_incoming_message(
         });
     }
     for msg in &history {
+        let (hist_media_b64, hist_media_mime) =
+            if assistant.config_interpret_documents && msg.role == "user" {
+                let mime_ok = msg
+                    .media_type
+                    .as_deref()
+                    .map(|m| !m.is_empty() && !m.starts_with("audio/"))
+                    .unwrap_or(false);
+                if mime_ok {
+                    (msg.media_base64.clone(), msg.media_type.clone())
+                } else {
+                    (None, None)
+                }
+            } else {
+                (None, None)
+            };
         llm_messages.push(LlmMessage {
             role: msg.role.clone(),
-            content: msg.content.clone().unwrap_or_default(),
-            media_base64: None,
-            media_mime_type: None,
+            content: enrich_history_content(msg),
+            media_base64: hist_media_b64,
+            media_mime_type: hist_media_mime,
         });
     }
 
     // Attach media to the last user message if this is a media message with interpretation enabled
     if is_non_audio_media && assistant.config_interpret_documents {
-        let media_b64 = if let Some(ref b64) = webhook.media_base64 {
-            Some(b64.clone())
-        } else {
-            resolve_audio_bytes(&webhook, &integration, encryption)
-                .await
-                .map(|bytes| base64::engine::general_purpose::STANDARD.encode(&bytes))
-        };
-
-        if let Some(b64) = media_b64 {
+        if let Some(ref b64) = resolved_media_b64 {
             if let Some(last_user) = llm_messages.iter_mut().rev().find(|m| m.role == "user") {
                 if last_user.content.is_empty() {
                     last_user.content =
                         "O usuário enviou este arquivo. Analise o conteúdo e responda.".to_string();
                 }
-                last_user.media_base64 = Some(b64);
+                last_user.media_base64 = Some(b64.clone());
                 last_user.media_mime_type = webhook.media_type.clone();
             }
         }
@@ -1778,14 +1796,129 @@ async fn save_message(
     media_type: Option<&str>,
     tokens_used: Option<i32>,
 ) -> Result<(), AppError> {
+    save_message_with_media(
+        db,
+        conversation_id,
+        role,
+        content,
+        media_url,
+        media_type,
+        None,
+        tokens_used,
+    )
+    .await
+}
+
+async fn save_message_with_media(
+    db: &DbSession,
+    conversation_id: &Uuid,
+    role: &str,
+    content: &str,
+    media_url: Option<&str>,
+    media_type: Option<&str>,
+    media_base64: Option<&str>,
+    tokens_used: Option<i32>,
+) -> Result<(), AppError> {
     let now = ts_now();
 
     db.query_unpaged(
-        "INSERT INTO inertial_eclipse.messages (conversation_id, id, role, content, media_url, media_type, tokens_used, created_at) VALUES (?, now(), ?, ?, ?, ?, ?, ?)",
-        (conversation_id, role, content, &media_url, &media_type, &tokens_used, now),
-    ).await.map_err(|e| AppError::DatabaseError(e.to_string()))?;
+        "INSERT INTO inertial_eclipse.messages (conversation_id, id, role, content, media_url, media_type, media_base64, tokens_used, created_at) VALUES (?, now(), ?, ?, ?, ?, ?, ?, ?)",
+        (
+            conversation_id,
+            role,
+            content,
+            &media_url,
+            &media_type,
+            &media_base64,
+            &tokens_used,
+            now,
+        ),
+    )
+    .await
+    .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     Ok(())
+}
+
+/// Build the `content` string for a historical message when feeding LLM context.
+/// Raw media bytes are not stored in the DB, so follow-up turns would otherwise
+/// lose the memory that an attachment existed — which makes vision-capable
+/// models (notably Gemini) apologize and claim they "can't see images". This
+/// appends a short marker to user turns that carried non-audio media so the
+/// model knows the attachment was real and already analyzed.
+fn enrich_history_content(msg: &Message) -> String {
+    let base = msg.content.clone().unwrap_or_default();
+    if msg.role != "user" {
+        return base;
+    }
+    let mime = match msg.media_type.as_deref() {
+        Some(m) if !m.is_empty() => m,
+        _ => return base,
+    };
+    if mime.starts_with("audio/") {
+        // Audio is transcribed upstream; `content` already contains the transcript.
+        return base;
+    }
+    let kind = if mime.starts_with("image/") {
+        "imagem"
+    } else if mime.starts_with("video/") {
+        "vídeo"
+    } else if mime == "application/pdf" {
+        "documento PDF"
+    } else {
+        "arquivo"
+    };
+    let marker =
+        format!("[Anexo já analisado nesta conversa: {kind} ({mime})]");
+    if base.is_empty() {
+        marker
+    } else {
+        format!("{base}\n\n{marker}")
+    }
+}
+
+pub async fn get_message(
+    db: &DbSession,
+    conversation_id: &Uuid,
+    message_id: &Uuid,
+) -> Result<Option<Message>, AppError> {
+    let timeuuid = CqlTimeuuid::from(*message_id);
+    let result = db
+        .query_unpaged(
+            "SELECT conversation_id, id, role, content, media_url, media_type, media_base64, tokens_used, sub_agent_id, created_at FROM inertial_eclipse.messages WHERE conversation_id = ? AND id = ?",
+            (conversation_id, &timeuuid),
+        )
+        .await
+        .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+
+    let rows = result.into_rows_result()?;
+    for row in rows.rows::<(
+        Uuid,
+        CqlTimeuuid,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<i32>,
+        Option<Uuid>,
+        Option<DateTime<Utc>>,
+    )>()? {
+        let r = row.map_err(|e| AppError::DatabaseError(e.to_string()))?;
+        return Ok(Some(Message {
+            conversation_id: r.0,
+            id: r.1.into(),
+            role: r.2.unwrap_or_default(),
+            content: r.3,
+            media_url: r.4,
+            media_type: r.5,
+            media_base64: r.6,
+            tokens_used: r.7,
+            sub_agent_id: r.8,
+            created_at: r.9.unwrap_or_else(Utc::now),
+        }));
+    }
+    Ok(None)
 }
 
 pub async fn get_recent_messages(
@@ -1795,7 +1928,7 @@ pub async fn get_recent_messages(
 ) -> Result<Vec<Message>, AppError> {
     let result = db
         .query_unpaged(
-            "SELECT conversation_id, id, role, content, media_url, media_type, tokens_used, sub_agent_id, created_at FROM inertial_eclipse.messages WHERE conversation_id = ? ORDER BY id DESC LIMIT ?",
+            "SELECT conversation_id, id, role, content, media_url, media_type, media_base64, tokens_used, sub_agent_id, created_at FROM inertial_eclipse.messages WHERE conversation_id = ? ORDER BY id DESC LIMIT ?",
             (conversation_id, limit),
         )
         .await
@@ -1806,6 +1939,7 @@ pub async fn get_recent_messages(
     for row in rows.rows::<(
         Uuid,
         CqlTimeuuid,
+        Option<String>,
         Option<String>,
         Option<String>,
         Option<String>,
@@ -1822,9 +1956,10 @@ pub async fn get_recent_messages(
             content: r.3,
             media_url: r.4,
             media_type: r.5,
-            tokens_used: r.6,
-            sub_agent_id: r.7,
-            created_at: r.8.unwrap_or_else(Utc::now),
+            media_base64: r.6,
+            tokens_used: r.7,
+            sub_agent_id: r.8,
+            created_at: r.9.unwrap_or_else(Utc::now),
         });
     }
 
@@ -1840,7 +1975,7 @@ pub async fn get_messages_paged(
 ) -> Result<crate::models::pagination::PaginatedResponse<Message>, AppError> {
     let (result, next_cursor) = crate::db::query_paged(
         db,
-        "SELECT conversation_id, id, role, content, media_url, media_type, tokens_used, sub_agent_id, created_at FROM inertial_eclipse.messages WHERE conversation_id = ? ORDER BY id DESC",
+        "SELECT conversation_id, id, role, content, media_url, media_type, media_base64, tokens_used, sub_agent_id, created_at FROM inertial_eclipse.messages WHERE conversation_id = ? ORDER BY id DESC",
         (conversation_id,),
         limit,
         cursor,
@@ -1857,6 +1992,7 @@ pub async fn get_messages_paged(
         Option<String>,
         Option<String>,
         Option<String>,
+        Option<String>,
         Option<i32>,
         Option<Uuid>,
         Option<DateTime<Utc>>,
@@ -1869,9 +2005,10 @@ pub async fn get_messages_paged(
             content: r.3,
             media_url: r.4,
             media_type: r.5,
-            tokens_used: r.6,
-            sub_agent_id: r.7,
-            created_at: r.8.unwrap_or_else(Utc::now),
+            media_base64: r.6,
+            tokens_used: r.7,
+            sub_agent_id: r.8,
+            created_at: r.9.unwrap_or_else(Utc::now),
         });
     }
 
@@ -2203,11 +2340,26 @@ pub async fn playground_chat(
         });
     }
     for msg in &history {
+        let (hist_media_b64, hist_media_mime) =
+            if assistant.config_interpret_documents && msg.role == "user" {
+                let mime_ok = msg
+                    .media_type
+                    .as_deref()
+                    .map(|m| !m.is_empty() && !m.starts_with("audio/"))
+                    .unwrap_or(false);
+                if mime_ok {
+                    (msg.media_base64.clone(), msg.media_type.clone())
+                } else {
+                    (None, None)
+                }
+            } else {
+                (None, None)
+            };
         llm_messages.push(LlmMessage {
             role: msg.role.clone(),
-            content: msg.content.clone().unwrap_or_default(),
-            media_base64: None,
-            media_mime_type: None,
+            content: enrich_history_content(msg),
+            media_base64: hist_media_b64,
+            media_mime_type: hist_media_mime,
         });
     }
 

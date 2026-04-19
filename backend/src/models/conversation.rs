@@ -25,6 +25,7 @@ pub struct Message {
     pub content: Option<String>,
     pub media_url: Option<String>,
     pub media_type: Option<String>,
+    pub media_base64: Option<String>,
     pub tokens_used: Option<i32>,
     pub sub_agent_id: Option<Uuid>,
     pub created_at: DateTime<Utc>,

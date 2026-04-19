@@ -1,5 +1,6 @@
-use chrono::Datelike;
+use chrono::{Datelike, Utc};
 use reqwest::Client;
+use scylla::frame::value::{CqlTimestamp, CqlTimeuuid};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use uuid::Uuid;
@@ -7,6 +8,73 @@ use uuid::Uuid;
 use crate::db::DbSession;
 use crate::errors::AppError;
 use crate::models::assistant::AssistantTool;
+
+/// Decode a base64 blob and extract plain text via the RAG text extractor.
+/// Returns `None` when decode or extraction fails — caller should then
+/// fall back to the message's text-only content and log a warning.
+fn extract_text_from_base64(b64: &str, mime: &str) -> Option<String> {
+    use base64::{engine::general_purpose::STANDARD, Engine};
+    let bytes = STANDARD.decode(b64).ok()?;
+    crate::services::rag::extract_text(&bytes, mime).ok()
+}
+
+/// Persist one row per top-level LLM call for dashboard analytics.
+/// Non-fatal — any DB failure is logged and swallowed so it never breaks
+/// the actual message flow.
+#[allow(clippy::too_many_arguments)]
+async fn record_llm_call(
+    db: &DbSession,
+    user_id: Uuid,
+    assistant_id: Uuid,
+    conversation_id: Option<Uuid>,
+    provider: &str,
+    model: &str,
+    tokens_used: i32,
+    duration_ms: i32,
+    tool_rounds: i32,
+    tool_names: Vec<String>,
+    error: Option<String>,
+) {
+    let ts = uuid::timestamp::Timestamp::now(uuid::NoContext);
+    let id = Uuid::new_v1(ts, &[0x01, 0x23, 0x45, 0x67, 0x89, 0xab]);
+    let timeuuid = CqlTimeuuid::from(id);
+    let now = CqlTimestamp(Utc::now().timestamp_millis());
+
+    let res = db
+        .query_unpaged(
+            "INSERT INTO inertial_eclipse.llm_call_logs \
+             (user_id, assistant_id, id, conversation_id, provider, model, \
+              tokens_used, duration_ms, tool_rounds, tool_names, error, created_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                &user_id,
+                &assistant_id,
+                &timeuuid,
+                &conversation_id,
+                provider,
+                model,
+                tokens_used,
+                duration_ms,
+                tool_rounds,
+                &tool_names,
+                &error,
+                now,
+            ),
+        )
+        .await;
+    if let Err(e) = res {
+        tracing::warn!("Failed to persist llm_call_log: {e}");
+    }
+}
+
+/// Fold an extracted document's text into an existing user message body.
+fn fold_document_text(original: &str, extracted: &str) -> String {
+    if original.trim().is_empty() {
+        format!("[Conteúdo do documento anexado]\n{extracted}")
+    } else {
+        format!("{original}\n\n[Conteúdo do documento anexado]\n{extracted}")
+    }
+}
 
 /// Context passed to execute_tool for built-in tools that need database access
 pub struct ToolContext<'a> {
@@ -542,8 +610,9 @@ pub async fn call_llm_with_tools_ctx(
     ctx: &ToolContext<'_>,
 ) -> Result<LlmResponse, AppError> {
     let client = Client::new();
+    let started = std::time::Instant::now();
 
-    match provider {
+    let result: Result<LlmResponse, AppError> = match provider {
         "openai" => {
             call_openai_with_tools(
                 &client,
@@ -612,7 +681,47 @@ pub async fn call_llm_with_tools_ctx(
         _ => Err(AppError::BadRequest(format!(
             "Unknown LLM provider: {provider}"
         ))),
+    };
+
+    let duration_ms = started.elapsed().as_millis().min(i32::MAX as u128) as i32;
+
+    // Best-effort persistence — only when we have the full tenant context.
+    if let (Some(db), Some(user_id), Some(assistant_id)) =
+        (ctx.db, ctx.user_id, ctx.assistant_id)
+    {
+        let (tokens_used, tool_rounds, tool_names, error) = match &result {
+            Ok(r) => {
+                let names: Vec<String> = r
+                    .tool_call_records
+                    .iter()
+                    .map(|t| t.tool_name.clone())
+                    .collect();
+                (
+                    r.tokens_used,
+                    r.tool_call_records.len() as i32,
+                    names,
+                    None,
+                )
+            }
+            Err(e) => (0, 0, Vec::new(), Some(e.to_string())),
+        };
+        record_llm_call(
+            db,
+            user_id,
+            assistant_id,
+            ctx.conversation_id,
+            provider,
+            model,
+            tokens_used,
+            duration_ms,
+            tool_rounds,
+            tool_names,
+            error,
+        )
+        .await;
     }
+
+    result
 }
 
 struct RawLlmResult {
@@ -2255,21 +2364,43 @@ async fn call_grok_with_tools(
     tools: &[LlmTool],
     ctx: &ToolContext<'_>,
 ) -> Result<LlmResponse, AppError> {
+    // Grok (xAI) via /v1/chat/completions only accepts image/jpeg and image/png
+    // as multimodal input. PDFs and other types are rejected by the API, so we
+    // extract PDF text locally and fold it into the message body, and drop
+    // other unsupported types with a warning.
     let mut raw_messages: Vec<Value> = messages
         .iter()
         .map(|m| {
-            let content = if let (Some(b64), Some(mime)) = (&m.media_base64, &m.media_mime_type) {
-                let mut parts = vec![];
-                if !m.content.is_empty() {
-                    parts.push(json!({"type": "text", "text": m.content}));
+            let content = match (&m.media_base64, &m.media_mime_type) {
+                (Some(b64), Some(mime)) if mime == "image/jpeg" || mime == "image/png" => {
+                    let mut parts = vec![];
+                    if !m.content.is_empty() {
+                        parts.push(json!({"type": "text", "text": m.content}));
+                    }
+                    parts.push(json!({
+                        "type": "image_url",
+                        "image_url": { "url": format!("data:{mime};base64,{b64}") }
+                    }));
+                    json!(parts)
                 }
-                parts.push(json!({
-                    "type": "image_url",
-                    "image_url": { "url": format!("data:{mime};base64,{b64}") }
-                }));
-                json!(parts)
-            } else {
-                json!(m.content)
+                (Some(b64), Some(mime)) if mime == "application/pdf" => {
+                    match extract_text_from_base64(b64, mime) {
+                        Some(extracted) => json!(fold_document_text(&m.content, &extracted)),
+                        None => {
+                            tracing::warn!(
+                                "Grok: failed to extract text from PDF attachment; sending text-only"
+                            );
+                            json!(m.content)
+                        }
+                    }
+                }
+                (Some(_), Some(mime)) => {
+                    tracing::warn!(
+                        "Grok does not support attachments of type {mime}; sending text-only"
+                    );
+                    json!(m.content)
+                }
+                _ => json!(m.content),
             };
             json!({"role": m.role, "content": content})
         })
@@ -2460,9 +2591,34 @@ async fn call_deepseek_with_tools(
         tools
     };
 
+    // Deepseek is text-only (no vision model, content must be a plain string).
+    // Extract text from PDFs and fold into the message body; drop other
+    // attachment types with a warning instead of silently losing them.
     let mut raw_messages: Vec<Value> = messages
         .iter()
-        .map(|m| json!({"role": m.role, "content": m.content}))
+        .map(|m| {
+            let content = match (&m.media_base64, &m.media_mime_type) {
+                (Some(b64), Some(mime)) if mime == "application/pdf" => {
+                    match extract_text_from_base64(b64, mime) {
+                        Some(extracted) => fold_document_text(&m.content, &extracted),
+                        None => {
+                            tracing::warn!(
+                                "Deepseek: failed to extract text from PDF attachment; sending text-only"
+                            );
+                            m.content.clone()
+                        }
+                    }
+                }
+                (Some(_), Some(mime)) => {
+                    tracing::warn!(
+                        "Deepseek is text-only; dropping attachment of type {mime}"
+                    );
+                    m.content.clone()
+                }
+                _ => m.content.clone(),
+            };
+            json!({"role": m.role, "content": content})
+        })
         .collect();
 
     let mut total_tokens = 0i32;

@@ -338,6 +338,14 @@ pub async fn delete_assistant(
     .await
     .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
+    // Delete LLM call logs (PK: (user_id, assistant_id), id)
+    db.query_unpaged(
+        "DELETE FROM inertial_eclipse.llm_call_logs WHERE user_id = ? AND assistant_id = ?",
+        (user_id, assistant_id),
+    )
+    .await
+    .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+
     // Delete access tokens (PK: (user_id, assistant_id), id)
     db.query_unpaged(
         "DELETE FROM inertial_eclipse.access_tokens WHERE user_id = ? AND assistant_id = ?",

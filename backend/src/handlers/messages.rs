@@ -50,6 +50,10 @@ pub struct MessageResponse {
     pub sender: String,
     pub timestamp: String,
     pub tokens_used: Option<i32>,
+    /// MIME type of the attached media, if any (e.g. "image/jpeg", "application/pdf").
+    pub media_type: Option<String>,
+    /// True when raw media bytes are available via the media endpoint.
+    pub has_media: bool,
 }
 
 // --- Baileys v3 webhook ---
@@ -989,12 +993,21 @@ pub async fn list_messages(
     let responses: Vec<MessageResponse> = paginated
         .items
         .into_iter()
-        .map(|m| MessageResponse {
-            id: m.id.to_string(),
-            content: m.content.unwrap_or_default(),
-            sender: m.role,
-            timestamp: m.created_at.to_rfc3339(),
-            tokens_used: m.tokens_used,
+        .map(|m| {
+            let has_media = m
+                .media_base64
+                .as_deref()
+                .map(|s| !s.is_empty())
+                .unwrap_or(false);
+            MessageResponse {
+                id: m.id.to_string(),
+                content: m.content.unwrap_or_default(),
+                sender: m.role,
+                timestamp: m.created_at.to_rfc3339(),
+                tokens_used: m.tokens_used,
+                media_type: m.media_type,
+                has_media,
+            }
         })
         .collect();
     Ok(Json(crate::models::pagination::PaginatedResponse {
@@ -1057,12 +1070,19 @@ pub async fn send_message(
         &req.message,
     )
     .await?;
+    let has_media = response
+        .media_base64
+        .as_deref()
+        .map(|s| !s.is_empty())
+        .unwrap_or(false);
     Ok(Json(MessageResponse {
         id: response.id.to_string(),
         content: response.content.unwrap_or_default(),
         sender: response.role,
         timestamp: response.created_at.to_rfc3339(),
         tokens_used: response.tokens_used,
+        media_type: response.media_type,
+        has_media,
     }))
 }
 
@@ -1135,4 +1155,60 @@ pub async fn summarize_conversation(
     )
     .await?;
     Ok(Json(response))
+}
+
+// --- GET /api/assistants/{aid}/conversations/{cid}/messages/{mid}/media ---
+// Serve the raw bytes of a message's attached media (image / pdf / video).
+
+#[derive(Deserialize)]
+pub struct MediaFetchQuery {
+    pub share_token: Option<String>,
+}
+
+pub async fn get_message_media(
+    Extension(db): Extension<DbSession>,
+    Extension(auth_user): Extension<AuthUser>,
+    Path((assistant_id, conversation_id, message_id)): Path<(Uuid, Uuid, Uuid)>,
+    Query(query): Query<MediaFetchQuery>,
+) -> Result<impl IntoResponse, AppError> {
+    let owner_id = assistant_service::resolve_assistant_access(
+        &db,
+        &auth_user.workspace_id,
+        &assistant_id,
+        query.share_token.as_deref(),
+        "read",
+    )
+    .await?;
+    messaging::get_conversation(&db, &assistant_id, &owner_id, &conversation_id).await?;
+
+    let msg = messaging::get_message(&db, &conversation_id, &message_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound("Message not found".into()))?;
+
+    let b64 = msg
+        .media_base64
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| AppError::NotFound("Message has no media".into()))?;
+
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(b64)
+        .map_err(|e| AppError::InternalError(format!("Invalid media base64: {e}")))?;
+
+    let mime = msg
+        .media_type
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .unwrap_or("application/octet-stream")
+        .to_string();
+
+    let mut headers = HeaderMap::new();
+    if let Ok(v) = mime.parse() {
+        headers.insert(axum::http::header::CONTENT_TYPE, v);
+    }
+    if let Ok(v) = "private, max-age=3600".parse() {
+        headers.insert(axum::http::header::CACHE_CONTROL, v);
+    }
+
+    Ok((headers, bytes))
 }

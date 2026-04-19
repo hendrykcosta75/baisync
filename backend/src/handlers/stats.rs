@@ -1,6 +1,7 @@
 use axum::extract::{Extension, Path, Query};
 use axum::Json;
-use chrono::{Duration, Utc};
+use chrono::{DateTime, Duration, Utc};
+use scylla::frame::value::CqlTimeuuid;
 use serde::{Deserialize, Serialize};
 use serde_json;
 use uuid::Uuid;
@@ -320,6 +321,124 @@ pub async fn assistant_logs(
     Ok(Json(serde_json::json!({
         "items": page,
         "nextOffset": if has_more { Some(offset + limit) } else { None::<usize> },
+    })))
+}
+
+// ─── GET /api/assistants/{id}/llm-logs?provider=&limit=&offset= ──────────────
+// Per-call LLM provider log: one row per top-level call_llm invocation.
+
+#[derive(Deserialize)]
+pub struct LlmLogsQuery {
+    pub limit: Option<usize>,
+    pub offset: Option<usize>,
+    pub provider: Option<String>,
+    pub share_token: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct LlmLogItem {
+    pub id: String,
+    pub conversation_id: Option<String>,
+    pub provider: String,
+    pub model: String,
+    pub tokens_used: i32,
+    pub duration_ms: i32,
+    pub tool_rounds: i32,
+    pub tool_names: Vec<String>,
+    pub error: Option<String>,
+    pub created_at: String,
+}
+
+pub async fn assistant_llm_logs(
+    Extension(db): Extension<DbSession>,
+    Extension(auth_user): Extension<AuthUser>,
+    Path(assistant_id): Path<Uuid>,
+    Query(params): Query<LlmLogsQuery>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let limit = params.limit.unwrap_or(50).min(200);
+    let offset = params.offset.unwrap_or(0);
+    let provider_filter = params
+        .provider
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty() && *s != "all");
+
+    // Resolve tenant — returns the partition-key user_id (owner).
+    let tenant_user_id = assistant::resolve_assistant_access(
+        &db,
+        &auth_user.workspace_id,
+        &assistant_id,
+        params.share_token.as_deref(),
+        "read",
+    )
+    .await?;
+
+    // Over-fetch when filtering by provider so the post-filter page is still
+    // full; cap the scan to stay bounded.
+    let scan_limit = if provider_filter.is_some() {
+        ((offset + limit) * 4).min(2000)
+    } else {
+        offset + limit + 1
+    };
+
+    let result = db
+        .query_unpaged(
+            "SELECT id, conversation_id, provider, model, tokens_used, duration_ms, \
+                    tool_rounds, tool_names, error, created_at \
+             FROM inertial_eclipse.llm_call_logs \
+             WHERE user_id = ? AND assistant_id = ? LIMIT ?",
+            (tenant_user_id, assistant_id, scan_limit as i32),
+        )
+        .await
+        .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+
+    let rows = result.into_rows_result()?;
+
+    let mut items: Vec<LlmLogItem> = Vec::new();
+    for row in rows
+        .rows::<(
+            CqlTimeuuid,
+            Option<Uuid>,
+            Option<String>,
+            Option<String>,
+            Option<i32>,
+            Option<i32>,
+            Option<i32>,
+            Option<Vec<String>>,
+            Option<String>,
+            Option<DateTime<Utc>>,
+        )>()?
+        .flatten()
+    {
+        let provider = row.2.unwrap_or_default();
+        if let Some(p) = provider_filter {
+            if provider != p {
+                continue;
+            }
+        }
+        let id_uuid: Uuid = Uuid::from(row.0);
+        let created_at_iso = row.9.unwrap_or_else(Utc::now).to_rfc3339();
+        items.push(LlmLogItem {
+            id: id_uuid.to_string(),
+            conversation_id: row.1.map(|u: Uuid| u.to_string()),
+            provider,
+            model: row.3.unwrap_or_default(),
+            tokens_used: row.4.unwrap_or(0),
+            duration_ms: row.5.unwrap_or(0),
+            tool_rounds: row.6.unwrap_or(0),
+            tool_names: row.7.unwrap_or_default(),
+            error: row.8,
+            created_at: created_at_iso,
+        });
+    }
+
+    let has_more = items.len() > offset + limit;
+    let page: Vec<LlmLogItem> = items.into_iter().skip(offset).take(limit).collect();
+    let returned = page.len();
+
+    Ok(Json(serde_json::json!({
+        "items": page,
+        "nextOffset": if has_more && returned == limit { Some(offset + limit) } else { None::<usize> },
     })))
 }
 

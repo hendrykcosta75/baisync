@@ -43,7 +43,7 @@ fn chunk_text(text: &str, chunk_size: usize, overlap: usize) -> Vec<String> {
 }
 
 /// Extract text content from uploaded file bytes
-fn extract_text(content: &[u8], mime_type: &str) -> Result<String, AppError> {
+pub fn extract_text(content: &[u8], mime_type: &str) -> Result<String, AppError> {
     match mime_type {
         "text/plain" | "text/markdown" | "text/csv" | "application/json" => {
             String::from_utf8(content.to_vec())
