@@ -14,7 +14,7 @@ import Link from 'next/link'
 const assistantSchema = z.object({
   name: z.string().min(1, 'Nome é obrigatório'),
   description: z.string(),
-  llmProvider: z.enum(['openai', 'claude', 'gemini']),
+  llmProvider: z.enum(['openai', 'claude', 'gemini', 'grok', 'deepseek']),
   model: z.string().min(1, 'Modelo é obrigatório'),
   temperature: z.number().min(0).max(1),
   maxTokens: z.number().min(1).max(32000),
@@ -125,6 +125,8 @@ export function AssistantForm({ initialData, onSubmit, onCancel, assistantId, sh
                   <ListBox.Item id="openai" textValue="OpenAI">OpenAI</ListBox.Item>
                   <ListBox.Item id="claude" textValue="Claude">Claude</ListBox.Item>
                   <ListBox.Item id="gemini" textValue="Gemini">Gemini</ListBox.Item>
+                  <ListBox.Item id="grok" textValue="Grok">Grok (xAI)</ListBox.Item>
+                  <ListBox.Item id="deepseek" textValue="Deepseek">Deepseek</ListBox.Item>
                 </ListBox>
               </Select.Popover>
               {errors.llmProvider && <FieldError>{errors.llmProvider.message}</FieldError>}

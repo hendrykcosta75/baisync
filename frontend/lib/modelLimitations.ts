@@ -3,6 +3,8 @@ import { LLMProvider } from '@/types/assistant'
 export interface ModelLimitations {
   supportsTemperature: boolean
   temperatureNote?: string
+  supportsTools?: boolean
+  toolsNote?: string
   maxOutputTokens?: number
 }
 
@@ -44,6 +46,15 @@ export function getModelLimitations(provider: LLMProvider, model: string): Model
     }
   }
 
-  // Claude: all models support temperature, no special restrictions
+  if (provider === 'deepseek' && model === 'deepseek-reasoner') {
+    return {
+      supportsTemperature: false,
+      temperatureNote: 'Temperature é ignorada silenciosamente em modelos reasoner da Deepseek.',
+      supportsTools: false,
+      toolsNote: 'deepseek-reasoner não suporta chamada de ferramentas. Use deepseek-chat se precisar de tools.',
+    }
+  }
+
+  // Claude / Grok: all models support temperature and tools.
   return { supportsTemperature: true }
 }

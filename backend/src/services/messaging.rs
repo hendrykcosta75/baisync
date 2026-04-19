@@ -219,16 +219,11 @@ pub async fn process_incoming_message(
                     .config_audio_provider
                     .as_deref()
                     .unwrap_or("openai");
-                let stt_provider_key = if audio_provider == "elevenlabs" {
-                    "elevenlabs"
-                } else {
-                    "openai"
-                };
                 let stt_key_opt = crate::services::workspace::get_decrypted_api_key(
                     db,
                     encryption,
                     &user_id,
-                    stt_provider_key,
+                    audio_provider,
                 )
                 .await
                 .ok();
@@ -642,6 +637,19 @@ pub async fn process_incoming_message(
                     .get("reason")
                     .and_then(|v| v.as_str())
                     .unwrap_or("IA solicitou assistência humana");
+                // Recipient scope lives in the tool's headers_json (singleton per assistant).
+                let scope = match crate::services::assistant::list_tools(db, &assistant_id).await {
+                    Ok(tools) => tools
+                        .iter()
+                        .find(|t| t.tool_type.as_deref() == Some("notify_human"))
+                        .map(|t| {
+                            crate::services::notification::parse_notify_scope_from_headers(
+                                t.headers_json.as_deref(),
+                            )
+                        })
+                        .unwrap_or_default(),
+                    Err(_) => Default::default(),
+                };
                 if let Err(e) = notify_human_agent(
                     db,
                     config,
@@ -650,6 +658,7 @@ pub async fn process_incoming_message(
                     &assistant.name,
                     reason,
                     &webhook.phone,
+                    &scope,
                 )
                 .await
                 {
@@ -2651,20 +2660,50 @@ async fn send_responses_as_audio(
     contact_phone: &str,
     text: &str,
 ) -> Result<(), AppError> {
-    // Use OGG Opus for Telegram voice messages; MP3 for WhatsApp/others
-    let (elevenlabs_format, mime) = if integration.provider == "telegram" {
+    let is_telegram = integration.provider == "telegram";
+    // Use OGG Opus for Telegram voice messages; MP3 for WhatsApp/others.
+    let (elevenlabs_format, default_mime) = if is_telegram {
         ("opus_48000_192", "audio/ogg")
     } else {
         ("mp3_44100_128", "audio/mpeg")
     };
 
-    let audio_bytes = match audio_provider {
+    let (audio_bytes, mime) = match audio_provider {
         "openai" => {
             let api_key = crate::services::workspace::get_decrypted_api_key(
                 db, encryption, user_id, "openai",
             )
             .await?;
-            crate::services::openai_audio::text_to_speech(&api_key, voice_id, text).await?
+            let bytes =
+                crate::services::openai_audio::text_to_speech(&api_key, voice_id, text).await?;
+            (bytes, default_mime)
+        }
+        "grok" => {
+            let api_key =
+                crate::services::workspace::get_decrypted_api_key(db, encryption, user_id, "grok")
+                    .await?;
+            let grok_format = if is_telegram {
+                crate::services::grok_audio::GROK_FORMAT_OPUS
+            } else {
+                crate::services::grok_audio::GROK_FORMAT_MP3
+            };
+            let bytes = crate::services::grok_audio::text_to_speech(
+                &api_key,
+                voice_id,
+                text,
+                grok_format,
+            )
+            .await?;
+            (bytes, if is_telegram { "audio/ogg" } else { "audio/mpeg" })
+        }
+        "gemini" => {
+            let api_key = crate::services::workspace::get_decrypted_api_key(
+                db, encryption, user_id, "gemini",
+            )
+            .await?;
+            let bytes =
+                crate::services::gemini_audio::text_to_speech(&api_key, voice_id, text).await?;
+            (bytes, "audio/wav")
         }
         _ => {
             let api_key = crate::services::workspace::get_decrypted_api_key(
@@ -2674,8 +2713,14 @@ async fn send_responses_as_audio(
                 "elevenlabs",
             )
             .await?;
-            crate::services::elevenlabs::text_to_speech(&api_key, voice_id, text, elevenlabs_format)
-                .await?
+            let bytes = crate::services::elevenlabs::text_to_speech(
+                &api_key,
+                voice_id,
+                text,
+                elevenlabs_format,
+            )
+            .await?;
+            (bytes, default_mime)
         }
     };
 
@@ -3320,21 +3365,31 @@ async fn notify_human_agent(
     assistant_name: &str,
     reason: &str,
     contact_phone: &str,
+    scope: &crate::services::notification::NotifyScope,
 ) -> Result<(), AppError> {
     let title = format!("Solicitação de Agente Humano - {assistant_name}");
     let message =
         format!("Contato {contact_phone} precisa de atendimento humano. Motivo: {reason}");
 
-    // Notify assistant owner (resolve workspace → owner)
+    // Workspace owner — receives the email notification regardless of scope
+    // (so the account owner is always aware their assistant escalated).
     let ws_owner_id = crate::services::workspace::get_workspace(db, owner_user_id)
         .await
         .map(|ws| ws.owner_id)
         .unwrap_or(*owner_user_id);
     let owner = crate::services::auth::get_user_by_id(db, &ws_owner_id).await?;
-    // Notify all workspace members
-    let _ = crate::services::notification::notify_workspace_members(
+
+    // In-app notifications go only to the configured scope (default: all workspace).
+    let recipients = crate::services::notification::resolve_scope_recipients(
         db,
         owner_user_id,
+        scope,
+    )
+    .await
+    .unwrap_or_default();
+    let _ = crate::services::notification::notify_recipients(
+        db,
+        &recipients,
         Some(assistant_id),
         None,
         "human_agent_request",
@@ -3354,7 +3409,8 @@ async fn notify_human_agent(
         tracing::error!(error = %e, "Failed to send human agent email to owner");
     }
 
-    // Notify all users with accepted share tokens
+    // Share-token users always get notified — they are explicitly invited to
+    // this specific assistant regardless of workspace scope.
     let token_users = crate::services::assistant::list_token_users(db, assistant_id).await?;
     for user in &token_users {
         crate::services::notification::create_notification(
@@ -3367,7 +3423,7 @@ async fn notify_human_agent(
             &message,
         )
         .await
-        .ok(); // Don't fail if one notification fails
+        .ok();
         if let Err(e) = crate::services::email::send_human_agent_email(
             config,
             &user.user_email,

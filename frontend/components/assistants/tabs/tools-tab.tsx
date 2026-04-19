@@ -1,10 +1,12 @@
 'use client'
 
 import React, { useState, useEffect, useCallback, useRef } from 'react'
-import { Assistant, AssistantTool, AuthType, AuthConfig, BodyContentType, ToolSettings, ToolCallLog, ToolType } from '@/types/assistant'
+import { Assistant, AssistantTool, AuthType, AuthConfig, BodyContentType, ToolSettings, ToolCallLog, ToolType, NotifyHumanScope } from '@/types/assistant'
 import { Card, Button, Switch, Modal, Input, TextArea, Form, FieldError, Label, TextField, Select, ListBox, Tabs } from '@heroui/react'
 import { useAssistantStore } from '@/store/useAssistantStore'
 import { useApiKeysStore } from '@/store/useApiKeysStore'
+import { useWorkspaceStore } from '@/store/useWorkspaceStore'
+import { useTeamStore } from '@/store/useTeamStore'
 import { apiFetch } from '@/lib/api'
 import { v4 as uuidv4 } from 'uuid'
 import { AvailabilityConfigPanel, type AvailabilityConfigRef } from '@/components/assistants/tabs/availability-config'
@@ -12,6 +14,7 @@ import { useForm, Controller } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { KeyValueEditor, KeyValuePair } from '@/components/assistants/key-value-editor'
+import { getModelLimitations } from '@/lib/modelLimitations'
 
 interface ToolsTabProps {
   assistant: Assistant
@@ -92,6 +95,9 @@ export function ToolsTab({ assistant, shareToken, isReadOnly }: ToolsTabProps) {
   const [meetingLinkExpiry, setMeetingLinkExpiry] = useState<'single_use' | '24h' | '7d' | 'never'>('24h')
   const [autoGenerateMeeting, setAutoGenerateMeeting] = useState(false)
   const [scheduleMeetingLinkExpiry, setScheduleMeetingLinkExpiry] = useState<'single_use' | '24h' | '7d' | 'never'>('7d')
+  const [notifyScope, setNotifyScope] = useState<NotifyHumanScope>('all_workspace')
+  const [notifyTeamIds, setNotifyTeamIds] = useState<string[]>([])
+  const [notifyUserIds, setNotifyUserIds] = useState<string[]>([])
   const [editingBuiltinTool, setEditingBuiltinTool] = useState<AssistantTool | null>(null)
 
   // URL test state (for send_document)
@@ -164,6 +170,20 @@ export function ToolsTab({ assistant, shareToken, isReadOnly }: ToolsTabProps) {
 
   const tools = shareToken ? sharedTools : (assistant.tools || [])
 
+  // Workspace members + teams used by the notify_human scope picker.
+  const activeWorkspace = useWorkspaceStore(s => s.activeWorkspace)
+  const workspaceMembers = useWorkspaceStore(s => s.members)
+  const fetchWorkspaceMembers = useWorkspaceStore(s => s.fetchMembers)
+  const teams = useTeamStore(s => s.teams)
+  const fetchTeams = useTeamStore(s => s.fetchTeams)
+
+  useEffect(() => {
+    if (!shareToken && builtinModalOpen && builtinToolType === 'notify_human' && activeWorkspace) {
+      fetchWorkspaceMembers(activeWorkspace.workspace_id)
+      fetchTeams(activeWorkspace.workspace_id)
+    }
+  }, [shareToken, builtinModalOpen, builtinToolType, activeWorkspace, fetchWorkspaceMembers, fetchTeams])
+
   const { control, handleSubmit, reset, watch, formState: { errors } } = useForm<ToolFormData>({
     resolver: zodResolver(toolSchema),
     defaultValues: { name: '', description: '', endpoint: '', method: 'POST', schema: '' },
@@ -223,6 +243,11 @@ export function ToolsTab({ assistant, shareToken, isReadOnly }: ToolsTabProps) {
         setAutoGenerateMeeting(false)
         setScheduleMeetingLinkExpiry('7d')
       }
+      if (type === 'notify_human') {
+        setNotifyScope('all_workspace')
+        setNotifyTeamIds([])
+        setNotifyUserIds([])
+      }
       setBuiltinModalOpen(true)
     }
   }
@@ -279,6 +304,20 @@ export function ToolsTab({ assistant, shareToken, isReadOnly }: ToolsTabProps) {
           setScheduleMeetingLinkExpiry(h.meeting_link_expiry || '7d')
         } catch { setAutoGenerateMeeting(false); setScheduleMeetingLinkExpiry('7d') }
       }
+      if (type === 'notify_human') {
+        try {
+          const h = tool.headers ? JSON.parse(tool.headers) : {}
+          const scope: NotifyHumanScope =
+            h.scope === 'teams' || h.scope === 'specific_users' ? h.scope : 'all_workspace'
+          setNotifyScope(scope)
+          setNotifyTeamIds(Array.isArray(h.team_ids) ? h.team_ids : [])
+          setNotifyUserIds(Array.isArray(h.user_ids) ? h.user_ids : [])
+        } catch {
+          setNotifyScope('all_workspace')
+          setNotifyTeamIds([])
+          setNotifyUserIds([])
+        }
+      }
       setTestUrlResult(null)
       setBuiltinModalOpen(true)
       return
@@ -324,6 +363,12 @@ export function ToolsTab({ assistant, shareToken, isReadOnly }: ToolsTabProps) {
       if (!pixEnabled) return
     }
 
+    const notifyHumanHeaders = JSON.stringify({
+      scope: notifyScope,
+      team_ids: notifyScope === 'teams' ? notifyTeamIds : [],
+      user_ids: notifyScope === 'specific_users' ? notifyUserIds : [],
+    })
+
     const toolData: Partial<AssistantTool> = {
       name: builtinName,
       description: builtinDescription,
@@ -335,6 +380,7 @@ export function ToolsTab({ assistant, shareToken, isReadOnly }: ToolsTabProps) {
       ...(builtinToolType === 'card_payment' ? { headers: JSON.stringify({ card_mode: cardMode }) } : {}),
       ...(builtinToolType === 'create_meeting' ? { headers: JSON.stringify({ link_expiry: meetingLinkExpiry }) } : {}),
       ...(builtinToolType === 'schedule_appointment' ? { headers: JSON.stringify({ auto_generate_meeting: autoGenerateMeeting, meeting_link_expiry: scheduleMeetingLinkExpiry }) } : {}),
+      ...(builtinToolType === 'notify_human' ? { headers: notifyHumanHeaders } : {}),
     }
 
     if (shareToken) {
@@ -349,6 +395,7 @@ export function ToolsTab({ assistant, shareToken, isReadOnly }: ToolsTabProps) {
               ...(builtinToolType === 'card_payment' ? { headers_json: JSON.stringify({ card_mode: cardMode }) } : {}),
               ...(builtinToolType === 'create_meeting' ? { headers_json: JSON.stringify({ link_expiry: meetingLinkExpiry }) } : {}),
               ...(builtinToolType === 'schedule_appointment' ? { headers_json: JSON.stringify({ auto_generate_meeting: autoGenerateMeeting, meeting_link_expiry: scheduleMeetingLinkExpiry }) } : {}),
+              ...(builtinToolType === 'notify_human' ? { headers_json: notifyHumanHeaders } : {}),
             }),
           })
           setSharedTools(prev => prev.map(t => t.id === editingBuiltinTool.id ? { ...t, ...toolData } as AssistantTool : t))
@@ -362,6 +409,7 @@ export function ToolsTab({ assistant, shareToken, isReadOnly }: ToolsTabProps) {
               ...(builtinToolType === 'card_payment' ? { headers_json: JSON.stringify({ card_mode: cardMode }) } : {}),
               ...(builtinToolType === 'create_meeting' ? { headers_json: JSON.stringify({ link_expiry: meetingLinkExpiry }) } : {}),
               ...(builtinToolType === 'schedule_appointment' ? { headers_json: JSON.stringify({ auto_generate_meeting: autoGenerateMeeting, meeting_link_expiry: scheduleMeetingLinkExpiry }) } : {}),
+              ...(builtinToolType === 'notify_human' ? { headers_json: notifyHumanHeaders } : {}),
             }),
           })
           setSharedTools(prev => [...prev, { id: created.id, ...toolData } as AssistantTool])
@@ -501,6 +549,8 @@ export function ToolsTab({ assistant, shareToken, isReadOnly }: ToolsTabProps) {
     }
   }
 
+  const modelLimitations = getModelLimitations(assistant.llmProvider, assistant.model)
+
   return (
     <div className="flex flex-col gap-6">
       <div className="flex items-center justify-between">
@@ -516,6 +566,18 @@ export function ToolsTab({ assistant, shareToken, isReadOnly }: ToolsTabProps) {
           </button>
         )}
       </div>
+
+      {modelLimitations.supportsTools === false && (
+        <div className="p-4 rounded-xl border border-yellow-500/30 bg-yellow-500/10">
+          <p className="text-xs font-semibold text-yellow-500 mb-1"
+             style={{ fontFamily: "'JetBrains Mono', 'Fira Code', monospace" }}>
+            MODELO SEM SUPORTE A FERRAMENTAS
+          </p>
+          <p className="text-xs text-body">
+            {modelLimitations.toolsNote ?? 'O modelo selecionado não suporta ferramentas — elas serão ignoradas ao enviar mensagens.'}
+          </p>
+        </div>
+      )}
 
       {tools.length === 0 ? (
         <div className="text-sm text-muted p-8 text-center border border-dashed border-dim-hover bg-raised/50 rounded-2xl flex flex-col items-center gap-2">
@@ -1208,6 +1270,135 @@ export function ToolsTab({ assistant, shareToken, isReadOnly }: ToolsTabProps) {
                         )}
                       </div>
                     </div>
+                  </div>
+                )}
+
+                {/* notify_human — recipient scope */}
+                {builtinToolType === 'notify_human' && (
+                  <div className="flex flex-col gap-3">
+                    <div>
+                      <p className="text-sm font-medium text-heading mb-1"
+                         style={{ fontFamily: "'JetBrains Mono', 'Fira Code', monospace" }}>
+                        Quem será notificado
+                      </p>
+                      <p className="text-xs text-subtle mb-2">
+                        Escolha quem receberá a notificação quando a IA acionar essa ferramenta.
+                      </p>
+                      <div className="flex flex-col gap-2">
+                        {([
+                          { id: 'all_workspace', label: 'Todos os usuários do workspace', desc: 'Notifica todos os membros do workspace atual.' },
+                          { id: 'teams', label: 'Um ou mais times', desc: 'Notifica apenas os membros dos times selecionados abaixo.' },
+                          { id: 'specific_users', label: 'Usuários específicos', desc: 'Notifica apenas os usuários selecionados abaixo.' },
+                        ] as { id: NotifyHumanScope; label: string; desc: string }[]).map((opt) => (
+                          <label
+                            key={opt.id}
+                            className={`flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-colors ${
+                              notifyScope === opt.id
+                                ? 'border-[#ff6b2c] bg-[#ff6b2c]/5'
+                                : 'border-dim hover:border-[#ff6b2c]/40'
+                            }`}
+                            onClick={() => setNotifyScope(opt.id)}
+                          >
+                            <span className={`mt-0.5 w-4 h-4 rounded-full border-2 flex-shrink-0 flex items-center justify-center ${
+                              notifyScope === opt.id ? 'border-[#ff6b2c]' : 'border-subtle'
+                            }`}>
+                              {notifyScope === opt.id && <span className="w-2 h-2 rounded-full bg-[#ff6b2c]" />}
+                            </span>
+                            <span>
+                              <span className={`block text-sm font-medium ${notifyScope === opt.id ? 'text-[#ff6b2c]' : 'text-heading'}`}>{opt.label}</span>
+                              <span className="block text-xs text-subtle mt-0.5">{opt.desc}</span>
+                            </span>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+
+                    {notifyScope === 'teams' && (
+                      <div className="flex flex-col gap-1.5">
+                        <Label className="text-xs text-subtle"
+                               style={{ fontFamily: "'JetBrains Mono', 'Fira Code', monospace" }}>
+                          Times que serão notificados
+                        </Label>
+                        {teams.length === 0 ? (
+                          <p className="text-xs text-subtle p-3 border border-dashed border-dim rounded-lg">
+                            Nenhum time criado neste workspace. Crie times em <span className="text-heading">Times</span> para usar esta opção.
+                          </p>
+                        ) : (
+                          <div className="flex flex-col gap-1 max-h-56 overflow-y-auto pr-1 border border-dim rounded-lg">
+                            {teams.map(t => {
+                              const checked = notifyTeamIds.includes(t.id)
+                              return (
+                                <label key={t.id}
+                                       className={`flex items-center gap-2 px-3 py-2 cursor-pointer transition-colors hover:bg-dim/50 ${checked ? 'bg-[#ff6b2c]/5' : ''}`}>
+                                  <input
+                                    type="checkbox"
+                                    checked={checked}
+                                    onChange={(e) => {
+                                      setNotifyTeamIds(prev =>
+                                        e.target.checked ? [...prev, t.id] : prev.filter(id => id !== t.id)
+                                      )
+                                    }}
+                                    className="accent-[#ff6b2c]"
+                                  />
+                                  <span className="text-sm text-body">{t.name}</span>
+                                  {t.member_count != null && (
+                                    <span className="text-xs text-subtle ml-auto">{t.member_count} {t.member_count === 1 ? 'membro' : 'membros'}</span>
+                                  )}
+                                </label>
+                              )
+                            })}
+                          </div>
+                        )}
+                        {notifyScope === 'teams' && notifyTeamIds.length === 0 && teams.length > 0 && (
+                          <p className="text-xs text-yellow-500">Selecione pelo menos um time, caso contrário ninguém será notificado.</p>
+                        )}
+                      </div>
+                    )}
+
+                    {notifyScope === 'specific_users' && (
+                      <div className="flex flex-col gap-1.5">
+                        <Label className="text-xs text-subtle"
+                               style={{ fontFamily: "'JetBrains Mono', 'Fira Code', monospace" }}>
+                          Usuários que serão notificados
+                        </Label>
+                        {workspaceMembers.length === 0 ? (
+                          <p className="text-xs text-subtle p-3 border border-dashed border-dim rounded-lg">
+                            Carregando membros do workspace...
+                          </p>
+                        ) : (
+                          <div className="flex flex-col gap-1 max-h-56 overflow-y-auto pr-1 border border-dim rounded-lg">
+                            {workspaceMembers.map(m => {
+                              const checked = notifyUserIds.includes(m.user_id)
+                              return (
+                                <label key={m.user_id}
+                                       className={`flex items-center gap-2 px-3 py-2 cursor-pointer transition-colors hover:bg-dim/50 ${checked ? 'bg-[#ff6b2c]/5' : ''}`}>
+                                  <input
+                                    type="checkbox"
+                                    checked={checked}
+                                    onChange={(e) => {
+                                      setNotifyUserIds(prev =>
+                                        e.target.checked ? [...prev, m.user_id] : prev.filter(id => id !== m.user_id)
+                                      )
+                                    }}
+                                    className="accent-[#ff6b2c]"
+                                  />
+                                  <div className="flex flex-col min-w-0">
+                                    <span className="text-sm text-body truncate">{m.user_name || m.user_email || m.user_id}</span>
+                                    {m.user_email && m.user_name && (
+                                      <span className="text-xs text-subtle truncate">{m.user_email}</span>
+                                    )}
+                                  </div>
+                                  <span className="text-xs text-subtle ml-auto uppercase">{m.role}</span>
+                                </label>
+                              )
+                            })}
+                          </div>
+                        )}
+                        {notifyScope === 'specific_users' && notifyUserIds.length === 0 && workspaceMembers.length > 0 && (
+                          <p className="text-xs text-yellow-500">Selecione pelo menos um usuário, caso contrário ninguém será notificado.</p>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )}
 

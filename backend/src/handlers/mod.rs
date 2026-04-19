@@ -11,6 +11,8 @@ pub mod elevenlabs;
 pub mod events;
 pub mod files;
 pub mod financeiro;
+pub mod gemini_audio;
+pub mod grok_audio;
 pub mod integrations;
 pub mod meetings;
 pub mod messages;

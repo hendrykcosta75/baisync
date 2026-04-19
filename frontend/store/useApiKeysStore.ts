@@ -8,6 +8,8 @@ export interface ApiKeys {
   claude: string
   gemini: string
   elevenlabs: string
+  grok: string
+  deepseek: string
   mercadopago: string
   stripe: string
   stripe_public_key: string
@@ -19,8 +21,21 @@ interface ConfiguredState {
   claude: boolean
   gemini: boolean
   elevenlabs: boolean
+  grok: boolean
+  deepseek: boolean
   mercadopago: boolean
   stripe: boolean
+}
+
+interface ConfiguredResponse {
+  openai_configured: boolean
+  claude_configured: boolean
+  gemini_configured: boolean
+  elevenlabs_configured: boolean
+  grok_configured: boolean
+  deepseek_configured: boolean
+  mercadopago_configured: boolean
+  stripe_configured: boolean
 }
 
 interface ApiKeysState {
@@ -33,11 +48,48 @@ interface ApiKeysState {
   saveKeys: (keys: ApiKeys) => Promise<void>
 }
 
+const emptyKeys: ApiKeys = {
+  openai: '',
+  claude: '',
+  gemini: '',
+  elevenlabs: '',
+  grok: '',
+  deepseek: '',
+  mercadopago: '',
+  stripe: '',
+  stripe_public_key: '',
+  mp_public_key: '',
+}
+
+const emptyConfigured: ConfiguredState = {
+  openai: false,
+  claude: false,
+  gemini: false,
+  elevenlabs: false,
+  grok: false,
+  deepseek: false,
+  mercadopago: false,
+  stripe: false,
+}
+
+function mapConfigured(data: ConfiguredResponse): ConfiguredState {
+  return {
+    openai: data.openai_configured,
+    claude: data.claude_configured,
+    gemini: data.gemini_configured,
+    elevenlabs: data.elevenlabs_configured,
+    grok: data.grok_configured,
+    deepseek: data.deepseek_configured,
+    mercadopago: data.mercadopago_configured,
+    stripe: data.stripe_configured,
+  }
+}
+
 export const useApiKeysStore = create<ApiKeysState>()(
   persist(
     (set) => ({
-      keys: { openai: '', claude: '', gemini: '', elevenlabs: '', mercadopago: '', stripe: '', stripe_public_key: '', mp_public_key: '' },
-      configured: { openai: false, claude: false, gemini: false, elevenlabs: false, mercadopago: false, stripe: false },
+      keys: { ...emptyKeys },
+      configured: { ...emptyConfigured },
       hasFetched: false,
 
       setKey: (provider, value) =>
@@ -49,16 +101,9 @@ export const useApiKeysStore = create<ApiKeysState>()(
 
       fetchKeys: async () => {
         try {
-          const data = await apiFetch<{ openai_configured: boolean; claude_configured: boolean; gemini_configured: boolean; elevenlabs_configured: boolean; mercadopago_configured: boolean; stripe_configured: boolean }>('/api/user/api-keys')
+          const data = await apiFetch<ConfiguredResponse>('/api/user/api-keys')
           set({
-            configured: {
-              openai: data.openai_configured,
-              claude: data.claude_configured,
-              gemini: data.gemini_configured,
-              elevenlabs: data.elevenlabs_configured,
-              mercadopago: data.mercadopago_configured,
-              stripe: data.stripe_configured,
-            },
+            configured: mapConfigured(data),
             hasFetched: true,
           })
         } catch (err) {
@@ -76,6 +121,8 @@ export const useApiKeysStore = create<ApiKeysState>()(
               claude: keys.claude || null,
               gemini: keys.gemini || null,
               elevenlabs: keys.elevenlabs || null,
+              grok: keys.grok || null,
+              deepseek: keys.deepseek || null,
               mercadopago: keys.mercadopago || null,
               stripe: keys.stripe || null,
               stripe_public_key: keys.stripe_public_key || null,
@@ -83,21 +130,12 @@ export const useApiKeysStore = create<ApiKeysState>()(
             }),
           })
           // Clear input fields
-          set({ keys: { openai: '', claude: '', gemini: '', elevenlabs: '', mercadopago: '', stripe: '', stripe_public_key: '', mp_public_key: '' } })
+          set({ keys: { ...emptyKeys } })
           clearModelCache()
           // Re-fetch actual configured state from backend
           try {
-            const data = await apiFetch<{ openai_configured: boolean; claude_configured: boolean; gemini_configured: boolean; elevenlabs_configured: boolean; mercadopago_configured: boolean; stripe_configured: boolean }>('/api/user/api-keys')
-            set({
-              configured: {
-                openai: data.openai_configured,
-                claude: data.claude_configured,
-                gemini: data.gemini_configured,
-                elevenlabs: data.elevenlabs_configured,
-                mercadopago: data.mercadopago_configured,
-                stripe: data.stripe_configured,
-              },
-            })
+            const data = await apiFetch<ConfiguredResponse>('/api/user/api-keys')
+            set({ configured: mapConfigured(data) })
           } catch { /* configured state will update on next fetchKeys */ }
         } catch (err) {
           console.error('Failed to save API keys to backend:', err)

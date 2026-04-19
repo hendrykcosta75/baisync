@@ -42,6 +42,8 @@ pub async fn update_keys(
         claude_configured: keys.claude_api_key.is_some(),
         gemini_configured: keys.gemini_api_key.is_some(),
         elevenlabs_configured: keys.elevenlabs_api_key.is_some(),
+        grok_configured: keys.grok_api_key.is_some(),
+        deepseek_configured: keys.deepseek_api_key.is_some(),
         mercadopago_configured: keys.mercadopago_access_token.is_some(),
         stripe_configured: keys.stripe_secret_key.is_some(),
     }))

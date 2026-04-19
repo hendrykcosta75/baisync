@@ -583,6 +583,32 @@ pub async fn call_llm_with_tools_ctx(
             )
             .await
         }
+        "grok" => {
+            call_grok_with_tools(
+                &client,
+                api_key,
+                model,
+                messages,
+                temperature,
+                max_tokens,
+                tools,
+                ctx,
+            )
+            .await
+        }
+        "deepseek" => {
+            call_deepseek_with_tools(
+                &client,
+                api_key,
+                model,
+                messages,
+                temperature,
+                max_tokens,
+                tools,
+                ctx,
+            )
+            .await
+        }
         _ => Err(AppError::BadRequest(format!(
             "Unknown LLM provider: {provider}"
         ))),
@@ -2209,4 +2235,395 @@ fn coalesce_gemini_contents(contents: Vec<Value>) -> Vec<Value> {
     }
 
     coalesced
+}
+
+// =====================================================================
+// Grok (xAI) — OpenAI-compatible at https://api.x.ai/v1
+// =====================================================================
+
+fn is_grok_reasoning_model(model: &str) -> bool {
+    model.contains("-reasoning")
+}
+
+async fn call_grok_with_tools(
+    client: &Client,
+    api_key: &str,
+    model: &str,
+    messages: Vec<LlmMessage>,
+    temperature: f32,
+    max_tokens: i32,
+    tools: &[LlmTool],
+    ctx: &ToolContext<'_>,
+) -> Result<LlmResponse, AppError> {
+    let mut raw_messages: Vec<Value> = messages
+        .iter()
+        .map(|m| {
+            let content = if let (Some(b64), Some(mime)) = (&m.media_base64, &m.media_mime_type) {
+                let mut parts = vec![];
+                if !m.content.is_empty() {
+                    parts.push(json!({"type": "text", "text": m.content}));
+                }
+                parts.push(json!({
+                    "type": "image_url",
+                    "image_url": { "url": format!("data:{mime};base64,{b64}") }
+                }));
+                json!(parts)
+            } else {
+                json!(m.content)
+            };
+            json!({"role": m.role, "content": content})
+        })
+        .collect();
+
+    let mut total_tokens = 0i32;
+    let mut all_records: Vec<ToolCallRecord> = Vec::new();
+
+    for round in 0..5 {
+        let result =
+            call_grok_raw(client, api_key, model, &raw_messages, temperature, max_tokens, tools)
+                .await?;
+        total_tokens += result.tokens;
+
+        match result.tool_calls {
+            Some(calls) if !calls.is_empty() => {
+                let tool_names: Vec<&str> = calls.iter().map(|c| c.name.as_str()).collect();
+                tracing::info!(round = round, tools = ?tool_names, "Grok tool call round");
+                let mut assistant_msg = json!({ "role": "assistant" });
+                if !result.content.is_empty() {
+                    assistant_msg["content"] = json!(result.content);
+                }
+                if let Some(raw_tc) = &result.raw_tool_calls {
+                    assistant_msg["tool_calls"] = raw_tc.clone();
+                }
+                raw_messages.push(assistant_msg);
+
+                for call in &calls {
+                    let tool = tools.iter().find(|t| t.name == call.name);
+                    let (tool_result, record) = if let Some(t) = tool {
+                        execute_tool(client, t, &call.arguments, ctx).await
+                    } else {
+                        let err_msg = format!("Error: tool '{}' not found", call.name);
+                        (
+                            err_msg.clone(),
+                            ToolCallRecord {
+                                tool_id: None,
+                                tool_name: call.name.clone(),
+                                arguments: call.arguments.clone(),
+                                status_code: None,
+                                response_body: None,
+                                error: Some(err_msg),
+                                duration_ms: 0,
+                                tool_type: "http_request".to_string(),
+                            },
+                        )
+                    };
+                    all_records.push(record);
+
+                    raw_messages.push(json!({
+                        "role": "tool",
+                        "tool_call_id": call.id,
+                        "content": tool_result,
+                    }));
+                }
+            }
+            _ => {
+                return Ok(LlmResponse {
+                    content: result.content,
+                    tokens_used: total_tokens,
+                    tool_call_records: all_records,
+                });
+            }
+        }
+    }
+
+    Err(AppError::InternalError("Too many tool call rounds".into()))
+}
+
+async fn call_grok_raw(
+    client: &Client,
+    api_key: &str,
+    model: &str,
+    messages: &[Value],
+    temperature: f32,
+    max_tokens: i32,
+    tools: &[LlmTool],
+) -> Result<RawLlmResult, AppError> {
+    let mut body = json!({
+        "model": model,
+        "messages": messages,
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+    });
+
+    if is_grok_reasoning_model(model) {
+        body["reasoning_effort"] = json!("medium");
+    }
+
+    if !tools.is_empty() {
+        let functions: Vec<Value> = tools
+            .iter()
+            .map(|t| {
+                json!({
+                    "type": "function",
+                    "function": {
+                        "name": t.name,
+                        "description": t.description,
+                        "parameters": t.parameters,
+                    }
+                })
+            })
+            .collect();
+        body["tools"] = json!(functions);
+    }
+
+    let resp = client
+        .post("https://api.x.ai/v1/chat/completions")
+        .header("Authorization", format!("Bearer {api_key}"))
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| AppError::InternalError(format!("Grok request failed: {e}")))?;
+
+    let data: Value = resp
+        .json()
+        .await
+        .map_err(|e| AppError::InternalError(format!("Grok response parse failed: {e}")))?;
+
+    if let Some(err) = data["error"]["message"].as_str() {
+        tracing::error!("Grok API error for model {model}: {err}");
+        return Err(AppError::InternalError(format!("Grok API error: {err}")));
+    }
+
+    let message = &data["choices"][0]["message"];
+    let content = message["content"].as_str().unwrap_or("").to_string();
+    let tokens = data["usage"]["total_tokens"].as_i64().unwrap_or(0) as i32;
+
+    let raw_tool_calls = message.get("tool_calls").cloned();
+
+    let tool_calls = message["tool_calls"].as_array().map(|calls| {
+        calls
+            .iter()
+            .filter_map(|c| {
+                let id = c["id"].as_str()?.to_string();
+                let name = c["function"]["name"].as_str()?.to_string();
+                let args: Value = c["function"]["arguments"]
+                    .as_str()
+                    .and_then(|s| serde_json::from_str(s).ok())
+                    .unwrap_or(json!({}));
+                Some(ToolCall {
+                    id,
+                    name,
+                    arguments: args,
+                })
+            })
+            .collect()
+    });
+
+    Ok(RawLlmResult {
+        content,
+        tokens,
+        tool_calls,
+        raw_tool_calls,
+        raw_content_blocks: None,
+    })
+}
+
+// =====================================================================
+// Deepseek — OpenAI-compatible at https://api.deepseek.com
+// deepseek-reasoner: no tool calling, temperature ignored, reasoning_content
+// must be stripped from assistant echoes before next turn.
+// =====================================================================
+
+fn is_deepseek_reasoner(model: &str) -> bool {
+    model == "deepseek-reasoner"
+}
+
+async fn call_deepseek_with_tools(
+    client: &Client,
+    api_key: &str,
+    model: &str,
+    messages: Vec<LlmMessage>,
+    temperature: f32,
+    max_tokens: i32,
+    tools: &[LlmTool],
+    ctx: &ToolContext<'_>,
+) -> Result<LlmResponse, AppError> {
+    let effective_tools: &[LlmTool] = if is_deepseek_reasoner(model) {
+        if !tools.is_empty() {
+            tracing::warn!(
+                "deepseek-reasoner does not support tool calling; ignoring {} tools",
+                tools.len()
+            );
+        }
+        &[]
+    } else {
+        tools
+    };
+
+    let mut raw_messages: Vec<Value> = messages
+        .iter()
+        .map(|m| json!({"role": m.role, "content": m.content}))
+        .collect();
+
+    let mut total_tokens = 0i32;
+    let mut all_records: Vec<ToolCallRecord> = Vec::new();
+
+    for round in 0..5 {
+        let result = call_deepseek_raw(
+            client,
+            api_key,
+            model,
+            &raw_messages,
+            temperature,
+            max_tokens,
+            effective_tools,
+        )
+        .await?;
+        total_tokens += result.tokens;
+
+        match result.tool_calls {
+            Some(calls) if !calls.is_empty() => {
+                let tool_names: Vec<&str> = calls.iter().map(|c| c.name.as_str()).collect();
+                tracing::info!(round = round, tools = ?tool_names, "Deepseek tool call round");
+                // Only echo content + tool_calls — never reasoning_content, which
+                // Deepseek rejects on the next turn. call_deepseek_raw already
+                // drops it since we only capture message["content"].
+                let mut assistant_msg = json!({ "role": "assistant" });
+                if !result.content.is_empty() {
+                    assistant_msg["content"] = json!(result.content);
+                }
+                if let Some(raw_tc) = &result.raw_tool_calls {
+                    assistant_msg["tool_calls"] = raw_tc.clone();
+                }
+                raw_messages.push(assistant_msg);
+
+                for call in &calls {
+                    let tool = effective_tools.iter().find(|t| t.name == call.name);
+                    let (tool_result, record) = if let Some(t) = tool {
+                        execute_tool(client, t, &call.arguments, ctx).await
+                    } else {
+                        let err_msg = format!("Error: tool '{}' not found", call.name);
+                        (
+                            err_msg.clone(),
+                            ToolCallRecord {
+                                tool_id: None,
+                                tool_name: call.name.clone(),
+                                arguments: call.arguments.clone(),
+                                status_code: None,
+                                response_body: None,
+                                error: Some(err_msg),
+                                duration_ms: 0,
+                                tool_type: "http_request".to_string(),
+                            },
+                        )
+                    };
+                    all_records.push(record);
+
+                    raw_messages.push(json!({
+                        "role": "tool",
+                        "tool_call_id": call.id,
+                        "content": tool_result,
+                    }));
+                }
+            }
+            _ => {
+                return Ok(LlmResponse {
+                    content: result.content,
+                    tokens_used: total_tokens,
+                    tool_call_records: all_records,
+                });
+            }
+        }
+    }
+
+    Err(AppError::InternalError("Too many tool call rounds".into()))
+}
+
+async fn call_deepseek_raw(
+    client: &Client,
+    api_key: &str,
+    model: &str,
+    messages: &[Value],
+    temperature: f32,
+    max_tokens: i32,
+    tools: &[LlmTool],
+) -> Result<RawLlmResult, AppError> {
+    let mut body = json!({
+        "model": model,
+        "messages": messages,
+        "max_tokens": max_tokens,
+    });
+
+    // Reasoner silently ignores temperature — only send on deepseek-chat.
+    if !is_deepseek_reasoner(model) {
+        body["temperature"] = json!(temperature);
+    }
+
+    if !tools.is_empty() {
+        let functions: Vec<Value> = tools
+            .iter()
+            .map(|t| {
+                json!({
+                    "type": "function",
+                    "function": {
+                        "name": t.name,
+                        "description": t.description,
+                        "parameters": t.parameters,
+                    }
+                })
+            })
+            .collect();
+        body["tools"] = json!(functions);
+    }
+
+    let resp = client
+        .post("https://api.deepseek.com/chat/completions")
+        .header("Authorization", format!("Bearer {api_key}"))
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| AppError::InternalError(format!("Deepseek request failed: {e}")))?;
+
+    let data: Value = resp
+        .json()
+        .await
+        .map_err(|e| AppError::InternalError(format!("Deepseek response parse failed: {e}")))?;
+
+    if let Some(err) = data["error"]["message"].as_str() {
+        tracing::error!("Deepseek API error for model {model}: {err}");
+        return Err(AppError::InternalError(format!("Deepseek API error: {err}")));
+    }
+
+    let message = &data["choices"][0]["message"];
+    let content = message["content"].as_str().unwrap_or("").to_string();
+    let tokens = data["usage"]["total_tokens"].as_i64().unwrap_or(0) as i32;
+
+    let raw_tool_calls = message.get("tool_calls").cloned();
+
+    let tool_calls = message["tool_calls"].as_array().map(|calls| {
+        calls
+            .iter()
+            .filter_map(|c| {
+                let id = c["id"].as_str()?.to_string();
+                let name = c["function"]["name"].as_str()?.to_string();
+                let args: Value = c["function"]["arguments"]
+                    .as_str()
+                    .and_then(|s| serde_json::from_str(s).ok())
+                    .unwrap_or(json!({}));
+                Some(ToolCall {
+                    id,
+                    name,
+                    arguments: args,
+                })
+            })
+            .collect()
+    });
+
+    Ok(RawLlmResult {
+        content,
+        tokens,
+        tool_calls,
+        raw_tool_calls,
+        raw_content_blocks: None,
+    })
 }

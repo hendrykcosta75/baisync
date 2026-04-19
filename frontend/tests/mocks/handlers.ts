@@ -72,6 +72,8 @@ export const handlers = [
       claude_configured: false,
       gemini_configured: false,
       elevenlabs_configured: false,
+      grok_configured: false,
+      deepseek_configured: false,
       mercadopago_configured: false,
       stripe_configured: false,
     })

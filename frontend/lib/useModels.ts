@@ -12,6 +12,8 @@ const FALLBACK_MODELS: Record<LLMProvider, string[]> = {
   openai: ['gpt-5', 'gpt-4o', 'gpt-4o-mini', 'o4-mini', 'o3-mini'],
   claude: ['claude-opus-4-6', 'claude-sonnet-4-6', 'claude-haiku-4-5-20251001'],
   gemini: ['gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-2.0-flash'],
+  grok: ['grok-4-1-fast-non-reasoning', 'grok-4-1-fast-reasoning', 'grok-4.20-0309-non-reasoning'],
+  deepseek: ['deepseek-chat', 'deepseek-reasoner'],
 }
 
 const cache = new Map<LLMProvider, string[]>()

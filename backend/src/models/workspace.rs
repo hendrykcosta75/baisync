@@ -54,6 +54,8 @@ pub struct WorkspaceApiKeys {
     pub claude_api_key: Option<String>,
     pub gemini_api_key: Option<String>,
     pub elevenlabs_api_key: Option<String>,
+    pub grok_api_key: Option<String>,
+    pub deepseek_api_key: Option<String>,
     pub mercadopago_access_token: Option<String>,
     pub mercadopago_public_key: Option<String>,
     pub stripe_secret_key: Option<String>,
@@ -97,6 +99,8 @@ pub struct WorkspaceApiKeysResponse {
     pub claude_configured: bool,
     pub gemini_configured: bool,
     pub elevenlabs_configured: bool,
+    pub grok_configured: bool,
+    pub deepseek_configured: bool,
     pub mercadopago_configured: bool,
     pub stripe_configured: bool,
 }

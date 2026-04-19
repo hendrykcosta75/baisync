@@ -206,6 +206,24 @@ pub fn build_router(
             "/api/openai/preview",
             post(handlers::openai_audio::preview_voice),
         )
+        // Grok (xAI) Audio
+        .route(
+            "/api/grok/voices",
+            get(handlers::grok_audio::list_voices),
+        )
+        .route(
+            "/api/grok/preview",
+            post(handlers::grok_audio::preview_voice),
+        )
+        // Gemini Audio
+        .route(
+            "/api/gemini/voices",
+            get(handlers::gemini_audio::list_voices),
+        )
+        .route(
+            "/api/gemini/preview",
+            post(handlers::gemini_audio::preview_voice),
+        )
         // Usage & Activity stats
         .route("/api/user/usage", get(handlers::stats::user_usage))
         .route("/api/user/activity", get(handlers::stats::user_activity))

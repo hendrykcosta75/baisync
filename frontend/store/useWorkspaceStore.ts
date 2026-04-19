@@ -35,6 +35,8 @@ export interface WorkspaceApiKeys {
   claude_configured: boolean
   gemini_configured: boolean
   elevenlabs_configured: boolean
+  grok_configured: boolean
+  deepseek_configured: boolean
   mercadopago_configured: boolean
   stripe_configured: boolean
 }

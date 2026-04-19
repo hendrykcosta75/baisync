@@ -45,16 +45,22 @@ const AUDIO_MODES: { id: AudioMode; label: string; description: string }[] = [
 const AUDIO_PROVIDERS: { id: AudioProvider; label: string }[] = [
   { id: 'elevenlabs', label: 'ElevenLabs' },
   { id: 'openai', label: 'OpenAI' },
+  { id: 'grok', label: 'Grok (xAI)' },
+  { id: 'gemini', label: 'Gemini (Google)' },
 ]
 
 const VOICES_ENDPOINT: Record<AudioProvider, string> = {
   elevenlabs: '/api/elevenlabs/voices',
   openai: '/api/openai/voices',
+  grok: '/api/grok/voices',
+  gemini: '/api/gemini/voices',
 }
 
 const PREVIEW_ENDPOINT: Record<AudioProvider, string> = {
   elevenlabs: '/api/elevenlabs/preview',
   openai: '/api/openai/preview',
+  grok: '/api/grok/preview',
+  gemini: '/api/gemini/preview',
 }
 
 function AudioConfigSection({ assistant, shareToken }: { assistant: Assistant; shareToken?: string }) {
@@ -238,6 +244,13 @@ function AudioConfigSection({ assistant, shareToken }: { assistant: Assistant; s
                     </ListBox>
                   </Select.Popover>
                 </Select>
+                {value === 'gemini' && transcribe && (
+                  <p className="text-xs text-yellow-500 mt-1 max-w-sm"
+                     style={{ fontFamily: "'JetBrains Mono', 'Fira Code', monospace" }}>
+                    Gemini não aceita áudio OGG/Opus. Notas de voz do WhatsApp serão rejeitadas e o
+                    assistente responderá com a mensagem de fallback configurada abaixo.
+                  </p>
+                )}
                 {errors.provider && <FieldError>{errors.provider.message}</FieldError>}
               </div>
             )}

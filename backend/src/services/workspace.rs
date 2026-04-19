@@ -583,7 +583,7 @@ pub async fn get_api_keys(
 ) -> Result<WorkspaceApiKeys, AppError> {
     let result = db
         .query_unpaged(
-            "SELECT workspace_id, openai_api_key, claude_api_key, gemini_api_key, elevenlabs_api_key, mercadopago_access_token, mercadopago_public_key, stripe_secret_key, stripe_public_key, updated_at FROM inertial_eclipse.workspace_api_keys WHERE workspace_id = ?",
+            "SELECT workspace_id, openai_api_key, claude_api_key, gemini_api_key, elevenlabs_api_key, grok_api_key, deepseek_api_key, mercadopago_access_token, mercadopago_public_key, stripe_secret_key, stripe_public_key, updated_at FROM inertial_eclipse.workspace_api_keys WHERE workspace_id = ?",
             (workspace_id,),
         )
         .await
@@ -591,6 +591,8 @@ pub async fn get_api_keys(
 
     match result.into_rows_result()?.maybe_first_row::<(
         Uuid,
+        Option<String>,
+        Option<String>,
         Option<String>,
         Option<String>,
         Option<String>,
@@ -607,11 +609,13 @@ pub async fn get_api_keys(
             claude_api_key: row.2,
             gemini_api_key: row.3,
             elevenlabs_api_key: row.4,
-            mercadopago_access_token: row.5,
-            mercadopago_public_key: row.6,
-            stripe_secret_key: row.7,
-            stripe_public_key: row.8,
-            updated_at: row.9,
+            grok_api_key: row.5,
+            deepseek_api_key: row.6,
+            mercadopago_access_token: row.7,
+            mercadopago_public_key: row.8,
+            stripe_secret_key: row.9,
+            stripe_public_key: row.10,
+            updated_at: row.11,
         }),
         _ => Ok(WorkspaceApiKeys {
             workspace_id: *workspace_id,
@@ -619,6 +623,8 @@ pub async fn get_api_keys(
             claude_api_key: None,
             gemini_api_key: None,
             elevenlabs_api_key: None,
+            grok_api_key: None,
+            deepseek_api_key: None,
             mercadopago_access_token: None,
             mercadopago_public_key: None,
             stripe_secret_key: None,
@@ -650,6 +656,8 @@ pub async fn update_api_keys(
     let claude = encrypt_opt(updates["claude"].as_str(), current.claude_api_key)?;
     let gemini = encrypt_opt(updates["gemini"].as_str(), current.gemini_api_key)?;
     let elevenlabs = encrypt_opt(updates["elevenlabs"].as_str(), current.elevenlabs_api_key)?;
+    let grok = encrypt_opt(updates["grok"].as_str(), current.grok_api_key)?;
+    let deepseek = encrypt_opt(updates["deepseek"].as_str(), current.deepseek_api_key)?;
     let mercadopago = encrypt_opt(
         updates["mercadopago"].as_str(),
         current.mercadopago_access_token,
@@ -669,8 +677,8 @@ pub async fn update_api_keys(
     };
 
     db.query_unpaged(
-        "INSERT INTO inertial_eclipse.workspace_api_keys (workspace_id, openai_api_key, claude_api_key, gemini_api_key, elevenlabs_api_key, mercadopago_access_token, mercadopago_public_key, stripe_secret_key, stripe_public_key, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (workspace_id, &openai, &claude, &gemini, &elevenlabs, &mercadopago, &mp_pk, &stripe, &stripe_pk, now),
+        "INSERT INTO inertial_eclipse.workspace_api_keys (workspace_id, openai_api_key, claude_api_key, gemini_api_key, elevenlabs_api_key, grok_api_key, deepseek_api_key, mercadopago_access_token, mercadopago_public_key, stripe_secret_key, stripe_public_key, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (workspace_id, &openai, &claude, &gemini, &elevenlabs, &grok, &deepseek, &mercadopago, &mp_pk, &stripe, &stripe_pk, now),
     )
     .await
     .map_err(|e| AppError::DatabaseError(e.to_string()))?;
@@ -681,6 +689,8 @@ pub async fn update_api_keys(
         claude_api_key: claude,
         gemini_api_key: gemini,
         elevenlabs_api_key: elevenlabs,
+        grok_api_key: grok,
+        deepseek_api_key: deepseek,
         mercadopago_access_token: mercadopago,
         mercadopago_public_key: mp_pk,
         stripe_secret_key: stripe,
@@ -704,6 +714,8 @@ pub async fn get_decrypted_api_key(
         "claude" => keys.claude_api_key,
         "gemini" => keys.gemini_api_key,
         "elevenlabs" => keys.elevenlabs_api_key,
+        "grok" => keys.grok_api_key,
+        "deepseek" => keys.deepseek_api_key,
         "mercadopago" => keys.mercadopago_access_token,
         "stripe" => keys.stripe_secret_key,
         _ => None,
@@ -718,20 +730,24 @@ pub async fn get_decrypted_api_key(
     // workspace_id == user_id for personal workspaces
     let user_result = db
         .query_unpaged(
-            "SELECT api_key_openai, api_key_claude, api_key_gemini, api_key_elevenlabs, api_key_mercadopago, api_key_stripe FROM inertial_eclipse.users WHERE id = ?",
+            "SELECT api_key_openai, api_key_claude, api_key_gemini, api_key_elevenlabs, api_key_grok, api_key_deepseek, api_key_mercadopago, api_key_stripe FROM inertial_eclipse.users WHERE id = ?",
             (workspace_id,),
         )
         .await
         .ok()
         .and_then(|r| r.into_rows_result().ok())
-        .and_then(|r| r.maybe_first_row::<(Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>)>().ok().flatten());
+        .and_then(|r| r.maybe_first_row::<(Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>)>().ok().flatten());
 
-    if let Some((openai, claude, gemini, elevenlabs, mercadopago, stripe)) = user_result {
+    if let Some((openai, claude, gemini, elevenlabs, grok, deepseek, mercadopago, stripe)) =
+        user_result
+    {
         let enc = match provider {
             "openai" => openai,
             "claude" => claude,
             "gemini" => gemini,
             "elevenlabs" => elevenlabs,
+            "grok" => grok,
+            "deepseek" => deepseek,
             "mercadopago" => mercadopago,
             "stripe" => stripe,
             _ => None,
@@ -758,6 +774,8 @@ pub async fn get_api_keys_status(
         claude_configured: keys.claude_api_key.is_some(),
         gemini_configured: keys.gemini_api_key.is_some(),
         elevenlabs_configured: keys.elevenlabs_api_key.is_some(),
+        grok_configured: keys.grok_api_key.is_some(),
+        deepseek_configured: keys.deepseek_api_key.is_some(),
         mercadopago_configured: keys.mercadopago_access_token.is_some(),
         stripe_configured: keys.stripe_secret_key.is_some(),
     };
@@ -766,19 +784,23 @@ pub async fn get_api_keys_status(
     if !resp.openai_configured && !resp.claude_configured && !resp.gemini_configured {
         let user_result = db
             .query_unpaged(
-                "SELECT api_key_openai, api_key_claude, api_key_gemini, api_key_elevenlabs, api_key_mercadopago, api_key_stripe FROM inertial_eclipse.users WHERE id = ?",
+                "SELECT api_key_openai, api_key_claude, api_key_gemini, api_key_elevenlabs, api_key_grok, api_key_deepseek, api_key_mercadopago, api_key_stripe FROM inertial_eclipse.users WHERE id = ?",
                 (workspace_id,),
             )
             .await
             .ok()
             .and_then(|r| r.into_rows_result().ok())
-            .and_then(|r| r.maybe_first_row::<(Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>)>().ok().flatten());
+            .and_then(|r| r.maybe_first_row::<(Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>)>().ok().flatten());
 
-        if let Some((openai, claude, gemini, elevenlabs, mercadopago, stripe)) = user_result {
+        if let Some((openai, claude, gemini, elevenlabs, grok, deepseek, mercadopago, stripe)) =
+            user_result
+        {
             resp.openai_configured = resp.openai_configured || openai.is_some();
             resp.claude_configured = resp.claude_configured || claude.is_some();
             resp.gemini_configured = resp.gemini_configured || gemini.is_some();
             resp.elevenlabs_configured = resp.elevenlabs_configured || elevenlabs.is_some();
+            resp.grok_configured = resp.grok_configured || grok.is_some();
+            resp.deepseek_configured = resp.deepseek_configured || deepseek.is_some();
             resp.mercadopago_configured = resp.mercadopago_configured || mercadopago.is_some();
             resp.stripe_configured = resp.stripe_configured || stripe.is_some();
         }

@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use chrono::Utc;
 use scylla::frame::value::CqlTimestamp;
 use uuid::Uuid;
@@ -94,10 +96,127 @@ pub async fn notify_workspace_members(
     message: &str,
 ) -> Result<(), AppError> {
     let members = crate::services::workspace::list_members(db, workspace_id).await?;
-    for member in &members {
+    let recipients: Vec<Uuid> = members.into_iter().map(|m| m.user_id).collect();
+    notify_recipients(
+        db,
+        &recipients,
+        assistant_id,
+        integration_id,
+        notification_type,
+        title,
+        message,
+    )
+    .await
+}
+
+/// Recipient scope for `notify_human` (and other scoped notifications).
+#[derive(Debug, Clone)]
+pub enum NotifyScopeKind {
+    AllWorkspace,
+    Teams,
+    SpecificUsers,
+}
+
+#[derive(Debug, Clone)]
+pub struct NotifyScope {
+    pub kind: NotifyScopeKind,
+    pub team_ids: Vec<Uuid>,
+    pub user_ids: Vec<Uuid>,
+}
+
+impl Default for NotifyScope {
+    fn default() -> Self {
+        Self {
+            kind: NotifyScopeKind::AllWorkspace,
+            team_ids: Vec::new(),
+            user_ids: Vec::new(),
+        }
+    }
+}
+
+/// Parse scope config from a tool's `headers_json` payload.
+/// Falls back to `AllWorkspace` (preserving pre-feature behavior) when headers
+/// are missing, empty, or malformed.
+pub fn parse_notify_scope_from_headers(headers: Option<&str>) -> NotifyScope {
+    let Some(raw) = headers.filter(|s| !s.is_empty()) else {
+        return NotifyScope::default();
+    };
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(raw) else {
+        return NotifyScope::default();
+    };
+    let parse_uuid_array = |key: &str| -> Vec<Uuid> {
+        v.get(key)
+            .and_then(|val| val.as_array())
+            .map(|arr| arr.iter().filter_map(|x| x.as_str()).filter_map(|s| Uuid::parse_str(s).ok()).collect())
+            .unwrap_or_default()
+    };
+    let kind = match v.get("scope").and_then(|s| s.as_str()).unwrap_or("all_workspace") {
+        "teams" => NotifyScopeKind::Teams,
+        "specific_users" => NotifyScopeKind::SpecificUsers,
+        _ => NotifyScopeKind::AllWorkspace,
+    };
+    NotifyScope {
+        kind,
+        team_ids: parse_uuid_array("team_ids"),
+        user_ids: parse_uuid_array("user_ids"),
+    }
+}
+
+/// Resolve the final recipient user ID list for a scope, deduplicated.
+/// Only users that actually belong to `workspace_id` are kept (ensures a stale
+/// config with removed members does not leak to users outside the workspace).
+pub async fn resolve_scope_recipients(
+    db: &DbSession,
+    workspace_id: &Uuid,
+    scope: &NotifyScope,
+) -> Result<Vec<Uuid>, AppError> {
+    let members = crate::services::workspace::list_members(db, workspace_id).await?;
+    let workspace_user_ids: HashSet<Uuid> = members.iter().map(|m| m.user_id).collect();
+
+    let mut recipients: HashSet<Uuid> = HashSet::new();
+    match scope.kind {
+        NotifyScopeKind::AllWorkspace => {
+            recipients.extend(workspace_user_ids.iter().copied());
+        }
+        NotifyScopeKind::Teams => {
+            for team_id in &scope.team_ids {
+                if let Ok(team_members) =
+                    crate::services::team::list_members(db, team_id).await
+                {
+                    for m in team_members {
+                        if workspace_user_ids.contains(&m.user_id) {
+                            recipients.insert(m.user_id);
+                        }
+                    }
+                }
+            }
+        }
+        NotifyScopeKind::SpecificUsers => {
+            for uid in &scope.user_ids {
+                if workspace_user_ids.contains(uid) {
+                    recipients.insert(*uid);
+                }
+            }
+        }
+    }
+    Ok(recipients.into_iter().collect())
+}
+
+/// Create a notification for each user in `recipients` (deduplication is the
+/// caller's responsibility — `resolve_scope_recipients` already dedupes).
+pub async fn notify_recipients(
+    db: &DbSession,
+    recipients: &[Uuid],
+    assistant_id: Option<&Uuid>,
+    integration_id: Option<&Uuid>,
+    notification_type: &str,
+    title: &str,
+    message: &str,
+) -> Result<(), AppError> {
+    for user_id in recipients {
         let _ = create_notification(
             db,
-            &member.user_id,
+            user_id,
             assistant_id,
             integration_id,
             notification_type,

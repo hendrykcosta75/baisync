@@ -22,7 +22,7 @@ const subAgentSchema = z.object({
   customPrompt: z.string(),
   inheritKnowledge: z.boolean(),
   inheritTools: z.boolean(),
-  llmProvider: z.enum(['openai', 'claude', 'gemini', 'inherit']),
+  llmProvider: z.enum(['openai', 'claude', 'gemini', 'grok', 'deepseek', 'inherit']),
   model: z.string(),
 })
 

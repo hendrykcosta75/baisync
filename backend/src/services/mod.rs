@@ -19,6 +19,8 @@ pub mod strategy_map;
 pub mod swot;
 
 pub mod card_payment;
+pub mod gemini_audio;
+pub mod grok_audio;
 pub mod openai_audio;
 pub mod pix;
 pub mod rag;

@@ -38,20 +38,29 @@ pub async fn list_models(
     )
     .await?;
 
-    if !matches!(provider.as_str(), "openai" | "claude" | "gemini") {
+    if !matches!(
+        provider.as_str(),
+        "openai" | "claude" | "gemini" | "grok" | "deepseek"
+    ) {
         return Err(AppError::BadRequest(format!(
             "Unknown provider: {provider}"
         )));
     }
 
-    let api_key =
+    let needs_api_key = matches!(provider.as_str(), "openai" | "gemini");
+    let api_key = if needs_api_key {
         crate::services::workspace::get_decrypted_api_key(&db, &encryption, &user_id, &provider)
-            .await?;
+            .await?
+    } else {
+        String::new()
+    };
 
     let models = match provider.as_str() {
         "openai" => fetch_openai_models(&api_key).await?,
         "claude" => get_claude_models(),
         "gemini" => fetch_gemini_models(&api_key).await?,
+        "grok" => get_grok_models(),
+        "deepseek" => get_deepseek_models(),
         _ => unreachable!(),
     };
 
@@ -123,6 +132,44 @@ fn get_claude_models() -> Vec<ModelInfo> {
         ModelInfo {
             id: "claude-haiku-4-5-20251001".into(),
             name: "Claude Haiku 4.5".into(),
+        },
+    ]
+}
+
+fn get_grok_models() -> Vec<ModelInfo> {
+    vec![
+        ModelInfo {
+            id: "grok-4-1-fast-non-reasoning".into(),
+            name: "Grok 4.1 Fast".into(),
+        },
+        ModelInfo {
+            id: "grok-4-1-fast-reasoning".into(),
+            name: "Grok 4.1 Fast (Reasoning)".into(),
+        },
+        ModelInfo {
+            id: "grok-4.20-0309-non-reasoning".into(),
+            name: "Grok 4.20".into(),
+        },
+        ModelInfo {
+            id: "grok-4.20-0309-reasoning".into(),
+            name: "Grok 4.20 (Reasoning)".into(),
+        },
+        ModelInfo {
+            id: "grok-4.20-multi-agent-0309".into(),
+            name: "Grok 4.20 Multi-Agent".into(),
+        },
+    ]
+}
+
+fn get_deepseek_models() -> Vec<ModelInfo> {
+    vec![
+        ModelInfo {
+            id: "deepseek-chat".into(),
+            name: "Deepseek Chat (V3.2)".into(),
+        },
+        ModelInfo {
+            id: "deepseek-reasoner".into(),
+            name: "Deepseek Reasoner (V3.2)".into(),
         },
     ]
 }

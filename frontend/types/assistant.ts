@@ -1,4 +1,4 @@
-export type LLMProvider = 'openai' | 'claude' | 'gemini'
+export type LLMProvider = 'openai' | 'claude' | 'gemini' | 'grok' | 'deepseek'
 
 export interface AssistantFile {
   id: string
@@ -35,6 +35,14 @@ export interface ToolSettings {
 }
 
 export type ToolType = 'http_request' | 'send_document' | 'notify_human' | 'schedule_appointment' | 'pix_payment' | 'card_payment' | 'create_meeting' | 'current_datetime'
+
+export type NotifyHumanScope = 'all_workspace' | 'teams' | 'specific_users'
+
+export interface NotifyHumanConfig {
+  scope: NotifyHumanScope
+  teamIds: string[]
+  userIds: string[]
+}
 
 export interface AssistantTool {
   id: string
@@ -82,7 +90,7 @@ export interface IntegrationCommonSettings {
 }
 
 export type AudioMode = 'disabled' | 'always' | 'audio_to_audio'
-export type AudioProvider = 'elevenlabs' | 'openai'
+export type AudioProvider = 'elevenlabs' | 'openai' | 'grok' | 'gemini'
 
 export interface AudioConfig {
   provider: AudioProvider | null
