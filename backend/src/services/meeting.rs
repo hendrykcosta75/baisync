@@ -36,11 +36,11 @@ fn new_timeuuid() -> (Uuid, CqlTimeuuid) {
 }
 
 fn gen_code() -> String {
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     let mut chunk = |n: usize| -> String {
         (0..n)
             .map(|_| {
-                let i: u8 = rng.gen_range(0..26);
+                let i: u8 = rng.random_range(0..26);
                 (b'a' + i) as char
             })
             .collect()

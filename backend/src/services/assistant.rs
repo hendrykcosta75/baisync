@@ -595,12 +595,16 @@ pub async fn list_tool_call_logs(
     assistant_id: &Uuid,
     tool_id: &Uuid,
     limit: i32,
+    from_ts: Option<i64>,
+    to_ts: Option<i64>,
 ) -> Result<Vec<ToolCallLog>, AppError> {
+    let from = CqlTimestamp(from_ts.unwrap_or(0));
+    let to = CqlTimestamp(to_ts.unwrap_or(i64::MAX));
     let query = format!(
-        "SELECT assistant_id, tool_id, id, tool_name, arguments, status_code, response_body, error, duration_ms, called_at FROM inertial_eclipse.tool_call_logs WHERE assistant_id = ? AND tool_id = ? ORDER BY called_at DESC LIMIT {limit}"
+        "SELECT assistant_id, tool_id, id, tool_name, arguments, status_code, response_body, error, duration_ms, called_at FROM inertial_eclipse.tool_call_logs WHERE assistant_id = ? AND tool_id = ? AND called_at >= ? AND called_at <= ? ORDER BY called_at DESC LIMIT {limit}"
     );
     let result = db
-        .query_unpaged(query, (assistant_id, tool_id))
+        .query_unpaged(query, (assistant_id, tool_id, from, to))
         .await
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 

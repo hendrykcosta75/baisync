@@ -346,6 +346,7 @@ pub async fn process_incoming_message(
             webhook.media_type.as_deref(),
             resolved_media_b64.as_deref(),
             None,
+            None,
         )
         .await?;
         send_message_via_provider(config, &integration, &webhook.phone, reply).await?;
@@ -356,6 +357,12 @@ pub async fn process_incoming_message(
             message_id: Some(conversation.id.to_string()),
         });
     }
+
+    // Extracted text from universally-extractable formats (XLSX/DOCX/TXT/CSV/...).
+    // Populated when the mime isn't native to the provider but readable locally.
+    // When set, the raw bytes are NOT attached to the LlmMessage — the text is
+    // folded into the message content instead.
+    let mut extracted_text: Option<String> = None;
 
     // For non-audio media with interpret_documents enabled: check video provider support
     if is_non_audio_media {
@@ -374,6 +381,7 @@ pub async fn process_incoming_message(
                 webhook.media_url.as_deref(),
                 webhook.media_type.as_deref(),
                 resolved_media_b64.as_deref(),
+                None,
                 None,
             )
             .await?;
@@ -408,6 +416,74 @@ pub async fn process_incoming_message(
                 });
             }
         }
+
+        // Three-branch mime routing:
+        //   1. Provider accepts this mime inline → send raw bytes (existing path).
+        //   2. No provider takes it inline BUT we can extract text locally →
+        //      do it now, fold into the LLM prompt, skip attaching raw bytes.
+        //   3. Neither → short-circuit with the configured fallback message.
+        let mime = webhook.media_type.as_deref().unwrap_or("");
+        let provider_native = llm::is_mime_supported_by_provider(&assistant.llm_provider, mime);
+        let universally_extractable = crate::services::rag::is_universally_text_extractable(mime);
+
+        if !provider_native && universally_extractable {
+            if let Some(ref b64) = resolved_media_b64 {
+                use base64::{engine::general_purpose::STANDARD, Engine};
+                match STANDARD
+                    .decode(b64)
+                    .map_err(|e| AppError::BadRequest(format!("base64 decode: {e}")))
+                    .and_then(|bytes| crate::services::rag::extract_text(&bytes, mime))
+                {
+                    Ok(text) => {
+                        tracing::info!(
+                            mime,
+                            chars = text.len(),
+                            "Extracted text from office document for LLM context"
+                        );
+                        extracted_text = Some(text);
+                    }
+                    Err(e) => {
+                        tracing::warn!(mime, error = %e, "Local text extraction failed");
+                        // Falls through to the short-circuit below.
+                    }
+                }
+            }
+        }
+
+        // Short-circuit only if the provider can't take the raw bytes AND we
+        // didn't manage to extract anything useful locally.
+        if !provider_native && extracted_text.is_none() {
+            let default_msg =
+                "Nao consegui interpretar o arquivo enviado. Por favor, envie em outro formato ou descreva o conteudo em texto.";
+            let reply = assistant
+                .config_unsupported_media_message
+                .as_deref()
+                .filter(|s| !s.is_empty())
+                .unwrap_or(default_msg);
+            let status = if universally_extractable {
+                "extraction_failed"
+            } else {
+                "unsupported_mime"
+            };
+            save_message_with_media(
+                db,
+                &conversation.id,
+                "user",
+                &effective_message,
+                webhook.media_url.as_deref(),
+                webhook.media_type.as_deref(),
+                resolved_media_b64.as_deref(),
+                None,
+                None,
+            )
+            .await?;
+            send_message_via_provider(config, &integration, &webhook.phone, reply).await?;
+            save_message(db, &conversation.id, "assistant", reply, None, None, None).await?;
+            return Ok(WebhookResponse {
+                status: status.into(),
+                message_id: Some(conversation.id.to_string()),
+            });
+        }
     }
 
     save_message_with_media(
@@ -418,6 +494,7 @@ pub async fn process_incoming_message(
         webhook.media_url.as_deref(),
         webhook.media_type.as_deref(),
         resolved_media_b64.as_deref(),
+        extracted_text.as_deref(),
         None,
     )
     .await?;
@@ -532,37 +609,72 @@ pub async fn process_incoming_message(
         });
     }
     for msg in &history {
-        let (hist_media_b64, hist_media_mime) =
-            if assistant.config_interpret_documents && msg.role == "user" {
-                let mime_ok = msg
-                    .media_type
-                    .as_deref()
-                    .map(|m| !m.is_empty() && !m.starts_with("audio/"))
-                    .unwrap_or(false);
-                if mime_ok {
-                    (msg.media_base64.clone(), msg.media_type.clone())
-                } else {
-                    (None, None)
-                }
+        let has_extracted = msg
+            .media_extracted_text
+            .as_deref()
+            .map(|t| !t.is_empty())
+            .unwrap_or(false);
+        // Attach raw media bytes from history only when (a) no local extraction
+        // already covers the content AND (b) the current provider actually
+        // accepts that mime inline. This keeps legacy rows — saved before the
+        // extraction column existed — from smuggling a XLSX/DOCX attachment
+        // back into the LLM call and tripping an "Unsupported MIME" error.
+        let (hist_media_b64, hist_media_mime) = if has_extracted {
+            (None, None)
+        } else if assistant.config_interpret_documents && msg.role == "user" {
+            let mime = msg.media_type.as_deref().unwrap_or("");
+            let provider_takes_inline = !mime.is_empty()
+                && !mime.starts_with("audio/")
+                && llm::is_mime_supported_by_provider(&assistant.llm_provider, mime);
+            if provider_takes_inline {
+                (msg.media_base64.clone(), msg.media_type.clone())
             } else {
                 (None, None)
-            };
+            }
+        } else {
+            (None, None)
+        };
+
+        // Keep historical extracted text bounded so a conversation with many
+        // spreadsheets doesn't ship tens of MB per LLM call.
+        const MAX_HISTORY_FOLD: usize = 40_000;
+        let base_content = enrich_history_content(msg);
+        let content = match msg.media_extracted_text.as_deref() {
+            Some(t) if !t.is_empty() => {
+                let slice = if t.len() > MAX_HISTORY_FOLD {
+                    let mut cut = MAX_HISTORY_FOLD;
+                    while cut > 0 && !t.is_char_boundary(cut) {
+                        cut -= 1;
+                    }
+                    &t[..cut]
+                } else {
+                    t
+                };
+                llm::fold_document_text(&base_content, slice)
+            }
+            _ => base_content,
+        };
+
         llm_messages.push(LlmMessage {
             role: msg.role.clone(),
-            content: enrich_history_content(msg),
+            content,
             media_base64: hist_media_b64,
             media_mime_type: hist_media_mime,
         });
     }
 
-    // Attach media to the last user message if this is a media message with interpretation enabled
+    // Attach media / fold extracted text on the last user message.
     if is_non_audio_media && assistant.config_interpret_documents {
-        if let Some(ref b64) = resolved_media_b64 {
-            if let Some(last_user) = llm_messages.iter_mut().rev().find(|m| m.role == "user") {
-                if last_user.content.is_empty() {
-                    last_user.content =
-                        "O usuário enviou este arquivo. Analise o conteúdo e responda.".to_string();
-                }
+        if let Some(last_user) = llm_messages.iter_mut().rev().find(|m| m.role == "user") {
+            if last_user.content.is_empty() {
+                last_user.content =
+                    "O usuário enviou este arquivo. Analise o conteúdo e responda.".to_string();
+            }
+            if let Some(ref text) = extracted_text {
+                // Universal-extract path: fold into content, don't ship bytes.
+                last_user.content = llm::fold_document_text(&last_user.content, text);
+            } else if let Some(ref b64) = resolved_media_b64 {
+                // Native / provider-dependent path: keep raw bytes attached.
                 last_user.media_base64 = Some(b64.clone());
                 last_user.media_mime_type = webhook.media_type.clone();
             }
@@ -1804,11 +1916,13 @@ async fn save_message(
         media_url,
         media_type,
         None,
+        None,
         tokens_used,
     )
     .await
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn save_message_with_media(
     db: &DbSession,
     conversation_id: &Uuid,
@@ -1817,12 +1931,13 @@ async fn save_message_with_media(
     media_url: Option<&str>,
     media_type: Option<&str>,
     media_base64: Option<&str>,
+    media_extracted_text: Option<&str>,
     tokens_used: Option<i32>,
 ) -> Result<(), AppError> {
     let now = ts_now();
 
     db.query_unpaged(
-        "INSERT INTO inertial_eclipse.messages (conversation_id, id, role, content, media_url, media_type, media_base64, tokens_used, created_at) VALUES (?, now(), ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO inertial_eclipse.messages (conversation_id, id, role, content, media_url, media_type, media_base64, media_extracted_text, tokens_used, created_at) VALUES (?, now(), ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             conversation_id,
             role,
@@ -1830,6 +1945,7 @@ async fn save_message_with_media(
             &media_url,
             &media_type,
             &media_base64,
+            &media_extracted_text,
             &tokens_used,
             now,
         ),
@@ -1865,6 +1981,14 @@ fn enrich_history_content(msg: &Message) -> String {
         "vídeo"
     } else if mime == "application/pdf" {
         "documento PDF"
+    } else if mime.starts_with("application/vnd.openxmlformats-officedocument.spreadsheetml")
+        || mime == "application/vnd.ms-excel"
+    {
+        "planilha"
+    } else if mime
+        .starts_with("application/vnd.openxmlformats-officedocument.wordprocessingml")
+    {
+        "documento Word"
     } else {
         "arquivo"
     };
@@ -1885,7 +2009,7 @@ pub async fn get_message(
     let timeuuid = CqlTimeuuid::from(*message_id);
     let result = db
         .query_unpaged(
-            "SELECT conversation_id, id, role, content, media_url, media_type, media_base64, tokens_used, sub_agent_id, created_at FROM inertial_eclipse.messages WHERE conversation_id = ? AND id = ?",
+            "SELECT conversation_id, id, role, content, media_url, media_type, media_base64, media_extracted_text, tokens_used, sub_agent_id, created_at FROM inertial_eclipse.messages WHERE conversation_id = ? AND id = ?",
             (conversation_id, &timeuuid),
         )
         .await
@@ -1895,6 +2019,7 @@ pub async fn get_message(
     for row in rows.rows::<(
         Uuid,
         CqlTimeuuid,
+        Option<String>,
         Option<String>,
         Option<String>,
         Option<String>,
@@ -1913,9 +2038,10 @@ pub async fn get_message(
             media_url: r.4,
             media_type: r.5,
             media_base64: r.6,
-            tokens_used: r.7,
-            sub_agent_id: r.8,
-            created_at: r.9.unwrap_or_else(Utc::now),
+            media_extracted_text: r.7,
+            tokens_used: r.8,
+            sub_agent_id: r.9,
+            created_at: r.10.unwrap_or_else(Utc::now),
         }));
     }
     Ok(None)
@@ -1928,7 +2054,7 @@ pub async fn get_recent_messages(
 ) -> Result<Vec<Message>, AppError> {
     let result = db
         .query_unpaged(
-            "SELECT conversation_id, id, role, content, media_url, media_type, media_base64, tokens_used, sub_agent_id, created_at FROM inertial_eclipse.messages WHERE conversation_id = ? ORDER BY id DESC LIMIT ?",
+            "SELECT conversation_id, id, role, content, media_url, media_type, media_base64, media_extracted_text, tokens_used, sub_agent_id, created_at FROM inertial_eclipse.messages WHERE conversation_id = ? ORDER BY id DESC LIMIT ?",
             (conversation_id, limit),
         )
         .await
@@ -1939,6 +2065,7 @@ pub async fn get_recent_messages(
     for row in rows.rows::<(
         Uuid,
         CqlTimeuuid,
+        Option<String>,
         Option<String>,
         Option<String>,
         Option<String>,
@@ -1957,9 +2084,10 @@ pub async fn get_recent_messages(
             media_url: r.4,
             media_type: r.5,
             media_base64: r.6,
-            tokens_used: r.7,
-            sub_agent_id: r.8,
-            created_at: r.9.unwrap_or_else(Utc::now),
+            media_extracted_text: r.7,
+            tokens_used: r.8,
+            sub_agent_id: r.9,
+            created_at: r.10.unwrap_or_else(Utc::now),
         });
     }
 
@@ -1975,7 +2103,7 @@ pub async fn get_messages_paged(
 ) -> Result<crate::models::pagination::PaginatedResponse<Message>, AppError> {
     let (result, next_cursor) = crate::db::query_paged(
         db,
-        "SELECT conversation_id, id, role, content, media_url, media_type, media_base64, tokens_used, sub_agent_id, created_at FROM inertial_eclipse.messages WHERE conversation_id = ? ORDER BY id DESC",
+        "SELECT conversation_id, id, role, content, media_url, media_type, media_base64, media_extracted_text, tokens_used, sub_agent_id, created_at FROM inertial_eclipse.messages WHERE conversation_id = ? ORDER BY id DESC",
         (conversation_id,),
         limit,
         cursor,
@@ -1993,6 +2121,7 @@ pub async fn get_messages_paged(
         Option<String>,
         Option<String>,
         Option<String>,
+        Option<String>,
         Option<i32>,
         Option<Uuid>,
         Option<DateTime<Utc>>,
@@ -2006,9 +2135,10 @@ pub async fn get_messages_paged(
             media_url: r.4,
             media_type: r.5,
             media_base64: r.6,
-            tokens_used: r.7,
-            sub_agent_id: r.8,
-            created_at: r.9.unwrap_or_else(Utc::now),
+            media_extracted_text: r.7,
+            tokens_used: r.8,
+            sub_agent_id: r.9,
+            created_at: r.10.unwrap_or_else(Utc::now),
         });
     }
 
@@ -2340,24 +2470,48 @@ pub async fn playground_chat(
         });
     }
     for msg in &history {
-        let (hist_media_b64, hist_media_mime) =
-            if assistant.config_interpret_documents && msg.role == "user" {
-                let mime_ok = msg
-                    .media_type
-                    .as_deref()
-                    .map(|m| !m.is_empty() && !m.starts_with("audio/"))
-                    .unwrap_or(false);
-                if mime_ok {
-                    (msg.media_base64.clone(), msg.media_type.clone())
-                } else {
-                    (None, None)
-                }
+        let has_extracted = msg
+            .media_extracted_text
+            .as_deref()
+            .map(|t| !t.is_empty())
+            .unwrap_or(false);
+        let (hist_media_b64, hist_media_mime) = if has_extracted {
+            (None, None)
+        } else if assistant.config_interpret_documents && msg.role == "user" {
+            let mime = msg.media_type.as_deref().unwrap_or("");
+            let provider_takes_inline = !mime.is_empty()
+                && !mime.starts_with("audio/")
+                && llm::is_mime_supported_by_provider(&assistant.llm_provider, mime);
+            if provider_takes_inline {
+                (msg.media_base64.clone(), msg.media_type.clone())
             } else {
                 (None, None)
-            };
+            }
+        } else {
+            (None, None)
+        };
+
+        const MAX_HISTORY_FOLD: usize = 40_000;
+        let base_content = enrich_history_content(msg);
+        let content = match msg.media_extracted_text.as_deref() {
+            Some(t) if !t.is_empty() => {
+                let slice = if t.len() > MAX_HISTORY_FOLD {
+                    let mut cut = MAX_HISTORY_FOLD;
+                    while cut > 0 && !t.is_char_boundary(cut) {
+                        cut -= 1;
+                    }
+                    &t[..cut]
+                } else {
+                    t
+                };
+                llm::fold_document_text(&base_content, slice)
+            }
+            _ => base_content,
+        };
+
         llm_messages.push(LlmMessage {
             role: msg.role.clone(),
-            content: enrich_history_content(msg),
+            content,
             media_base64: hist_media_b64,
             media_mime_type: hist_media_mime,
         });

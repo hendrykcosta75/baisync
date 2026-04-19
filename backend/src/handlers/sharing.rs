@@ -11,8 +11,8 @@ use crate::middleware::auth::AuthUser;
 use crate::services::{assistant, email};
 
 fn generate_token() -> String {
-    let mut rng = rand::thread_rng();
-    let bytes: Vec<u8> = (0..24).map(|_| rng.gen::<u8>()).collect();
+    let mut rng = rand::rng();
+    let bytes: Vec<u8> = (0..24).map(|_| rng.random::<u8>()).collect();
     bytes.iter().map(|b| format!("{:02x}", b)).collect()
 }
 

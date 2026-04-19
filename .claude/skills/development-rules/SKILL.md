@@ -1,6 +1,6 @@
 ---
 name: development-rules
-description: Read this skill BEFORE writing or modifying ANY code in this project. This skill contains the project's mandatory impact analysis checklist, cross-system dependency map, and test verification steps that MUST be followed for every change. Use this skill whenever the user asks to: add a feature, fix a bug, change a model/struct, add or modify an API endpoint, update a frontend form or page, add an integration (Stripe, etc.), change database schema, modify routes or permissions, update environment variables, or touch the Baisync Agent. Also use when the user says "implement", "build", "add", "create", "update", "fix", "refactor", "migrate", or "deploy". Without this skill, Claude will miss required cross-system updates (e.g., changing a backend struct without updating frontend types, adding a feature without updating the Baisync Agent, or modifying env vars without updating .env.example). This skill is the project's engineering checklist — skip it and things break silently.
+description: Read this skill BEFORE writing or modifying ANY code in this project. This skill contains the project's mandatory impact analysis checklist, cross-system dependency map, security-verification checklist, and test verification steps that MUST be followed for every change. Use this skill whenever the user asks to: add a feature, fix a bug, change a model/struct, add or modify an API endpoint, update a frontend form or page, add an integration (Stripe, etc.), change database schema, modify routes or permissions, update environment variables, upgrade or add a dependency, patch a CVE, touch auth/crypto/sanitization code, or touch the Baisync Agent. Also use when the user says "implement", "build", "add", "create", "update", "fix", "refactor", "migrate", "deploy", "upgrade", "bump", "patch", "vulnerability", "CVE", "audit", or "security". Without this skill, Claude will miss required cross-system updates AND may introduce security regressions (outdated sanitizers, weak RNGs, unsafe deserialization, SSRF, unpatched CVEs in transitive deps). This skill is the project's engineering + security checklist — skip it and things break silently.
 
 ---
 
@@ -42,6 +42,36 @@ description: Read this skill BEFORE writing or modifying ANY code in this projec
 | Frontend routes (pages/app)          | Navigation/sidebar, permissions, Baisync Agent                            |
 | Permissions / roles                  | Backend middleware, frontend guards, auth tests, admin                    |
 
+## Security Verification — Mandatory
+
+At the end of ANY change that touches dependencies, user input, auth, file uploads, HTML/markdown rendering, sanitizers, cryptographic primitives, or external API integrations, run this checklist **before** declaring the task done:
+
+1. **Scan for known vulnerabilities**
+   - Frontend: `cd frontend && yarn audit --level moderate` — review high/critical findings
+   - Backend: `cd backend && cargo audit` (install via `cargo install cargo-audit` if missing)
+   - If advisories appear, either patch the dep or document why the risk is acceptable for this change
+
+2. **Research CVEs for added/bumped libraries** (WebSearch when in doubt)
+   - Search "<lib name> CVE" on GitHub Advisory Database (github.com/advisories) and RustSec Advisory DB (rustsec.org)
+   - For any sanitizer, parser, or template engine (HTML, XML, Markdown, SQL, regex): search "<lib> bypass" and "<lib> mXSS" in the last 12 months
+   - Confirm the version you added is ≥ the latest patched release in the affected version range
+   - Cite the CVE IDs you checked in the commit message or PR when non-trivial
+
+3. **Code-level security checks for touched surfaces**
+   - **User HTML / markdown rendering** → sanitizer is present, its version is patched (e.g. DOMPurify ≥ 3.4.0), and sanitized output is NOT reinserted into a different parsing context (`innerHTML` inside `<xmp>`/`<textarea>` etc. — mXSS vector)
+   - **File upload** → MIME allowlist, max-size cap, content-type sniff, extraction-to-text before any inline rendering; no `eval`/`Function` on parsed content
+   - **Auth / token / nonce / key generation** → use a CSPRNG (`rand::rng()` on `rand ≥ 0.9.3`, `OsRng` via `aead::rand_core`, `crypto.getRandomValues` in browser). Never `Math.random()`, never `rand::thread_rng()` on `rand < 0.9.3` (CVE unsoundness)
+   - **Cassandra queries with user input** → parameterized via `?` placeholders, never string-concatenated. Same for any SQL/query builder
+   - **Fetch/proxy of user-supplied URLs** → deny-list localhost, link-local, private ranges (SSRF)
+   - **JSON/body size** → Axum `DefaultBodyLimit` or explicit per-route cap; webhook ingest enforces its own cap
+   - **Error responses** → never leak stack traces, internal paths, SQL, or secrets to the client
+
+4. **Keep Dependabot on**
+   - `.github/dependabot.yml` exists and covers `frontend/yarn.lock` + `backend/Cargo.lock` on a weekly cadence
+   - If missing, create it as part of the change
+
+5. **Before merging**: re-run step 1. New transitive deps may have pulled in fresh advisories.
+
 ## Before Finalizing Any Task
 
 - [ ] Run `tests/consistency/check.sh` — all checks pass
@@ -49,3 +79,4 @@ description: Read this skill BEFORE writing or modifying ANY code in this projec
 - [ ] Run `yarn test` in frontend — all tests pass
 - [ ] Verified dependency map above for the change made
 - [ ] Updated Baisync Agent if change affects user-visible functionality
+- [ ] Security Verification checklist above ran clean, or findings were triaged and documented

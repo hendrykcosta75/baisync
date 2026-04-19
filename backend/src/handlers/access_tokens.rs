@@ -39,8 +39,8 @@ pub struct CreateTokenRequest {
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 fn generate_token() -> String {
-    let mut rng = rand::thread_rng();
-    let bytes: Vec<u8> = (0..32).map(|_| rng.gen::<u8>()).collect();
+    let mut rng = rand::rng();
+    let bytes: Vec<u8> = (0..32).map(|_| rng.random::<u8>()).collect();
     bytes.iter().map(|b| format!("{:02x}", b)).collect()
 }
 

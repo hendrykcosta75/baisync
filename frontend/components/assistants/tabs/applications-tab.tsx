@@ -706,22 +706,33 @@ function CommonSettingsSection({ assistant, shareToken, isReadOnly }: { assistan
           />
         </div>
 
-        {!watchInterpretDocuments && (
-          <Controller
-            name="unsupportedMediaMessage"
-            control={control}
-            render={({ field }) => (
-              <TextField className="w-full" isInvalid={!!errors.unsupportedMediaMessage}>
-                <Label>Mensagem para mídia não suportada</Label>
-                <Input
-                  {...field}
-                  placeholder="Formato de mensagem não suportado. Por favor, envie sua mensagem em texto."
-                />
-                <p className="text-xs text-muted mt-1">Exibida quando o usuário envia imagem, documento ou vídeo. Deixe vazio para usar a mensagem padrão.</p>
-                {errors.unsupportedMediaMessage && <FieldError>{errors.unsupportedMediaMessage.message}</FieldError>}
-              </TextField>
-            )}
-          />
+        <Controller
+          name="unsupportedMediaMessage"
+          control={control}
+          render={({ field }) => (
+            <TextField className="w-full" isInvalid={!!errors.unsupportedMediaMessage}>
+              <Label>Mensagem para mídia não suportada</Label>
+              <Input
+                {...field}
+                placeholder={
+                  watchInterpretDocuments
+                    ? 'Não consegui interpretar o arquivo enviado. Por favor, envie em outro formato ou descreva o conteúdo em texto.'
+                    : 'Formato de mensagem não suportado. Por favor, envie sua mensagem em texto.'
+                }
+              />
+              <p className="text-xs text-muted mt-1">
+                {watchInterpretDocuments
+                  ? 'Enviada quando o provedor do LLM não consegue ler o arquivo recebido (ex.: XLSX, DOCX ou outros formatos não suportados nativamente). Deixe vazio para usar a mensagem padrão.'
+                  : 'Exibida quando o usuário envia imagem, documento ou vídeo e a interpretação está desligada. Deixe vazio para usar a mensagem padrão.'}
+              </p>
+              {errors.unsupportedMediaMessage && <FieldError>{errors.unsupportedMediaMessage.message}</FieldError>}
+            </TextField>
+          )}
+        />
+        {watchInterpretDocuments && (
+          <p className="text-[11px] text-muted -mt-2">
+            Formatos suportados nativamente: imagens (JPG, PNG, WebP), PDF e (no Gemini) vídeo. XLSX, DOCX e outros cairão nessa mensagem.
+          </p>
         )}
 
         {!isReadOnly && (

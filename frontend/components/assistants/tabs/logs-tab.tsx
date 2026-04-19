@@ -47,6 +47,8 @@ interface AssistantStats {
 interface LlmCallLog {
   id: string
   conversation_id: string | null
+  contact_name: string | null
+  contact_number: string | null
   provider: string
   model: string
   tokens_used: number
@@ -58,6 +60,7 @@ interface LlmCallLog {
 }
 
 type LlmProviderFilter = 'all' | 'openai' | 'claude' | 'gemini' | 'grok' | 'deepseek'
+type LlmStatusFilter = 'all' | 'success' | 'error'
 
 const LLM_PROVIDERS: { id: LlmProviderFilter; label: string; dot: string }[] = [
   { id: 'all',      label: 'Todos',    dot: 'bg-subtle' },
@@ -137,6 +140,14 @@ function generateLocalDates(days: number): string {
     dates.push(`${yyyy}-${mm}-${dd}`)
   }
   return dates.join(',')
+}
+
+function todayISO(): string {
+  const d = new Date()
+  const yyyy = d.getFullYear()
+  const mm = String(d.getMonth() + 1).padStart(2, '0')
+  const dd = String(d.getDate()).padStart(2, '0')
+  return `${yyyy}-${mm}-${dd}`
 }
 
 function channelColor(channel: string): string {
@@ -328,6 +339,7 @@ function LogEntry({ log }: { log: AssistantLog }) {
 function LlmLogEntry({ log }: { log: LlmCallLog }) {
   const [expanded, setExpanded] = useState(false)
   const isError = !!log.error
+  const contactDisplay = log.contact_name?.trim() || log.contact_number?.trim() || null
 
   return (
     <div className={`glass-card rounded-xl overflow-hidden transition-all duration-200 hover:border-[#ff6b2c]/30 ${isError ? '!border-red-500/40' : ''}`}>
@@ -359,7 +371,17 @@ function LlmLogEntry({ log }: { log: LlmCallLog }) {
               <span className="text-[10px] text-red-500 truncate max-w-[200px]">{log.error}</span>
             )}
           </div>
-          <p className="text-[11px] text-subtle mt-0.5">{formatDate(log.created_at)}</p>
+          <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+            <p className="text-[11px] text-subtle">{formatDate(log.created_at)}</p>
+            {contactDisplay && (
+              <>
+                <span className="text-subtle/40">·</span>
+                <span className="text-[11px] text-subtle truncate max-w-[200px]" title={contactDisplay}>
+                  {contactDisplay}
+                </span>
+              </>
+            )}
+          </div>
         </div>
 
         <div className="shrink-0 text-right">
@@ -420,10 +442,20 @@ function LlmLogEntry({ log }: { log: LlmCallLog }) {
             </div>
           )}
 
-          {log.conversation_id && (
+          {(log.contact_name || log.contact_number || log.conversation_id) && (
             <div>
-              <p className="text-[10px] font-semibold text-subtle uppercase tracking-wider mb-0.5">Conversa</p>
-              <p className="text-[11px] text-subtle font-mono break-all">{log.conversation_id}</p>
+              <p className="text-[10px] font-semibold text-subtle uppercase tracking-wider mb-1">Conversa</p>
+              <div className="flex flex-col gap-0.5">
+                {log.contact_name && (
+                  <p className="text-xs text-heading font-medium">{log.contact_name}</p>
+                )}
+                {log.contact_number && (
+                  <p className="text-[11px] text-body font-mono">{log.contact_number}</p>
+                )}
+                {log.conversation_id && (
+                  <p className="text-[10px] text-subtle/70 font-mono break-all">{log.conversation_id}</p>
+                )}
+              </div>
             </div>
           )}
         </div>
@@ -442,11 +474,15 @@ export function LogsTab({ assistant, shareToken }: LogsTabProps) {
   const [statsLoading, setStatsLoading] = useState(true)
   const [filter, setFilter] = useState<LogFilter>('all')
   const [refreshKey, setRefreshKey] = useState(0)
+  const [fromDate, setFromDate] = useState<string>(todayISO())
+  const [toDate, setToDate] = useState<string>(todayISO())
+  const today = todayISO()
+  const dateQs = `&from_date=${fromDate}&to_date=${toDate}`
 
   const fetchLogs = useCallback(async (cursor?: string) => {
     const offset = cursor ? parseInt(cursor, 10) : 0
     const res = await apiFetch<{ items: AssistantLog[]; nextOffset?: number | null } | AssistantLog[]>(
-      `/api/assistants/${assistant.id}/logs?limit=50&offset=${offset}${stqs}`
+      `/api/assistants/${assistant.id}/logs?limit=50&offset=${offset}${dateQs}${stqs}`
     )
     if (Array.isArray(res)) {
       return { items: res, cursor: null }
@@ -455,25 +491,28 @@ export function LogsTab({ assistant, shareToken }: LogsTabProps) {
       items: res.items || [],
       cursor: res.nextOffset != null ? String(res.nextOffset) : null,
     }
-  }, [assistant.id, stqs])
+  }, [assistant.id, dateQs, stqs])
 
   const { items: logs, isLoading: loading, isLoadingMore: loadingMore, hasMore, sentinelRef, reset: resetLogs } = useInfiniteScroll<AssistantLog>({
     fetchFn: fetchLogs,
+    resetKey: `${fromDate}|${toDate}`,
   })
 
   const [llmFilter, setLlmFilter] = useState<LlmProviderFilter>('all')
+  const [llmStatusFilter, setLlmStatusFilter] = useState<LlmStatusFilter>('all')
 
   const fetchLlmLogs = useCallback(async (cursor?: string) => {
     const offset = cursor ? parseInt(cursor, 10) : 0
     const providerQs = llmFilter !== 'all' ? `&provider=${llmFilter}` : ''
+    const statusQs = llmStatusFilter !== 'all' ? `&status=${llmStatusFilter}` : ''
     const res = await apiFetch<{ items: LlmCallLog[]; nextOffset?: number | null }>(
-      `/api/assistants/${assistant.id}/llm-logs?limit=50&offset=${offset}${providerQs}${stqs}`
+      `/api/assistants/${assistant.id}/llm-logs?limit=50&offset=${offset}${providerQs}${statusQs}${dateQs}${stqs}`
     )
     return {
       items: res.items || [],
       cursor: res.nextOffset != null ? String(res.nextOffset) : null,
     }
-  }, [assistant.id, llmFilter, stqs])
+  }, [assistant.id, llmFilter, llmStatusFilter, dateQs, stqs])
 
   const {
     items: llmLogs,
@@ -484,7 +523,7 @@ export function LogsTab({ assistant, shareToken }: LogsTabProps) {
     reset: resetLlmLogs,
   } = useInfiniteScroll<LlmCallLog>({
     fetchFn: fetchLlmLogs,
-    resetKey: llmFilter,
+    resetKey: `${llmFilter}|${llmStatusFilter}|${fromDate}|${toDate}`,
   })
 
   useEffect(() => {
@@ -617,6 +656,59 @@ export function LogsTab({ assistant, shareToken }: LogsTabProps) {
         </div>
       )}
 
+      {/* Shared date range filter (applies to both LLM and tool logs) */}
+      <div className="flex items-center gap-2 flex-wrap px-1">
+        <span
+          className="text-[11px] font-semibold text-subtle uppercase tracking-wider"
+          style={{ fontFamily: "'JetBrains Mono', 'Fira Code', monospace" }}
+        >
+          Período
+        </span>
+        <input
+          type="date"
+          value={fromDate}
+          max={today}
+          onChange={e => setFromDate(e.target.value || todayISO())}
+          className="bg-surface border border-dim rounded-md text-xs px-2 py-1 text-heading focus:border-[#ff6b2c] focus:outline-none"
+          style={{ fontFamily: "'JetBrains Mono', 'Fira Code', monospace" }}
+          aria-label="Data inicial"
+        />
+        <span className="text-subtle text-xs">até</span>
+        <input
+          type="date"
+          value={toDate}
+          min={fromDate}
+          max={today}
+          onChange={e => setToDate(e.target.value || todayISO())}
+          className="bg-surface border border-dim rounded-md text-xs px-2 py-1 text-heading focus:border-[#ff6b2c] focus:outline-none"
+          style={{ fontFamily: "'JetBrains Mono', 'Fira Code', monospace" }}
+          aria-label="Data final"
+        />
+        <button
+          type="button"
+          onClick={() => { setFromDate(today); setToDate(today) }}
+          disabled={fromDate === today && toDate === today}
+          className="btn-neu-ghost text-xs disabled:opacity-40"
+        >
+          Hoje
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            const d = new Date()
+            d.setDate(d.getDate() - 6)
+            const yyyy = d.getFullYear()
+            const mm = String(d.getMonth() + 1).padStart(2, '0')
+            const dd = String(d.getDate()).padStart(2, '0')
+            setFromDate(`${yyyy}-${mm}-${dd}`)
+            setToDate(today)
+          }}
+          className="btn-neu-ghost text-xs"
+        >
+          7d
+        </button>
+      </div>
+
       {/* LLM API call logs */}
       <div className="flex flex-col gap-3">
         <div className="flex items-center gap-2 flex-wrap">
@@ -626,7 +718,7 @@ export function LogsTab({ assistant, shareToken }: LogsTabProps) {
           >
             Chamadas de API (LLM)
           </p>
-          <div className="ml-auto flex gap-1 flex-wrap">
+          <div className="ml-auto flex gap-1 flex-wrap items-center">
             <button
               type="button"
               onClick={() => resetLlmLogs()}
@@ -636,6 +728,28 @@ export function LogsTab({ assistant, shareToken }: LogsTabProps) {
             >
               {llmLoading ? '↻' : '↻ Atualizar'}
             </button>
+            {/* Status filter (success/error/all) */}
+            {([
+              { id: 'all',     label: 'Todos',    dot: 'bg-subtle' },
+              { id: 'success', label: 'Sucesso',  dot: 'bg-emerald-500' },
+              { id: 'error',   label: 'Erros',    dot: 'bg-red-500' },
+            ] as const).map(s => {
+              const active = llmStatusFilter === s.id
+              return (
+                <button
+                  key={s.id}
+                  type="button"
+                  onClick={() => setLlmStatusFilter(s.id)}
+                  className={`${active ? 'btn-neu' : 'btn-neu-ghost'} text-xs flex items-center gap-1.5`}
+                >
+                  <span className={`w-1.5 h-1.5 rounded-full ${s.dot}`} />
+                  {s.label}
+                </button>
+              )
+            })}
+            {/* Separator */}
+            <span className="w-px h-5 bg-dim mx-1" aria-hidden />
+            {/* Provider filter */}
             {LLM_PROVIDERS.map(p => {
               const active = llmFilter === p.id
               return (
@@ -662,20 +776,26 @@ export function LogsTab({ assistant, shareToken }: LogsTabProps) {
         ) : llmLogs.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-12 text-center">
             <div className="w-14 h-14 rounded-xl bg-raised flex items-center justify-center mb-3">
-              <Cpu size={22} className="text-subtle" />
+              {llmStatusFilter === 'error'
+                ? <AlertTriangle size={22} className="text-subtle" />
+                : <Cpu size={22} className="text-subtle" />}
             </div>
             <p
               className="text-sm font-semibold text-heading"
               style={{ fontFamily: "'JetBrains Mono', 'Fira Code', monospace" }}
             >
-              {llmFilter === 'all'
-                ? 'Nenhuma chamada de API registrada'
-                : `Nenhuma chamada para ${providerLabel(llmFilter)}`}
+              {llmStatusFilter === 'error'
+                ? 'Nenhuma chamada com erro'
+                : llmStatusFilter === 'success'
+                  ? 'Nenhuma chamada bem-sucedida'
+                  : llmFilter === 'all'
+                    ? 'Nenhuma chamada de API registrada'
+                    : `Nenhuma chamada para ${providerLabel(llmFilter)}`}
             </p>
             <p className="text-xs text-subtle mt-1 max-w-xs">
-              {llmFilter === 'all'
+              {llmFilter === 'all' && llmStatusFilter === 'all'
                 ? 'As chamadas ao provedor de LLM aparecerão aqui assim que o assistente responder a uma mensagem.'
-                : 'Tente selecionar outro provedor.'}
+                : 'Tente ajustar os filtros acima.'}
             </p>
           </div>
         ) : (

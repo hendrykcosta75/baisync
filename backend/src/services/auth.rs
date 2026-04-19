@@ -291,8 +291,8 @@ pub async fn get_user_by_id(db: &DbSession, user_id: &Uuid) -> Result<User, AppE
 
 pub fn generate_2fa_code() -> String {
     use rand::Rng;
-    let mut rng = rand::thread_rng();
-    format!("{:06}", rng.gen_range(0..1_000_000))
+    let mut rng = rand::rng();
+    format!("{:06}", rng.random_range(0..1_000_000))
 }
 
 pub async fn enable_2fa(db: &DbSession, user_id: &Uuid) -> Result<String, AppError> {
@@ -440,8 +440,8 @@ pub async fn delete_account(
 
 pub fn generate_reset_token() -> String {
     use rand::Rng;
-    let mut rng = rand::thread_rng();
-    let bytes: Vec<u8> = (0..32).map(|_| rng.gen()).collect();
+    let mut rng = rand::rng();
+    let bytes: Vec<u8> = (0..32).map(|_| rng.random()).collect();
     base64::Engine::encode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, &bytes)
 }
 

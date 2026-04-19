@@ -1,7 +1,7 @@
 use axum::extract::{Extension, Path, Query};
 use axum::Json;
 use chrono::{DateTime, Duration, Utc};
-use scylla::frame::value::CqlTimeuuid;
+use scylla::frame::value::{CqlTimestamp, CqlTimeuuid};
 use serde::{Deserialize, Serialize};
 use serde_json;
 use uuid::Uuid;
@@ -47,6 +47,26 @@ pub struct LimitQuery {
     pub limit: Option<usize>,
     pub offset: Option<usize>,
     pub share_token: Option<String>,
+    pub from_date: Option<String>,
+    pub to_date: Option<String>,
+}
+
+/// Parse "YYYY-MM-DD" into UTC millis at start-of-day (for `from_date`) or end-of-day (for `to_date`).
+/// Returns (None, None) if strings are missing or malformed.
+fn parse_date_bounds(from_date: Option<&str>, to_date: Option<&str>) -> (Option<i64>, Option<i64>) {
+    let from_ts = from_date.and_then(|s| {
+        chrono::NaiveDate::parse_from_str(s.trim(), "%Y-%m-%d")
+            .ok()
+            .and_then(|d| d.and_hms_opt(0, 0, 0))
+            .map(|dt| dt.and_utc().timestamp_millis())
+    });
+    let to_ts = to_date.and_then(|s| {
+        chrono::NaiveDate::parse_from_str(s.trim(), "%Y-%m-%d")
+            .ok()
+            .and_then(|d| d.and_hms_milli_opt(23, 59, 59, 999))
+            .map(|dt| dt.and_utc().timestamp_millis())
+    });
+    (from_ts, to_ts)
 }
 
 // ─── GET /api/user/usage?days=N ───────────────────────────────────────────────
@@ -283,6 +303,8 @@ pub async fn assistant_logs(
     Query(params): Query<LimitQuery>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let limit = params.limit.unwrap_or(100).min(500);
+    let (from_ts, to_ts) =
+        parse_date_bounds(params.from_date.as_deref(), params.to_date.as_deref());
 
     // Verify ownership or share_token access
     assistant::resolve_assistant_access(
@@ -299,9 +321,10 @@ pub async fn assistant_logs(
 
     let mut all_logs: Vec<(chrono::DateTime<Utc>, AssistantLog)> = Vec::new();
     for tool in &tools {
-        let logs = assistant::list_tool_call_logs(&db, &assistant_id, &tool.id, limit as i32)
-            .await
-            .unwrap_or_default();
+        let logs =
+            assistant::list_tool_call_logs(&db, &assistant_id, &tool.id, limit as i32, from_ts, to_ts)
+                .await
+                .unwrap_or_default();
         for log in logs {
             let ts = log.called_at;
             all_logs.push((ts, AssistantLog::from(log)));
@@ -332,13 +355,19 @@ pub struct LlmLogsQuery {
     pub limit: Option<usize>,
     pub offset: Option<usize>,
     pub provider: Option<String>,
+    /// "all" | "success" | "error" — omitted or "all" returns everything.
+    pub status: Option<String>,
     pub share_token: Option<String>,
+    pub from_date: Option<String>,
+    pub to_date: Option<String>,
 }
 
 #[derive(Serialize)]
 pub struct LlmLogItem {
     pub id: String,
     pub conversation_id: Option<String>,
+    pub contact_name: Option<String>,
+    pub contact_number: Option<String>,
     pub provider: String,
     pub model: String,
     pub tokens_used: i32,
@@ -362,6 +391,11 @@ pub async fn assistant_llm_logs(
         .as_deref()
         .map(str::trim)
         .filter(|s| !s.is_empty() && *s != "all");
+    let status_filter = params
+        .status
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty() && *s != "all");
 
     // Resolve tenant — returns the partition-key user_id (owner).
     let tenant_user_id = assistant::resolve_assistant_access(
@@ -373,16 +407,34 @@ pub async fn assistant_llm_logs(
     )
     .await?;
 
-    // Over-fetch when filtering by provider so the post-filter page is still
-    // full; cap the scan to stay bounded.
-    let scan_limit = if provider_filter.is_some() {
+    let (from_ts, to_ts) =
+        parse_date_bounds(params.from_date.as_deref(), params.to_date.as_deref());
+
+    // Over-fetch when filtering so the post-filter page is still full; cap
+    // the scan to stay bounded.
+    let has_filter = provider_filter.is_some() || status_filter.is_some();
+    let scan_limit = if has_filter {
         ((offset + limit) * 4).min(2000)
     } else {
         offset + limit + 1
     };
 
-    let result = db
-        .query_unpaged(
+    // With a date range, narrow via minTimeuuid/maxTimeuuid on the clustering
+    // key so Cassandra skips rows outside the window.
+    let result = if from_ts.is_some() || to_ts.is_some() {
+        let from = CqlTimestamp(from_ts.unwrap_or(0));
+        let to = CqlTimestamp(to_ts.unwrap_or(i64::MAX));
+        db.query_unpaged(
+            "SELECT id, conversation_id, provider, model, tokens_used, duration_ms, \
+                    tool_rounds, tool_names, error, created_at \
+             FROM inertial_eclipse.llm_call_logs \
+             WHERE user_id = ? AND assistant_id = ? \
+               AND id >= minTimeuuid(?) AND id <= maxTimeuuid(?) LIMIT ?",
+            (tenant_user_id, assistant_id, from, to, scan_limit as i32),
+        )
+        .await
+    } else {
+        db.query_unpaged(
             "SELECT id, conversation_id, provider, model, tokens_used, duration_ms, \
                     tool_rounds, tool_names, error, created_at \
              FROM inertial_eclipse.llm_call_logs \
@@ -390,7 +442,8 @@ pub async fn assistant_llm_logs(
             (tenant_user_id, assistant_id, scan_limit as i32),
         )
         .await
-        .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+    }
+    .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
     let rows = result.into_rows_result()?;
 
@@ -416,24 +469,81 @@ pub async fn assistant_llm_logs(
                 continue;
             }
         }
+        let error = row.8.clone();
+        if let Some(s) = status_filter {
+            let is_error = error.as_deref().map(|e| !e.is_empty()).unwrap_or(false);
+            let wants_error = s == "error";
+            if is_error != wants_error {
+                continue;
+            }
+        }
         let id_uuid: Uuid = Uuid::from(row.0);
         let created_at_iso = row.9.unwrap_or_else(Utc::now).to_rfc3339();
         items.push(LlmLogItem {
             id: id_uuid.to_string(),
             conversation_id: row.1.map(|u: Uuid| u.to_string()),
+            contact_name: None,
+            contact_number: None,
             provider,
             model: row.3.unwrap_or_default(),
             tokens_used: row.4.unwrap_or(0),
             duration_ms: row.5.unwrap_or(0),
             tool_rounds: row.6.unwrap_or(0),
             tool_names: row.7.unwrap_or_default(),
-            error: row.8,
+            error,
             created_at: created_at_iso,
         });
     }
 
     let has_more = items.len() > offset + limit;
-    let page: Vec<LlmLogItem> = items.into_iter().skip(offset).take(limit).collect();
+    let mut page: Vec<LlmLogItem> = items.into_iter().skip(offset).take(limit).collect();
+
+    // Enrich with conversation contact info in one batched query.
+    let conv_ids: Vec<Uuid> = {
+        let mut seen = std::collections::HashSet::new();
+        let mut ids: Vec<Uuid> = Vec::new();
+        for item in &page {
+            if let Some(cid) = item.conversation_id.as_deref() {
+                if let Ok(u) = Uuid::parse_str(cid) {
+                    if seen.insert(u) {
+                        ids.push(u);
+                    }
+                }
+            }
+        }
+        ids
+    };
+    if !conv_ids.is_empty() {
+        let rows = db
+            .query_unpaged(
+                "SELECT id, contact_name, contact_number FROM inertial_eclipse.conversations \
+                 WHERE assistant_id = ? AND user_id = ? AND id IN ?",
+                (assistant_id, tenant_user_id, &conv_ids),
+            )
+            .await
+            .map_err(|e| AppError::DatabaseError(e.to_string()))?
+            .into_rows_result()?;
+
+        let mut lookup: std::collections::HashMap<Uuid, (Option<String>, Option<String>)> =
+            std::collections::HashMap::new();
+        for row in rows
+            .rows::<(Uuid, Option<String>, Option<String>)>()?
+            .flatten()
+        {
+            lookup.insert(row.0, (row.1, row.2));
+        }
+        for item in page.iter_mut() {
+            if let Some(cid) = item.conversation_id.as_deref() {
+                if let Ok(u) = Uuid::parse_str(cid) {
+                    if let Some((name, number)) = lookup.get(&u).cloned() {
+                        item.contact_name = name;
+                        item.contact_number = number;
+                    }
+                }
+            }
+        }
+    }
+
     let returned = page.len();
 
     Ok(Json(serde_json::json!({

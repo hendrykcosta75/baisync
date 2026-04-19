@@ -68,7 +68,7 @@ async fn record_llm_call(
 }
 
 /// Fold an extracted document's text into an existing user message body.
-fn fold_document_text(original: &str, extracted: &str) -> String {
+pub(crate) fn fold_document_text(original: &str, extracted: &str) -> String {
     if original.trim().is_empty() {
         format!("[Conteúdo do documento anexado]\n{extracted}")
     } else {
@@ -546,6 +546,47 @@ impl From<&AssistantTool> for LlmTool {
             body_content,
             tool_type,
         }
+    }
+}
+
+/// Whether the given provider can natively ingest `mime` as a media
+/// attachment in its chat-completions API. Used to short-circuit messages
+/// with unsupported types (e.g. XLSX/DOCX) before they reach the LLM and
+/// surface raw "Unsupported MIME" errors to the end user.
+///
+/// Audio is intentionally not listed here — audio flows through STT
+/// upstream and arrives as text content.
+pub fn is_mime_supported_by_provider(provider: &str, mime: &str) -> bool {
+    // PDFs are handled as extracted text for Grok/Deepseek; still treated
+    // as "supported" so upstream code doesn't short-circuit those providers.
+    match provider {
+        "openai" => matches!(
+            mime,
+            "image/jpeg"
+                | "image/png"
+                | "image/gif"
+                | "image/webp"
+                | "application/pdf"
+        ),
+        "claude" => matches!(
+            mime,
+            "image/jpeg"
+                | "image/png"
+                | "image/gif"
+                | "image/webp"
+                | "application/pdf"
+        ),
+        "gemini" => {
+            mime.starts_with("image/")
+                || mime.starts_with("video/")
+                || mime == "application/pdf"
+                || mime == "text/plain"
+        }
+        // Grok natively takes jpg/png only; PDF goes through text extraction.
+        "grok" => matches!(mime, "image/jpeg" | "image/png" | "application/pdf"),
+        // Deepseek is text-only; only PDFs survive (as extracted text).
+        "deepseek" => mime == "application/pdf",
+        _ => false,
     }
 }
 
