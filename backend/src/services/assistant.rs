@@ -599,7 +599,8 @@ pub async fn list_tool_call_logs(
     to_ts: Option<i64>,
 ) -> Result<Vec<ToolCallLog>, AppError> {
     let from = CqlTimestamp(from_ts.unwrap_or(0));
-    let to = CqlTimestamp(to_ts.unwrap_or(i64::MAX));
+    // 9999-12-31T23:59:59.999Z — safer than i64::MAX for driver roundtrip.
+    let to = CqlTimestamp(to_ts.unwrap_or(253_402_300_799_999));
     let query = format!(
         "SELECT assistant_id, tool_id, id, tool_name, arguments, status_code, response_body, error, duration_ms, called_at FROM inertial_eclipse.tool_call_logs WHERE assistant_id = ? AND tool_id = ? AND called_at >= ? AND called_at <= ? ORDER BY called_at DESC LIMIT {limit}"
     );

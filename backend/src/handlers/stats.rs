@@ -49,25 +49,40 @@ pub struct LimitQuery {
     pub share_token: Option<String>,
     pub from_date: Option<String>,
     pub to_date: Option<String>,
+    /// Browser's `-new Date().getTimezoneOffset()` (minutes east of UTC). When
+    /// present, the date strings are interpreted in the user's local tz so a
+    /// selection of "today" doesn't drop the last hours of the local day.
+    pub tz_offset: Option<i32>,
 }
 
-/// Parse "YYYY-MM-DD" into UTC millis at start-of-day (for `from_date`) or end-of-day (for `to_date`).
-/// Returns (None, None) if strings are missing or malformed.
-fn parse_date_bounds(from_date: Option<&str>, to_date: Option<&str>) -> (Option<i64>, Option<i64>) {
+/// Parse "YYYY-MM-DD" into millis-since-epoch bounds, honoring an optional
+/// `tz_offset_minutes` so local-day boundaries align with what the user sees.
+/// Returns (None, None) when both strings are missing or malformed.
+fn parse_date_bounds(
+    from_date: Option<&str>,
+    to_date: Option<&str>,
+    tz_offset_minutes: Option<i32>,
+) -> (Option<i64>, Option<i64>) {
+    // Local day starts at 00:00 local == 00:00 UTC − offset minutes.
+    let offset_ms: i64 = tz_offset_minutes.unwrap_or(0) as i64 * 60_000;
     let from_ts = from_date.and_then(|s| {
         chrono::NaiveDate::parse_from_str(s.trim(), "%Y-%m-%d")
             .ok()
             .and_then(|d| d.and_hms_opt(0, 0, 0))
-            .map(|dt| dt.and_utc().timestamp_millis())
+            .map(|dt| dt.and_utc().timestamp_millis() - offset_ms)
     });
     let to_ts = to_date.and_then(|s| {
         chrono::NaiveDate::parse_from_str(s.trim(), "%Y-%m-%d")
             .ok()
             .and_then(|d| d.and_hms_milli_opt(23, 59, 59, 999))
-            .map(|dt| dt.and_utc().timestamp_millis())
+            .map(|dt| dt.and_utc().timestamp_millis() - offset_ms)
     });
     (from_ts, to_ts)
 }
+
+/// Safer upper bound than `i64::MAX` for CqlTimestamp — drivers treat this as
+/// millis and year-292M values can roundtrip badly. Picks `9999-12-31T23:59:59.999Z`.
+const CQL_TS_MAX_MS: i64 = 253_402_300_799_999;
 
 // ─── GET /api/user/usage?days=N ───────────────────────────────────────────────
 // Usage chart data: messages+tokens per day across all assistants.
@@ -303,8 +318,11 @@ pub async fn assistant_logs(
     Query(params): Query<LimitQuery>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     let limit = params.limit.unwrap_or(100).min(500);
-    let (from_ts, to_ts) =
-        parse_date_bounds(params.from_date.as_deref(), params.to_date.as_deref());
+    let (from_ts, to_ts) = parse_date_bounds(
+        params.from_date.as_deref(),
+        params.to_date.as_deref(),
+        params.tz_offset,
+    );
 
     // Verify ownership or share_token access
     assistant::resolve_assistant_access(
@@ -333,13 +351,14 @@ pub async fn assistant_logs(
 
     all_logs.sort_by(|a, b| b.0.cmp(&a.0));
     let offset = params.offset.unwrap_or(0);
+    let total_matched = all_logs.len();
     let page: Vec<AssistantLog> = all_logs
         .into_iter()
         .skip(offset)
         .take(limit)
         .map(|(_, l)| l)
         .collect();
-    let has_more = page.len() == limit;
+    let has_more = total_matched > offset + page.len();
 
     Ok(Json(serde_json::json!({
         "items": page,
@@ -360,6 +379,7 @@ pub struct LlmLogsQuery {
     pub share_token: Option<String>,
     pub from_date: Option<String>,
     pub to_date: Option<String>,
+    pub tz_offset: Option<i32>,
 }
 
 #[derive(Serialize)]
@@ -407,23 +427,33 @@ pub async fn assistant_llm_logs(
     )
     .await?;
 
-    let (from_ts, to_ts) =
-        parse_date_bounds(params.from_date.as_deref(), params.to_date.as_deref());
+    let (from_ts, to_ts) = parse_date_bounds(
+        params.from_date.as_deref(),
+        params.to_date.as_deref(),
+        params.tz_offset,
+    );
 
-    // Over-fetch when filtering so the post-filter page is still full; cap
-    // the scan to stay bounded.
+    // Over-fetch when filtering so the post-filter page is still full. A date
+    // range already bounds the scan on the clustering key, so we don't need
+    // the 2000-row cap — dropping it prevents false `hasMore=false` inside a
+    // narrow window.
     let has_filter = provider_filter.is_some() || status_filter.is_some();
+    let has_date_range = from_ts.is_some() || to_ts.is_some();
     let scan_limit = if has_filter {
-        ((offset + limit) * 4).min(2000)
+        if has_date_range {
+            (offset + limit) * 4
+        } else {
+            ((offset + limit) * 4).min(2000)
+        }
     } else {
         offset + limit + 1
     };
 
     // With a date range, narrow via minTimeuuid/maxTimeuuid on the clustering
     // key so Cassandra skips rows outside the window.
-    let result = if from_ts.is_some() || to_ts.is_some() {
+    let result = if has_date_range {
         let from = CqlTimestamp(from_ts.unwrap_or(0));
-        let to = CqlTimestamp(to_ts.unwrap_or(i64::MAX));
+        let to = CqlTimestamp(to_ts.unwrap_or(CQL_TS_MAX_MS));
         db.query_unpaged(
             "SELECT id, conversation_id, provider, model, tokens_used, duration_ms, \
                     tool_rounds, tool_names, error, created_at \
@@ -607,4 +637,69 @@ pub async fn user_activity(
     let result: Vec<ActivityEvent> = events.into_iter().take(limit).map(|(_, e)| e).collect();
 
     Ok(Json(result))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_date_bounds_none_when_absent() {
+        assert_eq!(parse_date_bounds(None, None, None), (None, None));
+    }
+
+    #[test]
+    fn parse_date_bounds_rejects_malformed() {
+        assert_eq!(
+            parse_date_bounds(Some("not-a-date"), Some("also-bad"), None),
+            (None, None)
+        );
+        assert_eq!(
+            parse_date_bounds(Some("2026-13-40"), None, None),
+            (None, None)
+        );
+    }
+
+    #[test]
+    fn parse_date_bounds_utc_when_no_offset() {
+        use chrono::NaiveDate;
+        let expected_from = NaiveDate::from_ymd_opt(2026, 4, 19)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_utc()
+            .timestamp_millis();
+        let expected_to = NaiveDate::from_ymd_opt(2026, 4, 19)
+            .unwrap()
+            .and_hms_milli_opt(23, 59, 59, 999)
+            .unwrap()
+            .and_utc()
+            .timestamp_millis();
+        let (from, to) = parse_date_bounds(Some("2026-04-19"), Some("2026-04-19"), None);
+        assert_eq!(from, Some(expected_from));
+        assert_eq!(to, Some(expected_to));
+    }
+
+    #[test]
+    fn parse_date_bounds_shifts_with_tz_offset() {
+        // UTC-3 (offset_minutes = -180) → local midnight is 3h later in UTC
+        // so the bound timestamp is 3h after the UTC midnight of the same date.
+        let (from_utc, to_utc) =
+            parse_date_bounds(Some("2026-04-19"), Some("2026-04-19"), None);
+        let (from_local, to_local) =
+            parse_date_bounds(Some("2026-04-19"), Some("2026-04-19"), Some(-180));
+        let shift = 180 * 60_000;
+        assert_eq!(from_local, from_utc.map(|x| x + shift));
+        assert_eq!(to_local, to_utc.map(|x| x + shift));
+    }
+
+    #[test]
+    fn parse_date_bounds_partial_range_ok() {
+        let (from, to) = parse_date_bounds(Some("2026-04-19"), None, None);
+        assert!(from.is_some());
+        assert_eq!(to, None);
+        let (from, to) = parse_date_bounds(None, Some("2026-04-19"), None);
+        assert_eq!(from, None);
+        assert!(to.is_some());
+    }
 }

@@ -477,7 +477,9 @@ export function LogsTab({ assistant, shareToken }: LogsTabProps) {
   const [fromDate, setFromDate] = useState<string>(todayISO())
   const [toDate, setToDate] = useState<string>(todayISO())
   const today = todayISO()
-  const dateQs = `&from_date=${fromDate}&to_date=${toDate}`
+  // Browser's offset east of UTC in minutes (getTimezoneOffset is west-positive).
+  const tzOffset = -new Date().getTimezoneOffset()
+  const dateQs = `&from_date=${fromDate}&to_date=${toDate}&tz_offset=${tzOffset}`
 
   const fetchLogs = useCallback(async (cursor?: string) => {
     const offset = cursor ? parseInt(cursor, 10) : 0
