@@ -4,8 +4,9 @@ use scylla::frame::value::{CqlTimestamp, CqlTimeuuid};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use std::sync::OnceLock;
-use std::time::Duration;
+use std::collections::{HashMap, VecDeque};
+use std::sync::{Arc, OnceLock, RwLock};
+use std::time::{Duration, Instant};
 use tokio::sync::mpsc::UnboundedSender;
 use uuid::Uuid;
 
@@ -36,6 +37,108 @@ fn llm_timeout_error(provider: &str, secs: u64) -> AppError {
     AppError::InternalError(format!(
         "A chamada ao provider {provider} excedeu {secs}s. Tente resposta mais concisa ou reduza max_tokens."
     ))
+}
+
+// ---------------------------------------------------------------------------
+// W1.1 — In-memory circuit breaker per LLM provider.
+//
+// If a provider records FAIL_THRESHOLD failures within FAIL_WINDOW, the
+// circuit opens and subsequent `call_*_raw` invocations short-circuit with an
+// LLM-friendly message. There is no explicit reset — stale failures fall out
+// of the window naturally (natural half-life), so after FAIL_WINDOW with no
+// new failures the circuit closes again automatically.
+//
+// State is in-memory only (reset on deploy is acceptable).
+// ---------------------------------------------------------------------------
+
+/// Failure-tracking state for a single provider.
+struct ProviderHealth {
+    /// Timestamps of failures within the last FAIL_WINDOW. Older entries are
+    /// pruned lazily on every `record_failure`.
+    recent_failures: VecDeque<Instant>,
+    /// Informational: when the provider last replied OK. Unused for gating
+    /// (decay alone closes the circuit) but kept for potential tracing.
+    last_success_at: Option<Instant>,
+}
+
+static PROVIDER_HEALTH: OnceLock<Arc<RwLock<HashMap<String, ProviderHealth>>>> = OnceLock::new();
+
+fn health_map() -> &'static Arc<RwLock<HashMap<String, ProviderHealth>>> {
+    PROVIDER_HEALTH.get_or_init(|| Arc::new(RwLock::new(HashMap::new())))
+}
+
+const FAIL_WINDOW: Duration = Duration::from_secs(60);
+const FAIL_THRESHOLD: usize = 5;
+
+/// Returns `Some(err_msg)` if the circuit is open for `provider` (i.e. at
+/// least `FAIL_THRESHOLD` failures occurred within the last `FAIL_WINDOW`).
+fn check_circuit_open(provider: &str) -> Option<String> {
+    let now = Instant::now();
+    let map = health_map().read().ok()?;
+    let entry = map.get(provider)?;
+    let fresh_fails = entry
+        .recent_failures
+        .iter()
+        .filter(|t| now.duration_since(**t) < FAIL_WINDOW)
+        .count();
+    if fresh_fails >= FAIL_THRESHOLD {
+        Some(format!(
+            "Provider {provider} temporariamente instável (circuito aberto após {fresh_fails} falhas recentes). Tente configurar outro provider no assistente."
+        ))
+    } else {
+        None
+    }
+}
+
+/// Record a failed call to `provider`. Also prunes any failure timestamp
+/// older than `FAIL_WINDOW` so the deque stays bounded.
+fn record_failure(provider: &str) {
+    if let Ok(mut map) = health_map().write() {
+        let now = Instant::now();
+        let entry = map
+            .entry(provider.to_string())
+            .or_insert_with(|| ProviderHealth {
+                recent_failures: VecDeque::new(),
+                last_success_at: None,
+            });
+        // Expire old failures at the front of the deque (lazy pruning).
+        while let Some(front) = entry.recent_failures.front() {
+            if now.duration_since(*front) >= FAIL_WINDOW {
+                entry.recent_failures.pop_front();
+            } else {
+                break;
+            }
+        }
+        entry.recent_failures.push_back(now);
+        tracing::warn!(
+            provider = provider,
+            fresh_fails = entry.recent_failures.len(),
+            "LLM provider failure recorded"
+        );
+    }
+}
+
+/// Record a successful call to `provider`. We do NOT clear the failure deque
+/// on success — natural decay via `FAIL_WINDOW` is enough to close the
+/// circuit and avoids a single good response re-opening a flaky provider.
+fn record_success(provider: &str) {
+    if let Ok(mut map) = health_map().write() {
+        let entry = map
+            .entry(provider.to_string())
+            .or_insert_with(|| ProviderHealth {
+                recent_failures: VecDeque::new(),
+                last_success_at: None,
+            });
+        entry.last_success_at = Some(Instant::now());
+    }
+}
+
+/// Test-only helper to reset all circuit-breaker state between unit tests.
+#[cfg(test)]
+fn reset_circuit_breaker_state() {
+    if let Ok(mut map) = health_map().write() {
+        map.clear();
+    }
 }
 
 /// Decode a base64 blob and extract plain text via the RAG text extractor.
@@ -2048,94 +2151,108 @@ async fn call_openai_raw(
     tools: &[LlmTool],
     timeout: Duration,
 ) -> Result<RawLlmResult, AppError> {
-    let mut body = json!({
-        "model": model,
-        "messages": messages,
-    });
-
-    // Newer models use max_completion_tokens; older ones use max_tokens
-    if is_openai_new_api_model(model) {
-        body["max_completion_tokens"] = json!(max_tokens);
-    } else {
-        body["max_tokens"] = json!(max_tokens);
+    // W1.1 — short-circuit if provider health is poor.
+    if let Some(err) = check_circuit_open("openai") {
+        return Err(AppError::InternalError(err));
     }
 
-    // Reasoning models don't accept temperature
-    if !is_openai_reasoning_model(model) {
-        body["temperature"] = json!(temperature);
-    }
+    let result: Result<RawLlmResult, AppError> = async {
+        let mut body = json!({
+            "model": model,
+            "messages": messages,
+        });
 
-    if !tools.is_empty() {
-        let functions: Vec<Value> = tools
-            .iter()
-            .map(|t| {
-                json!({
-                    "type": "function",
-                    "function": {
-                        "name": t.name,
-                        "description": t.description,
-                        "parameters": t.parameters,
-                    }
+        // Newer models use max_completion_tokens; older ones use max_tokens
+        if is_openai_new_api_model(model) {
+            body["max_completion_tokens"] = json!(max_tokens);
+        } else {
+            body["max_tokens"] = json!(max_tokens);
+        }
+
+        // Reasoning models don't accept temperature
+        if !is_openai_reasoning_model(model) {
+            body["temperature"] = json!(temperature);
+        }
+
+        if !tools.is_empty() {
+            let functions: Vec<Value> = tools
+                .iter()
+                .map(|t| {
+                    json!({
+                        "type": "function",
+                        "function": {
+                            "name": t.name,
+                            "description": t.description,
+                            "parameters": t.parameters,
+                        }
+                    })
                 })
-            })
-            .collect();
-        body["tools"] = json!(functions);
-    }
+                .collect();
+            body["tools"] = json!(functions);
+        }
 
-    let send_fut = client
-        .post("https://api.openai.com/v1/chat/completions")
-        .header("Authorization", format!("Bearer {api_key}"))
-        .json(&body)
-        .send();
-    let resp = tokio::time::timeout(timeout, send_fut)
-        .await
-        .map_err(|_| llm_timeout_error("openai", timeout.as_secs()))?
-        .map_err(|e| AppError::InternalError(format!("OpenAI request failed: {e}")))?;
+        let send_fut = client
+            .post("https://api.openai.com/v1/chat/completions")
+            .header("Authorization", format!("Bearer {api_key}"))
+            .json(&body)
+            .send();
+        let resp = tokio::time::timeout(timeout, send_fut)
+            .await
+            .map_err(|_| llm_timeout_error("openai", timeout.as_secs()))?
+            .map_err(|e| AppError::InternalError(format!("OpenAI request failed: {e}")))?;
 
-    let data: Value = resp
-        .json()
-        .await
-        .map_err(|e| AppError::InternalError(format!("OpenAI response parse failed: {e}")))?;
+        let data: Value = resp
+            .json()
+            .await
+            .map_err(|e| AppError::InternalError(format!("OpenAI response parse failed: {e}")))?;
 
-    // Check for API error response
-    if let Some(err) = data["error"]["message"].as_str() {
-        tracing::error!("OpenAI API error for model {model}: {err}");
-        return Err(AppError::InternalError(format!("OpenAI API error: {err}")));
-    }
+        // Check for API error response
+        if let Some(err) = data["error"]["message"].as_str() {
+            tracing::error!("OpenAI API error for model {model}: {err}");
+            return Err(AppError::InternalError(format!("OpenAI API error: {err}")));
+        }
 
-    let message = &data["choices"][0]["message"];
-    let content = message["content"].as_str().unwrap_or("").to_string();
-    let tokens = data["usage"]["total_tokens"].as_i64().unwrap_or(0) as i32;
+        let message = &data["choices"][0]["message"];
+        let content = message["content"].as_str().unwrap_or("").to_string();
+        let tokens = data["usage"]["total_tokens"].as_i64().unwrap_or(0) as i32;
 
-    // Preserve raw tool_calls for echoing back
-    let raw_tool_calls = message.get("tool_calls").cloned();
+        // Preserve raw tool_calls for echoing back
+        let raw_tool_calls = message.get("tool_calls").cloned();
 
-    let tool_calls = message["tool_calls"].as_array().map(|calls| {
-        calls
-            .iter()
-            .filter_map(|c| {
-                let id = c["id"].as_str()?.to_string();
-                let name = c["function"]["name"].as_str()?.to_string();
-                let args: Value = c["function"]["arguments"]
-                    .as_str()
-                    .and_then(|s| serde_json::from_str(s).ok())
-                    .unwrap_or(json!({}));
-                Some(ToolCall {
-                    id,
-                    name,
-                    arguments: args,
+        let tool_calls = message["tool_calls"].as_array().map(|calls| {
+            calls
+                .iter()
+                .filter_map(|c| {
+                    let id = c["id"].as_str()?.to_string();
+                    let name = c["function"]["name"].as_str()?.to_string();
+                    let args: Value = c["function"]["arguments"]
+                        .as_str()
+                        .and_then(|s| serde_json::from_str(s).ok())
+                        .unwrap_or(json!({}));
+                    Some(ToolCall {
+                        id,
+                        name,
+                        arguments: args,
+                    })
                 })
-            })
-            .collect()
-    });
+                .collect()
+        });
 
-    Ok(RawLlmResult {
-        content,
-        tokens,
-        tool_calls,
-        raw_tool_calls,
-        raw_content_blocks: None,
-    })
+        Ok(RawLlmResult {
+            content,
+            tokens,
+            tool_calls,
+            raw_tool_calls,
+            raw_content_blocks: None,
+        })
+    }
+    .await;
+
+    match &result {
+        Ok(_) => record_success("openai"),
+        Err(_) => record_failure("openai"),
+    }
+    result
 }
 
 // =====================================================================
@@ -2318,94 +2435,110 @@ async fn call_claude_raw(
     tools: &[LlmTool],
     timeout: Duration,
 ) -> Result<RawLlmResult, AppError> {
-    let mut body = json!({
-        "model": model,
-        "messages": messages,
-        "temperature": temperature,
-        "max_tokens": max_tokens,
-    });
-
-    if let Some(system) = system_msg {
-        body["system"] = json!(system);
+    // W1.1 — short-circuit if provider health is poor.
+    if let Some(err) = check_circuit_open("claude") {
+        return Err(AppError::InternalError(err));
     }
 
-    if !tools.is_empty() {
-        let tool_defs: Vec<Value> = tools
-            .iter()
-            .map(|t| {
-                json!({
-                    "name": t.name,
-                    "description": t.description,
-                    "input_schema": t.parameters,
+    let result: Result<RawLlmResult, AppError> = async {
+        let mut body = json!({
+            "model": model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+        });
+
+        if let Some(system) = system_msg {
+            body["system"] = json!(system);
+        }
+
+        if !tools.is_empty() {
+            let tool_defs: Vec<Value> = tools
+                .iter()
+                .map(|t| {
+                    json!({
+                        "name": t.name,
+                        "description": t.description,
+                        "input_schema": t.parameters,
+                    })
                 })
-            })
-            .collect();
-        body["tools"] = json!(tool_defs);
-    }
+                .collect();
+            body["tools"] = json!(tool_defs);
+        }
 
-    let send_fut = client
-        .post("https://api.anthropic.com/v1/messages")
-        .header("x-api-key", api_key)
-        .header("anthropic-version", "2023-06-01")
-        .header("content-type", "application/json")
-        .json(&body)
-        .send();
-    let resp = tokio::time::timeout(timeout, send_fut)
-        .await
-        .map_err(|_| llm_timeout_error("claude", timeout.as_secs()))?
-        .map_err(|e| AppError::InternalError(format!("Claude request failed: {e}")))?;
+        let send_fut = client
+            .post("https://api.anthropic.com/v1/messages")
+            .header("x-api-key", api_key)
+            .header("anthropic-version", "2023-06-01")
+            .header("content-type", "application/json")
+            .json(&body)
+            .send();
+        let resp = tokio::time::timeout(timeout, send_fut)
+            .await
+            .map_err(|_| llm_timeout_error("claude", timeout.as_secs()))?
+            .map_err(|e| AppError::InternalError(format!("Claude request failed: {e}")))?;
 
-    let data: Value = resp
-        .json()
-        .await
-        .map_err(|e| AppError::InternalError(format!("Claude response parse failed: {e}")))?;
+        let data: Value = resp
+            .json()
+            .await
+            .map_err(|e| AppError::InternalError(format!("Claude response parse failed: {e}")))?;
 
-    // Check for API error response
-    if let Some(err) = data["error"]["message"].as_str() {
-        tracing::error!("Claude API error for model {model}: {err}");
-        return Err(AppError::InternalError(format!("Claude API error: {err}")));
-    }
+        // Check for API error response
+        if let Some(err) = data["error"]["message"].as_str() {
+            tracing::error!("Claude API error for model {model}: {err}");
+            return Err(AppError::InternalError(format!("Claude API error: {err}")));
+        }
 
-    let mut content = String::new();
-    let mut tool_calls = Vec::new();
+        let mut content = String::new();
+        let mut tool_calls = Vec::new();
 
-    // Preserve raw content blocks for echoing back (needed for tool_use IDs)
-    let raw_content_blocks = data.get("content").cloned();
+        // Preserve raw content blocks for echoing back (needed for tool_use IDs)
+        let raw_content_blocks = data.get("content").cloned();
 
-    if let Some(blocks) = data["content"].as_array() {
-        for block in blocks {
-            match block["type"].as_str() {
-                Some("text") => {
-                    content.push_str(block["text"].as_str().unwrap_or(""));
-                }
-                Some("tool_use") => {
-                    if let (Some(id), Some(name)) = (block["id"].as_str(), block["name"].as_str()) {
-                        tool_calls.push(ToolCall {
-                            id: id.to_string(),
-                            name: name.to_string(),
-                            arguments: block["input"].clone(),
-                        });
+        if let Some(blocks) = data["content"].as_array() {
+            for block in blocks {
+                match block["type"].as_str() {
+                    Some("text") => {
+                        content.push_str(block["text"].as_str().unwrap_or(""));
                     }
+                    Some("tool_use") => {
+                        if let (Some(id), Some(name)) =
+                            (block["id"].as_str(), block["name"].as_str())
+                        {
+                            tool_calls.push(ToolCall {
+                                id: id.to_string(),
+                                name: name.to_string(),
+                                arguments: block["input"].clone(),
+                            });
+                        }
+                    }
+                    _ => {}
                 }
-                _ => {}
             }
         }
+
+        let input_tokens = data["usage"]["input_tokens"].as_i64().unwrap_or(0);
+        let output_tokens = data["usage"]["output_tokens"].as_i64().unwrap_or(0);
+
+        Ok(RawLlmResult {
+            content,
+            tokens: (input_tokens + output_tokens) as i32,
+            tool_calls: if tool_calls.is_empty() {
+                None
+            } else {
+                Some(tool_calls)
+            },
+            raw_tool_calls: None,
+            raw_content_blocks,
+        })
     }
+    .await;
 
-    let input_tokens = data["usage"]["input_tokens"].as_i64().unwrap_or(0);
-    let output_tokens = data["usage"]["output_tokens"].as_i64().unwrap_or(0);
-
-    Ok(RawLlmResult {
-        content,
-        tokens: (input_tokens + output_tokens) as i32,
-        tool_calls: if tool_calls.is_empty() {
-            None
-        } else {
-            Some(tool_calls)
-        },
-        raw_tool_calls: None,
-        raw_content_blocks,
-    })
+    match &result {
+        Ok(_) => record_success("claude"),
+        Err(_) => record_failure("claude"),
+    }
+    result
 }
 
 // =====================================================================
@@ -2557,96 +2690,110 @@ async fn call_gemini_raw(
     tools: &[LlmTool],
     timeout: Duration,
 ) -> Result<RawLlmResult, AppError> {
-    let mut body = json!({
-        "contents": contents,
-        "generationConfig": {
-            "temperature": temperature,
-            "maxOutputTokens": max_tokens,
-        },
-    });
-
-    if let Some(si) = system_instruction {
-        body["systemInstruction"] = si.clone();
+    // W1.1 — short-circuit if provider health is poor.
+    if let Some(err) = check_circuit_open("gemini") {
+        return Err(AppError::InternalError(err));
     }
 
-    if !tools.is_empty() {
-        let function_declarations: Vec<Value> = tools
-            .iter()
-            .map(|t| {
-                json!({
-                    "name": t.name,
-                    "description": t.description,
-                    "parameters": t.parameters,
+    let result: Result<RawLlmResult, AppError> = async {
+        let mut body = json!({
+            "contents": contents,
+            "generationConfig": {
+                "temperature": temperature,
+                "maxOutputTokens": max_tokens,
+            },
+        });
+
+        if let Some(si) = system_instruction {
+            body["systemInstruction"] = si.clone();
+        }
+
+        if !tools.is_empty() {
+            let function_declarations: Vec<Value> = tools
+                .iter()
+                .map(|t| {
+                    json!({
+                        "name": t.name,
+                        "description": t.description,
+                        "parameters": t.parameters,
+                    })
                 })
-            })
-            .collect();
-        body["tools"] = json!([{ "functionDeclarations": function_declarations }]);
-    }
+                .collect();
+            body["tools"] = json!([{ "functionDeclarations": function_declarations }]);
+        }
 
-    let url = format!(
-        "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
-    );
+        let url = format!(
+            "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+        );
 
-    let send_fut = client.post(&url).json(&body).send();
-    let resp = tokio::time::timeout(timeout, send_fut)
-        .await
-        .map_err(|_| llm_timeout_error("gemini", timeout.as_secs()))?
-        .map_err(|e| AppError::InternalError(format!("Gemini request failed: {e}")))?;
+        let send_fut = client.post(&url).json(&body).send();
+        let resp = tokio::time::timeout(timeout, send_fut)
+            .await
+            .map_err(|_| llm_timeout_error("gemini", timeout.as_secs()))?
+            .map_err(|e| AppError::InternalError(format!("Gemini request failed: {e}")))?;
 
-    let data: Value = resp
-        .json()
-        .await
-        .map_err(|e| AppError::InternalError(format!("Gemini response parse failed: {e}")))?;
+        let data: Value = resp
+            .json()
+            .await
+            .map_err(|e| AppError::InternalError(format!("Gemini response parse failed: {e}")))?;
 
-    if let Some(err) = data["error"]["message"].as_str() {
-        tracing::error!("Gemini API error for model {model}: {err}");
-        return Err(AppError::InternalError(format!("Gemini API error: {err}")));
-    }
+        if let Some(err) = data["error"]["message"].as_str() {
+            tracing::error!("Gemini API error for model {model}: {err}");
+            return Err(AppError::InternalError(format!("Gemini API error: {err}")));
+        }
 
-    let mut content = String::new();
-    let mut tool_calls: Vec<ToolCall> = Vec::new();
+        let mut content = String::new();
+        let mut tool_calls: Vec<ToolCall> = Vec::new();
 
-    // Preserve the full parts array so we can echo it back on the next turn.
-    let raw_parts = data["candidates"][0]["content"]["parts"]
-        .as_array()
-        .cloned()
-        .map(Value::Array);
+        // Preserve the full parts array so we can echo it back on the next turn.
+        let raw_parts = data["candidates"][0]["content"]["parts"]
+            .as_array()
+            .cloned()
+            .map(Value::Array);
 
-    if let Some(parts) = data["candidates"][0]["content"]["parts"].as_array() {
-        for part in parts {
-            if let Some(text) = part["text"].as_str() {
-                content.push_str(text);
-            }
-            if let Some(fc) = part.get("functionCall") {
-                if let Some(name) = fc["name"].as_str() {
-                    let args = fc.get("args").cloned().unwrap_or(json!({}));
-                    // Gemini doesn't return an id — synthesize one for logging parity.
-                    let id = format!("gemini_call_{}_{}", name, tool_calls.len());
-                    tool_calls.push(ToolCall {
-                        id,
-                        name: name.to_string(),
-                        arguments: if args.is_null() { json!({}) } else { args },
-                    });
+        if let Some(parts) = data["candidates"][0]["content"]["parts"].as_array() {
+            for part in parts {
+                if let Some(text) = part["text"].as_str() {
+                    content.push_str(text);
+                }
+                if let Some(fc) = part.get("functionCall") {
+                    if let Some(name) = fc["name"].as_str() {
+                        let args = fc.get("args").cloned().unwrap_or(json!({}));
+                        // Gemini doesn't return an id — synthesize one for logging parity.
+                        let id = format!("gemini_call_{}_{}", name, tool_calls.len());
+                        tool_calls.push(ToolCall {
+                            id,
+                            name: name.to_string(),
+                            arguments: if args.is_null() { json!({}) } else { args },
+                        });
+                    }
                 }
             }
         }
+
+        let tokens = data["usageMetadata"]["totalTokenCount"]
+            .as_i64()
+            .unwrap_or(0) as i32;
+
+        Ok(RawLlmResult {
+            content,
+            tokens,
+            tool_calls: if tool_calls.is_empty() {
+                None
+            } else {
+                Some(tool_calls)
+            },
+            raw_tool_calls: None,
+            raw_content_blocks: raw_parts,
+        })
     }
+    .await;
 
-    let tokens = data["usageMetadata"]["totalTokenCount"]
-        .as_i64()
-        .unwrap_or(0) as i32;
-
-    Ok(RawLlmResult {
-        content,
-        tokens,
-        tool_calls: if tool_calls.is_empty() {
-            None
-        } else {
-            Some(tool_calls)
-        },
-        raw_tool_calls: None,
-        raw_content_blocks: raw_parts,
-    })
+    match &result {
+        Ok(_) => record_success("gemini"),
+        Err(_) => record_failure("gemini"),
+    }
+    result
 }
 
 /// Merge consecutive same-role Gemini contents into one entry.
@@ -2820,86 +2967,100 @@ async fn call_grok_raw(
     tools: &[LlmTool],
     timeout: Duration,
 ) -> Result<RawLlmResult, AppError> {
-    let mut body = json!({
-        "model": model,
-        "messages": messages,
-        "max_tokens": max_tokens,
-        "temperature": temperature,
-    });
-
-    if is_grok_reasoning_model(model) {
-        body["reasoning_effort"] = json!("medium");
+    // W1.1 — short-circuit if provider health is poor.
+    if let Some(err) = check_circuit_open("grok") {
+        return Err(AppError::InternalError(err));
     }
 
-    if !tools.is_empty() {
-        let functions: Vec<Value> = tools
-            .iter()
-            .map(|t| {
-                json!({
-                    "type": "function",
-                    "function": {
-                        "name": t.name,
-                        "description": t.description,
-                        "parameters": t.parameters,
-                    }
+    let result: Result<RawLlmResult, AppError> = async {
+        let mut body = json!({
+            "model": model,
+            "messages": messages,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+        });
+
+        if is_grok_reasoning_model(model) {
+            body["reasoning_effort"] = json!("medium");
+        }
+
+        if !tools.is_empty() {
+            let functions: Vec<Value> = tools
+                .iter()
+                .map(|t| {
+                    json!({
+                        "type": "function",
+                        "function": {
+                            "name": t.name,
+                            "description": t.description,
+                            "parameters": t.parameters,
+                        }
+                    })
                 })
-            })
-            .collect();
-        body["tools"] = json!(functions);
-    }
+                .collect();
+            body["tools"] = json!(functions);
+        }
 
-    let send_fut = client
-        .post("https://api.x.ai/v1/chat/completions")
-        .header("Authorization", format!("Bearer {api_key}"))
-        .json(&body)
-        .send();
-    let resp = tokio::time::timeout(timeout, send_fut)
-        .await
-        .map_err(|_| llm_timeout_error("grok", timeout.as_secs()))?
-        .map_err(|e| AppError::InternalError(format!("Grok request failed: {e}")))?;
+        let send_fut = client
+            .post("https://api.x.ai/v1/chat/completions")
+            .header("Authorization", format!("Bearer {api_key}"))
+            .json(&body)
+            .send();
+        let resp = tokio::time::timeout(timeout, send_fut)
+            .await
+            .map_err(|_| llm_timeout_error("grok", timeout.as_secs()))?
+            .map_err(|e| AppError::InternalError(format!("Grok request failed: {e}")))?;
 
-    let data: Value = resp
-        .json()
-        .await
-        .map_err(|e| AppError::InternalError(format!("Grok response parse failed: {e}")))?;
+        let data: Value = resp
+            .json()
+            .await
+            .map_err(|e| AppError::InternalError(format!("Grok response parse failed: {e}")))?;
 
-    if let Some(err) = data["error"]["message"].as_str() {
-        tracing::error!("Grok API error for model {model}: {err}");
-        return Err(AppError::InternalError(format!("Grok API error: {err}")));
-    }
+        if let Some(err) = data["error"]["message"].as_str() {
+            tracing::error!("Grok API error for model {model}: {err}");
+            return Err(AppError::InternalError(format!("Grok API error: {err}")));
+        }
 
-    let message = &data["choices"][0]["message"];
-    let content = message["content"].as_str().unwrap_or("").to_string();
-    let tokens = data["usage"]["total_tokens"].as_i64().unwrap_or(0) as i32;
+        let message = &data["choices"][0]["message"];
+        let content = message["content"].as_str().unwrap_or("").to_string();
+        let tokens = data["usage"]["total_tokens"].as_i64().unwrap_or(0) as i32;
 
-    let raw_tool_calls = message.get("tool_calls").cloned();
+        let raw_tool_calls = message.get("tool_calls").cloned();
 
-    let tool_calls = message["tool_calls"].as_array().map(|calls| {
-        calls
-            .iter()
-            .filter_map(|c| {
-                let id = c["id"].as_str()?.to_string();
-                let name = c["function"]["name"].as_str()?.to_string();
-                let args: Value = c["function"]["arguments"]
-                    .as_str()
-                    .and_then(|s| serde_json::from_str(s).ok())
-                    .unwrap_or(json!({}));
-                Some(ToolCall {
-                    id,
-                    name,
-                    arguments: args,
+        let tool_calls = message["tool_calls"].as_array().map(|calls| {
+            calls
+                .iter()
+                .filter_map(|c| {
+                    let id = c["id"].as_str()?.to_string();
+                    let name = c["function"]["name"].as_str()?.to_string();
+                    let args: Value = c["function"]["arguments"]
+                        .as_str()
+                        .and_then(|s| serde_json::from_str(s).ok())
+                        .unwrap_or(json!({}));
+                    Some(ToolCall {
+                        id,
+                        name,
+                        arguments: args,
+                    })
                 })
-            })
-            .collect()
-    });
+                .collect()
+        });
 
-    Ok(RawLlmResult {
-        content,
-        tokens,
-        tool_calls,
-        raw_tool_calls,
-        raw_content_blocks: None,
-    })
+        Ok(RawLlmResult {
+            content,
+            tokens,
+            tool_calls,
+            raw_tool_calls,
+            raw_content_blocks: None,
+        })
+    }
+    .await;
+
+    match &result {
+        Ok(_) => record_success("grok"),
+        Err(_) => record_failure("grok"),
+    }
+    result
 }
 
 // =====================================================================
@@ -3051,84 +3212,200 @@ async fn call_deepseek_raw(
     tools: &[LlmTool],
     timeout: Duration,
 ) -> Result<RawLlmResult, AppError> {
-    let mut body = json!({
-        "model": model,
-        "messages": messages,
-        "max_tokens": max_tokens,
-    });
-
-    // Reasoner silently ignores temperature — only send on deepseek-chat.
-    if !is_deepseek_reasoner(model) {
-        body["temperature"] = json!(temperature);
+    // W1.1 — short-circuit if provider health is poor.
+    if let Some(err) = check_circuit_open("deepseek") {
+        return Err(AppError::InternalError(err));
     }
 
-    if !tools.is_empty() {
-        let functions: Vec<Value> = tools
-            .iter()
-            .map(|t| {
-                json!({
-                    "type": "function",
-                    "function": {
-                        "name": t.name,
-                        "description": t.description,
-                        "parameters": t.parameters,
-                    }
+    let result: Result<RawLlmResult, AppError> = async {
+        let mut body = json!({
+            "model": model,
+            "messages": messages,
+            "max_tokens": max_tokens,
+        });
+
+        // Reasoner silently ignores temperature — only send on deepseek-chat.
+        if !is_deepseek_reasoner(model) {
+            body["temperature"] = json!(temperature);
+        }
+
+        if !tools.is_empty() {
+            let functions: Vec<Value> = tools
+                .iter()
+                .map(|t| {
+                    json!({
+                        "type": "function",
+                        "function": {
+                            "name": t.name,
+                            "description": t.description,
+                            "parameters": t.parameters,
+                        }
+                    })
                 })
-            })
-            .collect();
-        body["tools"] = json!(functions);
-    }
+                .collect();
+            body["tools"] = json!(functions);
+        }
 
-    let send_fut = client
-        .post("https://api.deepseek.com/chat/completions")
-        .header("Authorization", format!("Bearer {api_key}"))
-        .json(&body)
-        .send();
-    let resp = tokio::time::timeout(timeout, send_fut)
-        .await
-        .map_err(|_| llm_timeout_error("deepseek", timeout.as_secs()))?
-        .map_err(|e| AppError::InternalError(format!("Deepseek request failed: {e}")))?;
+        let send_fut = client
+            .post("https://api.deepseek.com/chat/completions")
+            .header("Authorization", format!("Bearer {api_key}"))
+            .json(&body)
+            .send();
+        let resp = tokio::time::timeout(timeout, send_fut)
+            .await
+            .map_err(|_| llm_timeout_error("deepseek", timeout.as_secs()))?
+            .map_err(|e| AppError::InternalError(format!("Deepseek request failed: {e}")))?;
 
-    let data: Value = resp
-        .json()
-        .await
-        .map_err(|e| AppError::InternalError(format!("Deepseek response parse failed: {e}")))?;
+        let data: Value = resp
+            .json()
+            .await
+            .map_err(|e| AppError::InternalError(format!("Deepseek response parse failed: {e}")))?;
 
-    if let Some(err) = data["error"]["message"].as_str() {
-        tracing::error!("Deepseek API error for model {model}: {err}");
-        return Err(AppError::InternalError(format!("Deepseek API error: {err}")));
-    }
+        if let Some(err) = data["error"]["message"].as_str() {
+            tracing::error!("Deepseek API error for model {model}: {err}");
+            return Err(AppError::InternalError(format!("Deepseek API error: {err}")));
+        }
 
-    let message = &data["choices"][0]["message"];
-    let content = message["content"].as_str().unwrap_or("").to_string();
-    let tokens = data["usage"]["total_tokens"].as_i64().unwrap_or(0) as i32;
+        let message = &data["choices"][0]["message"];
+        let content = message["content"].as_str().unwrap_or("").to_string();
+        let tokens = data["usage"]["total_tokens"].as_i64().unwrap_or(0) as i32;
 
-    let raw_tool_calls = message.get("tool_calls").cloned();
+        let raw_tool_calls = message.get("tool_calls").cloned();
 
-    let tool_calls = message["tool_calls"].as_array().map(|calls| {
-        calls
-            .iter()
-            .filter_map(|c| {
-                let id = c["id"].as_str()?.to_string();
-                let name = c["function"]["name"].as_str()?.to_string();
-                let args: Value = c["function"]["arguments"]
-                    .as_str()
-                    .and_then(|s| serde_json::from_str(s).ok())
-                    .unwrap_or(json!({}));
-                Some(ToolCall {
-                    id,
-                    name,
-                    arguments: args,
+        let tool_calls = message["tool_calls"].as_array().map(|calls| {
+            calls
+                .iter()
+                .filter_map(|c| {
+                    let id = c["id"].as_str()?.to_string();
+                    let name = c["function"]["name"].as_str()?.to_string();
+                    let args: Value = c["function"]["arguments"]
+                        .as_str()
+                        .and_then(|s| serde_json::from_str(s).ok())
+                        .unwrap_or(json!({}));
+                    Some(ToolCall {
+                        id,
+                        name,
+                        arguments: args,
+                    })
                 })
-            })
-            .collect()
-    });
+                .collect()
+        });
 
-    Ok(RawLlmResult {
-        content,
-        tokens,
-        tool_calls,
-        raw_tool_calls,
-        raw_content_blocks: None,
-    })
+        Ok(RawLlmResult {
+            content,
+            tokens,
+            tool_calls,
+            raw_tool_calls,
+            raw_content_blocks: None,
+        })
+    }
+    .await;
+
+    match &result {
+        Ok(_) => record_success("deepseek"),
+        Err(_) => record_failure("deepseek"),
+    }
+    result
+}
+
+// =====================================================================
+// Tests — W1.1 circuit breaker
+// =====================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    /// Serialize tests that touch the global circuit-breaker map so they
+    /// can't race with one another inside the same test binary.
+    static TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    /// After 5 failures within the window, `check_circuit_open` must return
+    /// the LLM-friendly error message.
+    #[test]
+    fn test_circuit_opens_after_5_failures() {
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_circuit_breaker_state();
+
+        let provider = "test_provider_opens";
+        assert!(
+            check_circuit_open(provider).is_none(),
+            "circuit should start closed"
+        );
+
+        for _ in 0..(FAIL_THRESHOLD - 1) {
+            record_failure(provider);
+        }
+        assert!(
+            check_circuit_open(provider).is_none(),
+            "circuit stays closed below threshold"
+        );
+
+        record_failure(provider); // 5th failure
+        let open = check_circuit_open(provider);
+        assert!(open.is_some(), "circuit opens at threshold");
+        let msg = open.unwrap();
+        assert!(
+            msg.contains("circuito aberto"),
+            "error message: {msg:?}"
+        );
+        assert!(
+            msg.contains(provider),
+            "error message should name the provider: {msg:?}"
+        );
+    }
+
+    /// Failures accumulated on one provider must not affect another provider.
+    #[test]
+    fn test_different_providers_independent() {
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_circuit_breaker_state();
+
+        let a = "test_provider_a";
+        let b = "test_provider_b";
+        for _ in 0..FAIL_THRESHOLD {
+            record_failure(a);
+        }
+        assert!(
+            check_circuit_open(a).is_some(),
+            "provider_a circuit should be open"
+        );
+        assert!(
+            check_circuit_open(b).is_none(),
+            "provider_b circuit should remain closed"
+        );
+    }
+
+    /// A recorded success must NOT close the circuit on its own — we rely on
+    /// natural window decay instead. This test documents that behavior so
+    /// future refactors don't accidentally change it.
+    ///
+    /// NOTE: we intentionally do NOT test window decay via wall-clock sleep.
+    /// `std::time::Instant` is monotonic and unaffected by `tokio::time::pause()`,
+    /// and a real-time 60s sleep in the unit suite would be prohibitive. A
+    /// clock-injection refactor is left for a future iteration; the decay
+    /// logic itself (prune-on-front-of-deque in `record_failure` and
+    /// window-filter in `check_circuit_open`) is straightforward.
+    #[test]
+    fn test_success_does_not_close_open_circuit() {
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_circuit_breaker_state();
+
+        let provider = "test_provider_success";
+        for _ in 0..FAIL_THRESHOLD {
+            record_failure(provider);
+        }
+        assert!(
+            check_circuit_open(provider).is_some(),
+            "circuit must be open after threshold failures"
+        );
+
+        record_success(provider);
+
+        assert!(
+            check_circuit_open(provider).is_some(),
+            "success alone must NOT close the circuit (decay via FAIL_WINDOW only)"
+        );
+    }
 }
