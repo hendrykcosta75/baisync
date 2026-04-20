@@ -12,6 +12,7 @@ pub struct Config {
     pub baileys_url: String,
     pub baileys_api_key: String,
     pub app_url: String,
+    pub allowed_origins: Vec<String>,
     pub baisync_api_key: String,
     pub baisync_rate_limit: i32,
     pub admin_user: String,
@@ -24,6 +25,14 @@ pub struct Config {
 
 impl Config {
     pub fn from_env() -> Self {
+        let app_url = env::var("APP_URL").unwrap_or_else(|_| "http://localhost:3000".into());
+        let allowed_origins = env::var("ALLOWED_ORIGINS")
+            .unwrap_or_else(|_| app_url.clone())
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<_>>();
+
         Self {
             database_url: env::var("DATABASE_URL").unwrap_or_else(|_| "127.0.0.1:9042".into()),
             jwt_secret: env::var("JWT_SECRET").expect("JWT_SECRET must be set"),
@@ -37,7 +46,8 @@ impl Config {
             encryption_key: env::var("ENCRYPTION_KEY").expect("ENCRYPTION_KEY must be set"),
             baileys_url: env::var("BAILEYS_URL").unwrap_or_else(|_| "http://baileys:3025".into()),
             baileys_api_key: env::var("BAILEYS_API_KEY").unwrap_or_default(),
-            app_url: env::var("APP_URL").unwrap_or_else(|_| "http://localhost:3000".into()),
+            app_url,
+            allowed_origins,
             baisync_api_key: env::var("BAISYNC_API_KEY").unwrap_or_default(),
             baisync_rate_limit: env::var("BAISYNC_RATE_LIMIT_PER_HOUR")
                 .unwrap_or_else(|_| "150".into())
