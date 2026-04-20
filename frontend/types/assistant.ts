@@ -170,6 +170,12 @@ export interface Assistant {
   isTeamLead: boolean
   parentAssistantId?: string
   subAgents: SubAgent[]
+  /** W1.2 — cap on the number of tool-calling rounds per LLM turn.
+   * Defaults to 5 when unset (enforced in backend). */
+  configMaxToolRounds?: number | null
+  /** W1.2 — cap on total wall-clock duration of the tool-calling loop,
+   * in milliseconds. Defaults to 30000 when unset (enforced in backend). */
+  configMaxDurationMs?: number | null
 }
 
 export interface PixChargeSummary {

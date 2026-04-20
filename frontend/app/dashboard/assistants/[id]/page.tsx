@@ -11,6 +11,7 @@ import { ApplicationsTab } from '@/components/assistants/tabs/applications-tab'
 import { ConversationsTab } from '@/components/assistants/tabs/conversations-tab'
 import { ChatTab } from '@/components/assistants/tabs/chat-tab'
 import { LogsTab } from '@/components/assistants/tabs/logs-tab'
+import { AdvancedTab } from '@/components/assistants/tabs/advanced-tab'
 import { PageTransition } from '@/lib/motion'
 
 export default function AssistantDetailPage() {
@@ -90,6 +91,10 @@ export default function AssistantDetailPage() {
                 Logs
                 <Tabs.Indicator />
               </Tabs.Tab>
+              <Tabs.Tab id="advanced">
+                Avançado
+                <Tabs.Indicator />
+              </Tabs.Tab>
             </Tabs.List>
           </Tabs.ListContainer>
 
@@ -119,6 +124,10 @@ export default function AssistantDetailPage() {
 
           <Tabs.Panel id="logs">
             <LogsTab assistant={assistant} />
+          </Tabs.Panel>
+
+          <Tabs.Panel id="advanced">
+            <AdvancedTab assistant={assistant} />
           </Tabs.Panel>
         </Tabs>
       </div>

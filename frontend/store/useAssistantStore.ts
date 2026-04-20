@@ -40,6 +40,8 @@ function mapAssistantFromApi(a: Record<string, unknown>): Assistant {
       voiceId: ((a.config_audio_voice_id ?? null) as string | null),
     } satisfies AudioConfig,
     subAgents: (a.sub_agents ?? a.subAgents ?? []) as SubAgent[],
+    configMaxToolRounds: (a.config_max_tool_rounds ?? null) as number | null,
+    configMaxDurationMs: (a.config_max_duration_ms ?? null) as number | null,
   }
 }
 
@@ -108,6 +110,9 @@ function assistantToApiPayload(a: Partial<Assistant>): Record<string, unknown> {
   if (a.systemPrompt !== undefined) payload.system_prompt = a.systemPrompt
   if (a.isTeamLead !== undefined) payload.is_team_lead = a.isTeamLead
   if (a.parentAssistantId !== undefined) payload.parent_assistant_id = a.parentAssistantId
+  // W1.2 thresholds
+  if (a.configMaxToolRounds !== undefined) payload.config_max_tool_rounds = a.configMaxToolRounds
+  if (a.configMaxDurationMs !== undefined) payload.config_max_duration_ms = a.configMaxDurationMs
   return payload
 }
 

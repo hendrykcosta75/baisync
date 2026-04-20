@@ -31,6 +31,9 @@ pub struct Assistant {
     pub config_audio_fallback_to_text: bool,
     pub config_audio_transcription_failure_message: Option<String>,
     pub config_audio_voice_id: Option<String>,
+    // W1.2 thresholds — defaults applied in code: 5 rounds, 30000 ms.
+    pub config_max_tool_rounds: Option<i32>,
+    pub config_max_duration_ms: Option<i32>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -87,6 +90,11 @@ pub struct UpdateAssistantRequest {
     pub integration_settings: Option<IntegrationSettingsPayload>,
     #[serde(alias = "audioSettings")]
     pub audio_settings: Option<AudioSettingsPayload>,
+    // W1.2 thresholds (snake_case or camelCase from frontend).
+    #[serde(alias = "configMaxToolRounds")]
+    pub config_max_tool_rounds: Option<i32>,
+    #[serde(alias = "configMaxDurationMs")]
+    pub config_max_duration_ms: Option<i32>,
 }
 
 #[allow(dead_code)]

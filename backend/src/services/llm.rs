@@ -377,7 +377,20 @@ pub struct ToolContext<'a> {
     pub conversation_id: Option<Uuid>,
     pub config: Option<&'a crate::config::Config>,
     pub encryption: Option<&'a crate::services::encryption::EncryptionService>,
+    /// W1.2 — per-assistant cap on tool-calling rounds. `None` means use
+    /// [`DEFAULT_MAX_TOOL_ROUNDS`]. Enforced in each provider's tool loop.
+    pub max_tool_rounds: Option<i32>,
+    /// W1.2 — per-assistant cap on total wall-clock duration of the
+    /// tool-calling loop, in milliseconds. `None` means use
+    /// [`DEFAULT_MAX_DURATION_MS`]. Enforced between rounds; a running HTTP
+    /// call is still allowed to finish.
+    pub max_duration_ms: Option<i32>,
 }
+
+/// W1.2 defaults applied when the assistant has no override. Exposed so
+/// callers (handlers, tests) share one source of truth.
+pub const DEFAULT_MAX_TOOL_ROUNDS: i32 = 5;
+pub const DEFAULT_MAX_DURATION_MS: i32 = 30_000;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct LlmMessage {
@@ -919,6 +932,8 @@ pub async fn call_llm_with_tools(
         conversation_id: None,
         config: None,
         encryption: None,
+        max_tool_rounds: None,
+        max_duration_ms: None,
     };
     call_llm_with_tools_ctx(
         provider,
@@ -2067,8 +2082,35 @@ async fn call_openai_with_tools(
     let mut all_records: Vec<ToolCallRecord> = Vec::new();
 
     let timeout = resolve_llm_timeout(ctx);
+    // W1.2 caps (per-assistant overrides with code defaults).
+    let max_rounds = ctx
+        .max_tool_rounds
+        .filter(|v| *v > 0)
+        .unwrap_or(DEFAULT_MAX_TOOL_ROUNDS);
+    let max_duration = Duration::from_millis(
+        ctx.max_duration_ms
+            .filter(|v| *v > 0)
+            .unwrap_or(DEFAULT_MAX_DURATION_MS) as u64,
+    );
+    let loop_started = Instant::now();
 
-    for round in 0..5 {
+    for round in 0..max_rounds {
+        // W1.2 — duration cap check BEFORE issuing the next provider call.
+        if loop_started.elapsed() > max_duration {
+            tracing::warn!(
+                event = "cap_hit",
+                cap = "max_duration_ms",
+                elapsed_ms = loop_started.elapsed().as_millis() as u64,
+                budget_ms = max_duration.as_millis() as u64,
+                provider = "openai",
+                "tool loop duration cap hit"
+            );
+            return Err(AppError::InternalError(format!(
+                "Limite de duração das rodadas de ferramentas atingido ({} ms). Considere simplificar o fluxo.",
+                max_duration.as_millis()
+            )));
+        }
+
         let result = call_openai_raw(
             client,
             api_key,
@@ -2138,7 +2180,16 @@ async fn call_openai_with_tools(
         }
     }
 
-    Err(AppError::InternalError("Too many tool call rounds".into()))
+    tracing::warn!(
+        event = "cap_hit",
+        cap = "max_tool_rounds",
+        rounds = max_rounds,
+        provider = "openai",
+        "tool loop rounds cap hit"
+    );
+    Err(AppError::InternalError(format!(
+        "Limite de rodadas de ferramentas atingido ({max_rounds}). Considere simplificar o fluxo."
+    )))
 }
 
 async fn call_openai_raw(
@@ -2342,8 +2393,33 @@ async fn call_claude_with_tools(
     let mut all_records: Vec<ToolCallRecord> = Vec::new();
 
     let timeout = resolve_llm_timeout(ctx);
+    // W1.2 caps
+    let max_rounds = ctx
+        .max_tool_rounds
+        .filter(|v| *v > 0)
+        .unwrap_or(DEFAULT_MAX_TOOL_ROUNDS);
+    let max_duration = Duration::from_millis(
+        ctx.max_duration_ms
+            .filter(|v| *v > 0)
+            .unwrap_or(DEFAULT_MAX_DURATION_MS) as u64,
+    );
+    let loop_started = Instant::now();
 
-    for round in 0..5 {
+    for round in 0..max_rounds {
+        if loop_started.elapsed() > max_duration {
+            tracing::warn!(
+                event = "cap_hit",
+                cap = "max_duration_ms",
+                elapsed_ms = loop_started.elapsed().as_millis() as u64,
+                budget_ms = max_duration.as_millis() as u64,
+                provider = "claude",
+                "tool loop duration cap hit"
+            );
+            return Err(AppError::InternalError(format!(
+                "Limite de duração das rodadas de ferramentas atingido ({} ms). Considere simplificar o fluxo.",
+                max_duration.as_millis()
+            )));
+        }
         let result = call_claude_raw(
             client,
             api_key,
@@ -2421,7 +2497,16 @@ async fn call_claude_with_tools(
         }
     }
 
-    Err(AppError::InternalError("Too many tool call rounds".into()))
+    tracing::warn!(
+        event = "cap_hit",
+        cap = "max_tool_rounds",
+        rounds = max_rounds,
+        provider = "claude",
+        "tool loop rounds cap hit"
+    );
+    Err(AppError::InternalError(format!(
+        "Limite de rodadas de ferramentas atingido ({max_rounds}). Considere simplificar o fluxo."
+    )))
 }
 
 async fn call_claude_raw(
@@ -2588,8 +2673,33 @@ async fn call_gemini_with_tools(
     let mut all_records: Vec<ToolCallRecord> = Vec::new();
 
     let timeout = resolve_llm_timeout(ctx);
+    // W1.2 caps
+    let max_rounds = ctx
+        .max_tool_rounds
+        .filter(|v| *v > 0)
+        .unwrap_or(DEFAULT_MAX_TOOL_ROUNDS);
+    let max_duration = Duration::from_millis(
+        ctx.max_duration_ms
+            .filter(|v| *v > 0)
+            .unwrap_or(DEFAULT_MAX_DURATION_MS) as u64,
+    );
+    let loop_started = Instant::now();
 
-    for round in 0..5 {
+    for round in 0..max_rounds {
+        if loop_started.elapsed() > max_duration {
+            tracing::warn!(
+                event = "cap_hit",
+                cap = "max_duration_ms",
+                elapsed_ms = loop_started.elapsed().as_millis() as u64,
+                budget_ms = max_duration.as_millis() as u64,
+                provider = "gemini",
+                "tool loop duration cap hit"
+            );
+            return Err(AppError::InternalError(format!(
+                "Limite de duração das rodadas de ferramentas atingido ({} ms). Considere simplificar o fluxo.",
+                max_duration.as_millis()
+            )));
+        }
         let result = call_gemini_raw(
             client,
             api_key,
@@ -2676,7 +2786,16 @@ async fn call_gemini_with_tools(
         }
     }
 
-    Err(AppError::InternalError("Too many tool call rounds".into()))
+    tracing::warn!(
+        event = "cap_hit",
+        cap = "max_tool_rounds",
+        rounds = max_rounds,
+        provider = "gemini",
+        "tool loop rounds cap hit"
+    );
+    Err(AppError::InternalError(format!(
+        "Limite de rodadas de ferramentas atingido ({max_rounds}). Considere simplificar o fluxo."
+    )))
 }
 
 async fn call_gemini_raw(
@@ -2887,8 +3006,33 @@ async fn call_grok_with_tools(
     let mut all_records: Vec<ToolCallRecord> = Vec::new();
 
     let timeout = resolve_llm_timeout(ctx);
+    // W1.2 caps
+    let max_rounds = ctx
+        .max_tool_rounds
+        .filter(|v| *v > 0)
+        .unwrap_or(DEFAULT_MAX_TOOL_ROUNDS);
+    let max_duration = Duration::from_millis(
+        ctx.max_duration_ms
+            .filter(|v| *v > 0)
+            .unwrap_or(DEFAULT_MAX_DURATION_MS) as u64,
+    );
+    let loop_started = Instant::now();
 
-    for round in 0..5 {
+    for round in 0..max_rounds {
+        if loop_started.elapsed() > max_duration {
+            tracing::warn!(
+                event = "cap_hit",
+                cap = "max_duration_ms",
+                elapsed_ms = loop_started.elapsed().as_millis() as u64,
+                budget_ms = max_duration.as_millis() as u64,
+                provider = "grok",
+                "tool loop duration cap hit"
+            );
+            return Err(AppError::InternalError(format!(
+                "Limite de duração das rodadas de ferramentas atingido ({} ms). Considere simplificar o fluxo.",
+                max_duration.as_millis()
+            )));
+        }
         let result = call_grok_raw(
             client,
             api_key,
@@ -2954,7 +3098,16 @@ async fn call_grok_with_tools(
         }
     }
 
-    Err(AppError::InternalError("Too many tool call rounds".into()))
+    tracing::warn!(
+        event = "cap_hit",
+        cap = "max_tool_rounds",
+        rounds = max_rounds,
+        provider = "grok",
+        "tool loop rounds cap hit"
+    );
+    Err(AppError::InternalError(format!(
+        "Limite de rodadas de ferramentas atingido ({max_rounds}). Considere simplificar o fluxo."
+    )))
 }
 
 async fn call_grok_raw(
@@ -3129,8 +3282,33 @@ async fn call_deepseek_with_tools(
     let mut all_records: Vec<ToolCallRecord> = Vec::new();
 
     let timeout = resolve_llm_timeout(ctx);
+    // W1.2 caps
+    let max_rounds = ctx
+        .max_tool_rounds
+        .filter(|v| *v > 0)
+        .unwrap_or(DEFAULT_MAX_TOOL_ROUNDS);
+    let max_duration = Duration::from_millis(
+        ctx.max_duration_ms
+            .filter(|v| *v > 0)
+            .unwrap_or(DEFAULT_MAX_DURATION_MS) as u64,
+    );
+    let loop_started = Instant::now();
 
-    for round in 0..5 {
+    for round in 0..max_rounds {
+        if loop_started.elapsed() > max_duration {
+            tracing::warn!(
+                event = "cap_hit",
+                cap = "max_duration_ms",
+                elapsed_ms = loop_started.elapsed().as_millis() as u64,
+                budget_ms = max_duration.as_millis() as u64,
+                provider = "deepseek",
+                "tool loop duration cap hit"
+            );
+            return Err(AppError::InternalError(format!(
+                "Limite de duração das rodadas de ferramentas atingido ({} ms). Considere simplificar o fluxo.",
+                max_duration.as_millis()
+            )));
+        }
         let result = call_deepseek_raw(
             client,
             api_key,
@@ -3199,7 +3377,16 @@ async fn call_deepseek_with_tools(
         }
     }
 
-    Err(AppError::InternalError("Too many tool call rounds".into()))
+    tracing::warn!(
+        event = "cap_hit",
+        cap = "max_tool_rounds",
+        rounds = max_rounds,
+        provider = "deepseek",
+        "tool loop rounds cap hit"
+    );
+    Err(AppError::InternalError(format!(
+        "Limite de rodadas de ferramentas atingido ({max_rounds}). Considere simplificar o fluxo."
+    )))
 }
 
 async fn call_deepseek_raw(

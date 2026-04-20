@@ -704,6 +704,8 @@ pub async fn process_incoming_message(
         conversation_id: Some(conversation.id),
         config: Some(config),
         encryption: Some(encryption),
+        max_tool_rounds: assistant.config_max_tool_rounds,
+        max_duration_ms: assistant.config_max_duration_ms,
     };
     let llm_response = llm::call_llm_with_tools_ctx(
         &assistant.llm_provider,
@@ -2572,6 +2574,8 @@ pub async fn playground_chat(
         conversation_id: Some(conversation.id),
         config: Some(config),
         encryption: Some(encryption),
+        max_tool_rounds: assistant.config_max_tool_rounds,
+        max_duration_ms: assistant.config_max_duration_ms,
     };
     let llm_response = llm::call_llm_with_tools_ctx(
         &assistant.llm_provider,
