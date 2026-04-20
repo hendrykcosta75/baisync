@@ -2,6 +2,9 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { Assistant, AssistantFile, AssistantTool, AssistantIntegration, SubAgent, AudioConfig, AudioMode, AudioProvider } from '@/types/assistant'
 import { apiFetch } from '@/lib/api'
+import type { AssistantTemplate } from '@/lib/assistantTemplates'
+
+export type TemplateFormInput = Pick<Assistant, 'name' | 'description' | 'llmProvider' | 'model' | 'temperature' | 'maxTokens' | 'systemPrompt'>
 
 function mapAssistantFromApi(a: Record<string, unknown>): Assistant {
   return {
@@ -116,6 +119,7 @@ interface AssistantState {
   fetchAssistantFiles: (assistantId: string) => Promise<void>
   fetchAssistantTools: (assistantId: string) => Promise<void>
   addAssistant: (assistant: Omit<Assistant, 'files' | 'tools' | 'integrations' | 'isTeamLead' | 'subAgents'> & Partial<Assistant>) => Promise<void>
+  importAssistantFromTemplate: (formData: TemplateFormInput, template: AssistantTemplate) => Promise<Assistant | null>
   updateAssistant: (id: string, updatedAssistant: Partial<Assistant>) => Promise<void>
   deleteAssistant: (id: string) => Promise<void>
   addFileToAssistant: (id: string, file: AssistantFile, rawFile?: File) => Promise<void>
@@ -273,6 +277,96 @@ export const useAssistantStore = create<AssistantState>()(
             assistants: state.assistants.filter(a => a.id !== full.id),
           }))
         }
+      },
+
+      importAssistantFromTemplate: async (formData, template) => {
+        const optimisticId = `tpl_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+        const optimistic: Assistant = {
+          id: optimisticId,
+          name: formData.name,
+          description: formData.description,
+          llmProvider: formData.llmProvider,
+          model: formData.model,
+          temperature: formData.temperature,
+          maxTokens: formData.maxTokens,
+          systemPrompt: formData.systemPrompt,
+          files: [],
+          tools: [],
+          integrations: [],
+          isTeamLead: false,
+          subAgents: [],
+          integrationSettings: template.integrationSettings,
+        }
+
+        set((state) => ({ assistants: [...state.assistants, optimistic] }))
+
+        let realId: string
+        let mapped: Assistant
+        try {
+          const created = await apiFetch<Record<string, unknown>>('/api/assistants', {
+            method: 'POST',
+            body: JSON.stringify(assistantToApiPayload(optimistic)),
+          })
+          realId = created.id as string
+          mapped = mapAssistantFromApi(created)
+        } catch (err) {
+          console.error('Template import — failed to create assistant:', err)
+          set((state) => ({ assistants: state.assistants.filter(a => a.id !== optimisticId) }))
+          return null
+        }
+
+        try {
+          await apiFetch(`/api/assistants/${realId}`, {
+            method: 'PUT',
+            body: JSON.stringify({ integrationSettings: template.integrationSettings }),
+          })
+        } catch (err) {
+          console.error('Template import — failed to apply integrationSettings:', err)
+        }
+
+        const createdTools: AssistantTool[] = []
+        for (const t of template.tools) {
+          try {
+            const resp = await apiFetch<Record<string, unknown>>(`/api/assistants/${realId}/tools`, {
+              method: 'POST',
+              body: JSON.stringify({
+                name: t.name,
+                description: t.description,
+                endpoint: '',
+                method: 'POST',
+                schema_json: null,
+                headers_json: null,
+                is_enabled: true,
+                tool_type: t.toolType,
+              }),
+            })
+            const toolId = typeof resp.id === 'string' ? resp.id : `tpl_tool_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+            createdTools.push({
+              id: toolId,
+              name: t.name,
+              description: t.description,
+              endpoint: '',
+              method: 'POST',
+              isEnabled: true,
+              toolType: t.toolType,
+            })
+          } catch (err) {
+            console.error(`Template import — failed to add tool ${t.toolType}:`, err)
+          }
+        }
+
+        const final: Assistant = {
+          ...mapped,
+          tools: createdTools,
+          integrationSettings: template.integrationSettings,
+          files: mapped.files ?? [],
+          integrations: mapped.integrations ?? [],
+          subAgents: mapped.subAgents ?? [],
+        }
+        set((state) => ({
+          assistants: state.assistants.map(a => a.id === optimisticId ? final : a),
+        }))
+        return final
       },
 
       updateAssistant: async (id, updatedAssistant) => {
