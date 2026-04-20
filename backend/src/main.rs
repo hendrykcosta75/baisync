@@ -16,6 +16,7 @@ use crate::services::encryption::EncryptionService;
 use crate::services::llm::{
     apply_llm_call_log_event, init_llm_call_log_sender, LlmCallLogEvent,
 };
+use crate::services::messaging_recovery;
 
 #[tokio::main]
 async fn main() {
@@ -58,6 +59,17 @@ async fn main() {
         tokio::spawn(async move {
             services::health_check::run(db_hc, enc_hc, config_hc).await;
         });
+    }
+
+    // W1.3 — messaging recovery poller. Detecta linhas em `llm_call_logs`
+    // com status='in_progress' há >120s (backend morreu mid-LLM) e envia
+    // uma mensagem de recovery ao usuário para destravar a conversa.
+    // Threshold de drift: 30s (placeholder até I1 acumular histograma p99).
+    {
+        let db_rec = db.clone();
+        let config_rec = config.clone();
+        let enc_rec = encryption.clone();
+        messaging_recovery::spawn_recovery_poller(db_rec, config_rec, enc_rec);
     }
 
     let event_bus = services::events::EventBus::new();

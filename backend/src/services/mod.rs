@@ -13,6 +13,7 @@ pub mod livekit;
 pub mod llm;
 pub mod meeting;
 pub mod messaging;
+pub mod messaging_recovery;
 pub mod notification;
 pub mod okr;
 pub mod strategy_map;
