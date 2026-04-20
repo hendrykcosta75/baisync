@@ -7,11 +7,15 @@ mod middleware;
 mod models;
 mod services;
 
+use tokio::sync::mpsc;
 use tracing_subscriber::EnvFilter;
 
 use crate::config::Config;
 use crate::services::connection_state::ConnectionStateStore;
 use crate::services::encryption::EncryptionService;
+use crate::services::llm::{
+    apply_llm_call_log_event, init_llm_call_log_sender, LlmCallLogEvent,
+};
 
 #[tokio::main]
 async fn main() {
@@ -27,6 +31,24 @@ async fn main() {
     let encryption = EncryptionService::new(&config.encryption_key)
         .expect("ENCRYPTION_KEY must be 64 hex chars (32 bytes)");
     let conn_store = ConnectionStateStore::new();
+
+    // T1.2 — spawn the llm_call_logs drain task. The hot LLM path only `send`s
+    // into this channel (fire-and-forget); the drain owns all Cassandra I/O.
+    // Unbounded: volume is one event pair per top-level LLM call; if this ever
+    // becomes a backlog risk, swap for a bounded channel with a drop policy.
+    {
+        let (tx, mut rx) = mpsc::unbounded_channel::<LlmCallLogEvent>();
+        init_llm_call_log_sender(tx);
+        let db_drain = db.clone();
+        tokio::spawn(async move {
+            while let Some(event) = rx.recv().await {
+                if let Err(e) = apply_llm_call_log_event(&db_drain, event).await {
+                    tracing::warn!("llm_call_log write failed: {e}");
+                }
+            }
+            tracing::info!("llm_call_log drain task exiting (sender dropped)");
+        });
+    }
 
     // Spawn background health check task
     {

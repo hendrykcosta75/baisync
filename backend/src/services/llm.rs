@@ -3,6 +3,9 @@ use reqwest::Client;
 use scylla::frame::value::{CqlTimestamp, CqlTimeuuid};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
+use std::sync::OnceLock;
+use tokio::sync::mpsc::UnboundedSender;
 use uuid::Uuid;
 
 use crate::db::DbSession;
@@ -18,52 +21,213 @@ fn extract_text_from_base64(b64: &str, mime: &str) -> Option<String> {
     crate::services::rag::extract_text(&bytes, mime).ok()
 }
 
-/// Persist one row per top-level LLM call for dashboard analytics.
-/// Non-fatal — any DB failure is logged and swallowed so it never breaks
-/// the actual message flow.
-#[allow(clippy::too_many_arguments)]
-async fn record_llm_call(
-    db: &DbSession,
-    user_id: Uuid,
-    assistant_id: Uuid,
-    conversation_id: Option<Uuid>,
-    provider: &str,
-    model: &str,
-    tokens_used: i32,
-    duration_ms: i32,
-    tool_rounds: i32,
-    tool_names: Vec<String>,
-    error: Option<String>,
-) {
-    let ts = uuid::timestamp::Timestamp::now(uuid::NoContext);
-    let id = Uuid::new_v1(ts, &[0x01, 0x23, 0x45, 0x67, 0x89, 0xab]);
-    let timeuuid = CqlTimeuuid::from(id);
-    let now = CqlTimestamp(Utc::now().timestamp_millis());
+// ---------------------------------------------------------------------------
+// T1.2 — llm_call_logs as fire-and-forget session log.
+//
+// The hot LLM path no longer `.await`s a Cassandra INSERT. Instead it emits
+// `LlmCallLogEvent`s to an unbounded mpsc channel; `main.rs` owns a drain task
+// that applies them. This keeps provider latency independent of Cassandra.
+//
+// Lifecycle:
+//   Started  -> INSERT   (status='in_progress')
+//   Finished -> UPDATE   IF status='in_progress'  (status='completed')
+//   Failed   -> UPDATE   IF status='in_progress'  (status='failed')
+//
+// The LWT guard makes the Finished/Failed apply idempotent and lets W1.3
+// (crash recovery) safely mark abandoned in_progress rows as 'failed' later.
+// ---------------------------------------------------------------------------
 
-    let res = db
-        .query_unpaged(
-            "INSERT INTO inertial_eclipse.llm_call_logs \
-             (user_id, assistant_id, id, conversation_id, provider, model, \
-              tokens_used, duration_ms, tool_rounds, tool_names, error, created_at) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                &user_id,
-                &assistant_id,
-                &timeuuid,
-                &conversation_id,
-                provider,
-                model,
-                tokens_used,
-                duration_ms,
-                tool_rounds,
-                &tool_names,
-                &error,
-                now,
-            ),
-        )
-        .await;
-    if let Err(e) = res {
-        tracing::warn!("Failed to persist llm_call_log: {e}");
+/// One step in the llm_call_logs session log.
+///
+/// Every variant carries the full tenant key (`user_id`, `assistant_id`) so
+/// the drain writer can scope UPDATE WHERE clauses without consulting state.
+#[derive(Debug)]
+pub enum LlmCallLogEvent {
+    Started {
+        user_id: Uuid,
+        assistant_id: Uuid,
+        /// UUIDv1 derived from `started_at_ms` — used as the row `id` (TIMEUUID).
+        id: Uuid,
+        conversation_id: Option<Uuid>,
+        provider: String,
+        model: String,
+        started_at_ms: i64,
+        /// SHA-256 of serialized prompt messages, hex-truncated. Never plaintext.
+        messages_digest: String,
+        /// Logical kind: "primary" (today), "compaction" / "evaluator" (future).
+        kind: String,
+    },
+    Finished {
+        id: Uuid,
+        user_id: Uuid,
+        assistant_id: Uuid,
+        tokens_used: i32,
+        duration_ms: i32,
+        tool_rounds: i32,
+        tool_names: Vec<String>,
+        retry_count: i32,
+    },
+    Failed {
+        id: Uuid,
+        user_id: Uuid,
+        assistant_id: Uuid,
+        duration_ms: i32,
+        error: String,
+        retry_count: i32,
+    },
+}
+
+/// Global sender for `LlmCallLogEvent`s. Set once at startup from `main.rs`.
+///
+/// If unset (e.g. unit tests, `call_llm_with_tools` without ctx), `enqueue`
+/// is a silent no-op — the LLM flow never fails because of logging.
+pub static LLM_CALL_LOG_SENDER: OnceLock<UnboundedSender<LlmCallLogEvent>> = OnceLock::new();
+
+/// Install the global sender. Call once from `main.rs` after `db::connect`.
+pub fn init_llm_call_log_sender(s: UnboundedSender<LlmCallLogEvent>) {
+    let _ = LLM_CALL_LOG_SENDER.set(s);
+}
+
+/// Fire-and-forget: push an event onto the drain channel.
+///
+/// Dropped events are logged at `debug` level only, since the channel is
+/// unbounded in practice and a `send` failure here means the receiver task
+/// has been dropped — we don't want to spam warnings on shutdown.
+fn enqueue(event: LlmCallLogEvent) {
+    if let Some(sender) = LLM_CALL_LOG_SENDER.get() {
+        if sender.send(event).is_err() {
+            tracing::debug!("llm_call_log drain receiver dropped; event discarded");
+        }
+    }
+}
+
+/// Hash `messages` for correlation without leaking user text. SHA-256 hex,
+/// truncated to 32 chars (128 bits) — plenty of entropy for de-duplication.
+pub(crate) fn digest_messages(messages: &[LlmMessage]) -> String {
+    let serialized = serde_json::to_string(messages).unwrap_or_default();
+    let mut hasher = Sha256::new();
+    hasher.update(serialized.as_bytes());
+    let full = hex::encode(hasher.finalize());
+    full.chars().take(32).collect()
+}
+
+/// Build a UUIDv1 from an epoch-ms timestamp. Used so the row `id` sorts by
+/// session-start time without a separate clustering key.
+fn timeuuid_from_ms(started_at_ms: i64) -> Uuid {
+    // `uuid::timestamp::Timestamp::from_unix` expects seconds + subsec nanos.
+    let secs = (started_at_ms / 1000).max(0) as u64;
+    let nanos = ((started_at_ms.rem_euclid(1000)) * 1_000_000) as u32;
+    let ts = uuid::timestamp::Timestamp::from_unix(uuid::NoContext, secs, nanos);
+    Uuid::new_v1(ts, &[0x01, 0x23, 0x45, 0x67, 0x89, 0xab])
+}
+
+/// Drain a single `LlmCallLogEvent` onto Cassandra. Called only by the
+/// background task spawned in `main.rs`; never by the hot LLM path.
+///
+/// Multi-tenancy: every UPDATE is scoped by `(user_id, assistant_id, id)` —
+/// the row's full primary key, preserving partition isolation.
+pub async fn apply_llm_call_log_event(
+    db: &DbSession,
+    event: LlmCallLogEvent,
+) -> Result<(), AppError> {
+    match event {
+        LlmCallLogEvent::Started {
+            user_id,
+            assistant_id,
+            id,
+            conversation_id,
+            provider,
+            model,
+            started_at_ms,
+            messages_digest,
+            kind,
+        } => {
+            let timeuuid = CqlTimeuuid::from(id);
+            let ts = CqlTimestamp(started_at_ms);
+            db.query_unpaged(
+                "INSERT INTO inertial_eclipse.llm_call_logs \
+                 (user_id, assistant_id, id, conversation_id, provider, model, \
+                  status, started_at, messages_digest, kind, retry_count, \
+                  tokens_used, duration_ms, tool_rounds, created_at) \
+                 VALUES (?, ?, ?, ?, ?, ?, 'in_progress', ?, ?, ?, 0, 0, 0, 0, ?)",
+                (
+                    &user_id,
+                    &assistant_id,
+                    &timeuuid,
+                    &conversation_id,
+                    &provider,
+                    &model,
+                    ts,
+                    &messages_digest,
+                    &kind,
+                    ts,
+                ),
+            )
+            .await
+            .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+            Ok(())
+        }
+        LlmCallLogEvent::Finished {
+            id,
+            user_id,
+            assistant_id,
+            tokens_used,
+            duration_ms,
+            tool_rounds,
+            tool_names,
+            retry_count,
+        } => {
+            let timeuuid = CqlTimeuuid::from(id);
+            // LWT: only apply if still in_progress. Idempotent across retries
+            // and safe against W1.3 recovery racing a late completion.
+            db.query_unpaged(
+                "UPDATE inertial_eclipse.llm_call_logs \
+                 SET status = 'completed', tokens_used = ?, duration_ms = ?, \
+                     tool_rounds = ?, tool_names = ?, retry_count = ? \
+                 WHERE user_id = ? AND assistant_id = ? AND id = ? \
+                 IF status = 'in_progress'",
+                (
+                    tokens_used,
+                    duration_ms,
+                    tool_rounds,
+                    &tool_names,
+                    retry_count,
+                    &user_id,
+                    &assistant_id,
+                    &timeuuid,
+                ),
+            )
+            .await
+            .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+            Ok(())
+        }
+        LlmCallLogEvent::Failed {
+            id,
+            user_id,
+            assistant_id,
+            duration_ms,
+            error,
+            retry_count,
+        } => {
+            let timeuuid = CqlTimeuuid::from(id);
+            db.query_unpaged(
+                "UPDATE inertial_eclipse.llm_call_logs \
+                 SET status = 'failed', duration_ms = ?, error = ?, retry_count = ? \
+                 WHERE user_id = ? AND assistant_id = ? AND id = ? \
+                 IF status = 'in_progress'",
+                (
+                    duration_ms,
+                    &error,
+                    retry_count,
+                    &user_id,
+                    &assistant_id,
+                    &timeuuid,
+                ),
+            )
+            .await
+            .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+            Ok(())
+        }
     }
 }
 
@@ -678,6 +842,7 @@ pub async fn call_llm_with_tools_ctx(
 ) -> Result<LlmResponse, AppError> {
     let client = Client::new();
     let started = std::time::Instant::now();
+    let started_at_ms = Utc::now().timestamp_millis();
 
     // I1 — drift tracing. Best-effort, non-fatal.
     // Emits `drift_ms = now - last_message_at` so a 2-week histogram can
@@ -712,6 +877,29 @@ pub async fn call_llm_with_tools_ctx(
         provider = %provider,
         "llm call starting"
     );
+
+    // T1.2 — emit `Started` into the fire-and-forget drain BEFORE the HTTP POST.
+    // A row id is created here so `Finished`/`Failed` can target it via LWT.
+    // Only produced when we have the full tenant context (webhook path, not
+    // ad-hoc unit tests).
+    let session_id: Option<Uuid> =
+        if let (Some(user_id), Some(assistant_id)) = (ctx.user_id, ctx.assistant_id) {
+            let id = timeuuid_from_ms(started_at_ms);
+            enqueue(LlmCallLogEvent::Started {
+                user_id,
+                assistant_id,
+                id,
+                conversation_id: ctx.conversation_id,
+                provider: provider.to_string(),
+                model: model.to_string(),
+                started_at_ms,
+                messages_digest: digest_messages(&messages),
+                kind: "primary".to_string(),
+            });
+            Some(id)
+        } else {
+            None
+        };
 
     let result: Result<LlmResponse, AppError> = match provider {
         "openai" => {
@@ -786,40 +974,40 @@ pub async fn call_llm_with_tools_ctx(
 
     let duration_ms = started.elapsed().as_millis().min(i32::MAX as u128) as i32;
 
-    // Best-effort persistence — only when we have the full tenant context.
-    if let (Some(db), Some(user_id), Some(assistant_id)) =
-        (ctx.db, ctx.user_id, ctx.assistant_id)
+    // T1.2 — close the session log. Fire-and-forget; NEVER `.await` here.
+    // retry_count defaults to 0 today; T2.2 will wire real values through ctx.
+    if let (Some(id), Some(user_id), Some(assistant_id)) =
+        (session_id, ctx.user_id, ctx.assistant_id)
     {
-        let (tokens_used, tool_rounds, tool_names, error) = match &result {
+        match &result {
             Ok(r) => {
-                let names: Vec<String> = r
+                let tool_names: Vec<String> = r
                     .tool_call_records
                     .iter()
                     .map(|t| t.tool_name.clone())
                     .collect();
-                (
-                    r.tokens_used,
-                    r.tool_call_records.len() as i32,
-                    names,
-                    None,
-                )
+                enqueue(LlmCallLogEvent::Finished {
+                    id,
+                    user_id,
+                    assistant_id,
+                    tokens_used: r.tokens_used,
+                    duration_ms,
+                    tool_rounds: r.tool_call_records.len() as i32,
+                    tool_names,
+                    retry_count: 0,
+                });
             }
-            Err(e) => (0, 0, Vec::new(), Some(e.to_string())),
-        };
-        record_llm_call(
-            db,
-            user_id,
-            assistant_id,
-            ctx.conversation_id,
-            provider,
-            model,
-            tokens_used,
-            duration_ms,
-            tool_rounds,
-            tool_names,
-            error,
-        )
-        .await;
+            Err(e) => {
+                enqueue(LlmCallLogEvent::Failed {
+                    id,
+                    user_id,
+                    assistant_id,
+                    duration_ms,
+                    error: e.to_string(),
+                    retry_count: 0,
+                });
+            }
+        }
     }
 
     result
