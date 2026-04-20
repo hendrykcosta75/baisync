@@ -640,6 +640,32 @@ pub async fn call_llm_with_tools(
     .await
 }
 
+/// Read the `last_message_at` timestamp of a conversation as epoch millis.
+///
+/// Used by the I1 drift tracing at the top of `call_llm_with_tools_ctx` to emit
+/// how long the conversation has been idle before each LLM call. Best-effort —
+/// any DB error or NULL value yields `Ok(None)` so callers can treat drift
+/// as unknown without failing the LLM flow.
+async fn query_last_message_at(
+    db: &DbSession,
+    assistant_id: Uuid,
+    user_id: Uuid,
+    conversation_id: Uuid,
+) -> Result<Option<i64>, AppError> {
+    let result = db
+        .query_unpaged(
+            "SELECT last_message_at FROM inertial_eclipse.conversations \
+             WHERE assistant_id = ? AND user_id = ? AND id = ?",
+            (&assistant_id, &user_id, &conversation_id),
+        )
+        .await
+        .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+
+    type Row = (Option<chrono::DateTime<Utc>>,);
+    let row = result.into_rows_result()?.maybe_first_row::<Row>()?;
+    Ok(row.and_then(|(ts,)| ts.map(|t| t.timestamp_millis())))
+}
+
 pub async fn call_llm_with_tools_ctx(
     provider: &str,
     model: &str,
@@ -652,6 +678,40 @@ pub async fn call_llm_with_tools_ctx(
 ) -> Result<LlmResponse, AppError> {
     let client = Client::new();
     let started = std::time::Instant::now();
+
+    // I1 — drift tracing. Best-effort, non-fatal.
+    // Emits `drift_ms = now - last_message_at` so a 2-week histogram can
+    // back the W1.3 recovery threshold. Missing context or DB errors
+    // produce `drift_ms = None` but the event is still emitted.
+    let drift_ms: Option<i64> = if let (Some(db), Some(conv_id), Some(user_id), Some(asst_id)) = (
+        ctx.db,
+        ctx.conversation_id,
+        ctx.user_id,
+        ctx.assistant_id,
+    ) {
+        match query_last_message_at(db, asst_id, user_id, conv_id).await {
+            Ok(Some(last_ms)) => {
+                let now_ms = Utc::now().timestamp_millis();
+                Some(now_ms - last_ms)
+            }
+            Ok(None) => None,
+            Err(e) => {
+                tracing::warn!("I1 drift query failed: {e}");
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    tracing::info!(
+        event = "llm_call_started",
+        drift_ms = drift_ms,
+        conversation_id = ?ctx.conversation_id,
+        assistant_id = ?ctx.assistant_id,
+        provider = %provider,
+        "llm call starting"
+    );
 
     let result: Result<LlmResponse, AppError> = match provider {
         "openai" => {
