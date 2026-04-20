@@ -7,6 +7,7 @@ use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::Sha256;
+use subtle::ConstantTimeEq;
 use uuid::Uuid;
 
 use crate::config::Config;
@@ -71,9 +72,16 @@ pub async fn webhook_baileys(
     let event = payload["event"].as_str().unwrap_or("");
     let phone = format!("+{phone_from_path}");
 
-    // Validate webhookVerifyToken against BAILEYS_API_KEY (shared secret between backend and Baileys service)
+    // Validate webhookVerifyToken against BAILEYS_API_KEY (shared secret between backend and Baileys service).
+    // Constant-time comparison: ct_eq on slices of different lengths returns 0, so length mismatch is safe.
     let webhook_token = payload["webhookVerifyToken"].as_str().unwrap_or("");
-    if !config.baileys_api_key.is_empty() && webhook_token != config.baileys_api_key {
+    if !config.baileys_api_key.is_empty()
+        && webhook_token
+            .as_bytes()
+            .ct_eq(config.baileys_api_key.as_bytes())
+            .unwrap_u8()
+            != 1
+    {
         tracing::warn!("Baileys webhook token mismatch for {phone}");
         return Err(AppError::Unauthorized(
             "Invalid webhook verify token".into(),
@@ -521,27 +529,36 @@ pub async fn webhook_meta(
     headers: HeaderMap,
     body: axum::body::Bytes,
 ) -> Result<Json<Value>, AppError> {
-    // Validate X-Hub-Signature-256 if META_APP_SECRET is configured
-    if !config.meta_app_secret.is_empty() {
-        let signature = headers
-            .get("x-hub-signature-256")
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("");
+    // Validate X-Hub-Signature-256. META_APP_SECRET MUST be configured — a silent
+    // bypass would let anyone post fake webhooks.
+    if config.meta_app_secret.is_empty() {
+        return Err(AppError::InternalError(
+            "META_APP_SECRET not configured".into(),
+        ));
+    }
 
-        let expected = {
-            let mut mac = Hmac::<Sha256>::new_from_slice(config.meta_app_secret.as_bytes())
-                .map_err(|_| AppError::InternalError("HMAC init failed".into()))?;
-            mac.update(&body);
-            let result = mac.finalize();
-            format!("sha256={}", hex::encode(result.into_bytes()))
-        };
+    let signature = headers
+        .get("x-hub-signature-256")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
 
-        if signature != expected {
-            tracing::warn!("Meta webhook signature mismatch");
-            return Err(AppError::Unauthorized("Invalid webhook signature".into()));
-        }
-    } else {
-        tracing::warn!("META_APP_SECRET not configured — skipping webhook signature validation");
+    let expected = {
+        let mut mac = Hmac::<Sha256>::new_from_slice(config.meta_app_secret.as_bytes())
+            .map_err(|_| AppError::InternalError("HMAC init failed".into()))?;
+        mac.update(&body);
+        let result = mac.finalize();
+        format!("sha256={}", hex::encode(result.into_bytes()))
+    };
+
+    // Constant-time comparison to avoid timing side-channel.
+    if signature
+        .as_bytes()
+        .ct_eq(expected.as_bytes())
+        .unwrap_u8()
+        != 1
+    {
+        tracing::warn!("Meta webhook signature mismatch");
+        return Err(AppError::Unauthorized("Invalid webhook signature".into()));
     }
 
     let payload: Value = serde_json::from_slice(&body)
