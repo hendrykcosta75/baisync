@@ -719,6 +719,10 @@ O usuário pode enviar imagens e documentos diretamente no chat. Quando receber 
     let new_used = used + 1;
     let pct = (new_used as f64 / limit as f64) * 100.0;
 
+    // T1.3 — timeout envolve apenas a resposta inicial do HTTP POST (connect + headers).
+    // O loop de frames SSE fica fora do escopo — streaming pode levar dezenas de segundos.
+    let llm_timeout_secs = config.llm_global_timeout_secs;
+
     // Create channel for SSE events
     let (tx, rx) = mpsc::channel::<Result<Event, Infallible>>(128);
 
@@ -748,12 +752,33 @@ O usuário pode enviar imagens e documentos diretamente no chat. Quando receber 
             api_key
         );
 
-        let resp = client
+        // T1.3 — timeout só na resposta inicial do SSE.
+        let send_fut = client
             .post(&url)
             .header("Content-Type", "application/json")
             .json(&body)
-            .send()
-            .await;
+            .send();
+        let resp = match tokio::time::timeout(
+            std::time::Duration::from_secs(llm_timeout_secs),
+            send_fut,
+        )
+        .await
+        {
+            Ok(res) => res,
+            Err(_) => {
+                let msg = format!(
+                    "A chamada ao provider gemini excedeu {llm_timeout_secs}s. Tente resposta mais concisa ou reduza max_tokens."
+                );
+                tracing::error!("Gemini request timed out after {}s", llm_timeout_secs);
+                let _ = tx
+                    .send(Ok(Event::default().event("error").data(
+                        serde_json::json!({"error": msg}).to_string(),
+                    )))
+                    .await;
+                let _ = tx.send(Ok(Event::default().event("done").data("{}"))).await;
+                return;
+            }
+        };
 
         let _ = tx
             .send(Ok(Event::default().event("status").data(

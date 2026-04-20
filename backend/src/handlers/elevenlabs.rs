@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use axum::extract::{Extension, Query};
 use axum::Json;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
@@ -9,6 +11,16 @@ use crate::handlers::assistants::OwnerResolveQuery;
 use crate::middleware::auth::AuthUser;
 use crate::services::assistant as assistant_service;
 use crate::services::encryption::EncryptionService;
+
+/// T1.3 — Read `LLM_GLOBAL_TIMEOUT_SECS` from env. Handler doesn't get `Config`
+/// via Extension in the current router wiring; env read is the pragmatic path.
+fn llm_global_timeout() -> Duration {
+    let secs = std::env::var("LLM_GLOBAL_TIMEOUT_SECS")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(60);
+    Duration::from_secs(secs)
+}
 
 #[derive(Debug, Serialize)]
 pub struct VoiceItem {
@@ -55,12 +67,20 @@ pub async fn list_voices(
             .await?;
 
     let client = reqwest::Client::new();
-    let resp = client
+    let timeout = llm_global_timeout();
+    let send_fut = client
         .get("https://api.elevenlabs.io/v2/voices")
         .query(&[("page_size", "100")])
         .header("xi-api-key", &api_key)
-        .send()
+        .send();
+    let resp = tokio::time::timeout(timeout, send_fut)
         .await
+        .map_err(|_| {
+            AppError::InternalError(format!(
+                "A chamada ao provider elevenlabs excedeu {}s. Tente resposta mais concisa ou reduza max_tokens.",
+                timeout.as_secs()
+            ))
+        })?
         .map_err(|e| AppError::InternalError(format!("ElevenLabs request failed: {e}")))?;
 
     if !resp.status().is_success() {
@@ -121,7 +141,8 @@ pub async fn preview_voice(
         body.voice_id
     );
 
-    let resp = client
+    let timeout = llm_global_timeout();
+    let send_fut = client
         .post(&url)
         .header("xi-api-key", &api_key)
         .header("Content-Type", "application/json")
@@ -130,8 +151,15 @@ pub async fn preview_voice(
             "model_id": "eleven_multilingual_v2",
             "output_format": "mp3_44100_128"
         }))
-        .send()
+        .send();
+    let resp = tokio::time::timeout(timeout, send_fut)
         .await
+        .map_err(|_| {
+            AppError::InternalError(format!(
+                "A chamada ao provider elevenlabs excedeu {}s. Tente resposta mais concisa ou reduza max_tokens.",
+                timeout.as_secs()
+            ))
+        })?
         .map_err(|e| AppError::InternalError(format!("ElevenLabs TTS request failed: {e}")))?;
 
     if !resp.status().is_success() {

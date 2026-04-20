@@ -21,6 +21,10 @@ pub struct Config {
     pub livekit_url: String,
     pub livekit_api_key: String,
     pub livekit_api_secret: String,
+    /// Timeout global em segundos para HTTP POST a providers LLM
+    /// (openai, claude, gemini, grok, deepseek e transcription providers).
+    /// Não afeta o loop de tool execution (mantém semântica de "LLM decide quando parar").
+    pub llm_global_timeout_secs: u64,
 }
 
 impl Config {
@@ -59,6 +63,10 @@ impl Config {
             livekit_url: env::var("LIVEKIT_URL").unwrap_or_else(|_| "ws://livekit:7880".into()),
             livekit_api_key: env::var("LIVEKIT_API_KEY").unwrap_or_default(),
             livekit_api_secret: env::var("LIVEKIT_API_SECRET").unwrap_or_default(),
+            llm_global_timeout_secs: env::var("LLM_GLOBAL_TIMEOUT_SECS")
+                .unwrap_or_else(|_| "60".into())
+                .parse()
+                .unwrap_or(60),
         }
     }
 }

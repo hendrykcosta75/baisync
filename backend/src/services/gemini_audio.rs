@@ -1,6 +1,18 @@
+use std::time::Duration;
+
 use base64::{engine::general_purpose, Engine as _};
 
 use crate::errors::AppError;
+
+/// See `openai_audio::llm_global_timeout` for rationale — env var read direct
+/// because these services aren't wired through `Config`.
+fn llm_global_timeout() -> Duration {
+    let secs = std::env::var("LLM_GLOBAL_TIMEOUT_SECS")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(60);
+    Duration::from_secs(secs)
+}
 
 pub const GEMINI_TTS_MODEL: &str = "gemini-2.5-flash-preview-tts";
 pub const GEMINI_TTS_SAMPLE_RATE: u32 = 24000;
@@ -50,7 +62,8 @@ pub async fn text_to_speech(
     );
 
     let client = reqwest::Client::new();
-    let resp = client
+    let timeout = llm_global_timeout();
+    let send_fut = client
         .post(&url)
         .json(&serde_json::json!({
             "contents": [{"parts": [{"text": text}]}],
@@ -63,8 +76,15 @@ pub async fn text_to_speech(
                 }
             }
         }))
-        .send()
+        .send();
+    let resp = tokio::time::timeout(timeout, send_fut)
         .await
+        .map_err(|_| {
+            AppError::InternalError(format!(
+                "A chamada ao provider gemini excedeu {}s. Tente resposta mais concisa ou reduza max_tokens.",
+                timeout.as_secs()
+            ))
+        })?
         .map_err(|e| AppError::InternalError(format!("Gemini TTS request failed: {e}")))?;
 
     if !resp.status().is_success() {

@@ -5,12 +5,38 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::sync::OnceLock;
+use std::time::Duration;
 use tokio::sync::mpsc::UnboundedSender;
 use uuid::Uuid;
 
 use crate::db::DbSession;
 use crate::errors::AppError;
 use crate::models::assistant::AssistantTool;
+
+/// Default LLM provider HTTP timeout used when `Config` is not available in the
+/// call path (e.g. ad-hoc unit tests exercising `call_llm`). Production paths
+/// always pass `Config` via `ToolContext`.
+const DEFAULT_LLM_TIMEOUT_SECS: u64 = 60;
+
+/// Resolve the LLM HTTP timeout from `ToolContext`, falling back to the
+/// default when `Config` is not attached. Kept as a function so a future
+/// refactor that threads `Config` everywhere does not require rewriting
+/// call sites.
+fn resolve_llm_timeout(ctx: &ToolContext<'_>) -> Duration {
+    let secs = ctx
+        .config
+        .map(|c| c.llm_global_timeout_secs)
+        .unwrap_or(DEFAULT_LLM_TIMEOUT_SECS);
+    Duration::from_secs(secs)
+}
+
+/// Map a `tokio::time::timeout` elapsed error to an LLM-friendly message.
+/// Format matches the invariant in `docs/harness/tool-errors.md`.
+fn llm_timeout_error(provider: &str, secs: u64) -> AppError {
+    AppError::InternalError(format!(
+        "A chamada ao provider {provider} excedeu {secs}s. Tente resposta mais concisa ou reduza max_tokens."
+    ))
+}
 
 /// Decode a base64 blob and extract plain text via the RAG text extractor.
 /// Returns `None` when decode or extraction fails — caller should then
@@ -1937,6 +1963,8 @@ async fn call_openai_with_tools(
     let mut total_tokens = 0i32;
     let mut all_records: Vec<ToolCallRecord> = Vec::new();
 
+    let timeout = resolve_llm_timeout(ctx);
+
     for round in 0..5 {
         let result = call_openai_raw(
             client,
@@ -1946,6 +1974,7 @@ async fn call_openai_with_tools(
             temperature,
             max_tokens,
             tools,
+            timeout,
         )
         .await?;
         total_tokens += result.tokens;
@@ -2017,6 +2046,7 @@ async fn call_openai_raw(
     temperature: f32,
     max_tokens: i32,
     tools: &[LlmTool],
+    timeout: Duration,
 ) -> Result<RawLlmResult, AppError> {
     let mut body = json!({
         "model": model,
@@ -2052,12 +2082,14 @@ async fn call_openai_raw(
         body["tools"] = json!(functions);
     }
 
-    let resp = client
+    let send_fut = client
         .post("https://api.openai.com/v1/chat/completions")
         .header("Authorization", format!("Bearer {api_key}"))
         .json(&body)
-        .send()
+        .send();
+    let resp = tokio::time::timeout(timeout, send_fut)
         .await
+        .map_err(|_| llm_timeout_error("openai", timeout.as_secs()))?
         .map_err(|e| AppError::InternalError(format!("OpenAI request failed: {e}")))?;
 
     let data: Value = resp
@@ -2192,6 +2224,8 @@ async fn call_claude_with_tools(
     let mut total_tokens = 0i32;
     let mut all_records: Vec<ToolCallRecord> = Vec::new();
 
+    let timeout = resolve_llm_timeout(ctx);
+
     for round in 0..5 {
         let result = call_claude_raw(
             client,
@@ -2202,6 +2236,7 @@ async fn call_claude_with_tools(
             temperature,
             max_tokens,
             tools,
+            timeout,
         )
         .await?;
         total_tokens += result.tokens;
@@ -2281,6 +2316,7 @@ async fn call_claude_raw(
     temperature: f32,
     max_tokens: i32,
     tools: &[LlmTool],
+    timeout: Duration,
 ) -> Result<RawLlmResult, AppError> {
     let mut body = json!({
         "model": model,
@@ -2307,14 +2343,16 @@ async fn call_claude_raw(
         body["tools"] = json!(tool_defs);
     }
 
-    let resp = client
+    let send_fut = client
         .post("https://api.anthropic.com/v1/messages")
         .header("x-api-key", api_key)
         .header("anthropic-version", "2023-06-01")
         .header("content-type", "application/json")
         .json(&body)
-        .send()
+        .send();
+    let resp = tokio::time::timeout(timeout, send_fut)
         .await
+        .map_err(|_| llm_timeout_error("claude", timeout.as_secs()))?
         .map_err(|e| AppError::InternalError(format!("Claude request failed: {e}")))?;
 
     let data: Value = resp
@@ -2416,6 +2454,8 @@ async fn call_gemini_with_tools(
     let mut total_tokens = 0i32;
     let mut all_records: Vec<ToolCallRecord> = Vec::new();
 
+    let timeout = resolve_llm_timeout(ctx);
+
     for round in 0..5 {
         let result = call_gemini_raw(
             client,
@@ -2426,6 +2466,7 @@ async fn call_gemini_with_tools(
             temperature,
             max_tokens,
             tools,
+            timeout,
         )
         .await?;
         total_tokens += result.tokens;
@@ -2514,6 +2555,7 @@ async fn call_gemini_raw(
     temperature: f32,
     max_tokens: i32,
     tools: &[LlmTool],
+    timeout: Duration,
 ) -> Result<RawLlmResult, AppError> {
     let mut body = json!({
         "contents": contents,
@@ -2545,11 +2587,10 @@ async fn call_gemini_raw(
         "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
     );
 
-    let resp = client
-        .post(&url)
-        .json(&body)
-        .send()
+    let send_fut = client.post(&url).json(&body).send();
+    let resp = tokio::time::timeout(timeout, send_fut)
         .await
+        .map_err(|_| llm_timeout_error("gemini", timeout.as_secs()))?
         .map_err(|e| AppError::InternalError(format!("Gemini request failed: {e}")))?;
 
     let data: Value = resp
@@ -2698,10 +2739,20 @@ async fn call_grok_with_tools(
     let mut total_tokens = 0i32;
     let mut all_records: Vec<ToolCallRecord> = Vec::new();
 
+    let timeout = resolve_llm_timeout(ctx);
+
     for round in 0..5 {
-        let result =
-            call_grok_raw(client, api_key, model, &raw_messages, temperature, max_tokens, tools)
-                .await?;
+        let result = call_grok_raw(
+            client,
+            api_key,
+            model,
+            &raw_messages,
+            temperature,
+            max_tokens,
+            tools,
+            timeout,
+        )
+        .await?;
         total_tokens += result.tokens;
 
         match result.tool_calls {
@@ -2767,6 +2818,7 @@ async fn call_grok_raw(
     temperature: f32,
     max_tokens: i32,
     tools: &[LlmTool],
+    timeout: Duration,
 ) -> Result<RawLlmResult, AppError> {
     let mut body = json!({
         "model": model,
@@ -2796,12 +2848,14 @@ async fn call_grok_raw(
         body["tools"] = json!(functions);
     }
 
-    let resp = client
+    let send_fut = client
         .post("https://api.x.ai/v1/chat/completions")
         .header("Authorization", format!("Bearer {api_key}"))
         .json(&body)
-        .send()
+        .send();
+    let resp = tokio::time::timeout(timeout, send_fut)
         .await
+        .map_err(|_| llm_timeout_error("grok", timeout.as_secs()))?
         .map_err(|e| AppError::InternalError(format!("Grok request failed: {e}")))?;
 
     let data: Value = resp
@@ -2913,6 +2967,8 @@ async fn call_deepseek_with_tools(
     let mut total_tokens = 0i32;
     let mut all_records: Vec<ToolCallRecord> = Vec::new();
 
+    let timeout = resolve_llm_timeout(ctx);
+
     for round in 0..5 {
         let result = call_deepseek_raw(
             client,
@@ -2922,6 +2978,7 @@ async fn call_deepseek_with_tools(
             temperature,
             max_tokens,
             effective_tools,
+            timeout,
         )
         .await?;
         total_tokens += result.tokens;
@@ -2992,6 +3049,7 @@ async fn call_deepseek_raw(
     temperature: f32,
     max_tokens: i32,
     tools: &[LlmTool],
+    timeout: Duration,
 ) -> Result<RawLlmResult, AppError> {
     let mut body = json!({
         "model": model,
@@ -3021,12 +3079,14 @@ async fn call_deepseek_raw(
         body["tools"] = json!(functions);
     }
 
-    let resp = client
+    let send_fut = client
         .post("https://api.deepseek.com/chat/completions")
         .header("Authorization", format!("Bearer {api_key}"))
         .json(&body)
-        .send()
+        .send();
+    let resp = tokio::time::timeout(timeout, send_fut)
         .await
+        .map_err(|_| llm_timeout_error("deepseek", timeout.as_secs()))?
         .map_err(|e| AppError::InternalError(format!("Deepseek request failed: {e}")))?;
 
     let data: Value = resp

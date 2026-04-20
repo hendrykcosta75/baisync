@@ -187,6 +187,10 @@ pub async fn interview_chat(
     // Coalesce consecutive same-role messages (Gemini requirement)
     contents = coalesce_contents(contents);
 
+    // T1.3 — timeout envolve apenas a resposta inicial do POST (SSE connect),
+    // não o loop de frames.
+    let llm_timeout_secs = config.llm_global_timeout_secs;
+
     let (tx, rx) = mpsc::channel::<Result<Event, Infallible>>(128);
 
     tokio::spawn(async move {
@@ -205,12 +209,36 @@ pub async fn interview_chat(
             api_key
         );
 
-        let resp = client
+        // T1.3 — timeout só na resposta inicial do SSE.
+        let send_fut = client
             .post(&url)
             .header("Content-Type", "application/json")
             .json(&body)
-            .send()
-            .await;
+            .send();
+        let resp = match tokio::time::timeout(
+            std::time::Duration::from_secs(llm_timeout_secs),
+            send_fut,
+        )
+        .await
+        {
+            Ok(res) => res,
+            Err(_) => {
+                let msg = format!(
+                    "A chamada ao provider gemini excedeu {llm_timeout_secs}s. Tente resposta mais concisa ou reduza max_tokens."
+                );
+                tracing::error!(
+                    "Gemini SWOT interview request timed out after {}s",
+                    llm_timeout_secs
+                );
+                let _ = tx
+                    .send(Ok(Event::default().event("error").data(
+                        serde_json::json!({"error": msg}).to_string(),
+                    )))
+                    .await;
+                let _ = tx.send(Ok(Event::default().event("done").data("{}"))).await;
+                return;
+            }
+        };
 
         match resp {
             Ok(response) => {

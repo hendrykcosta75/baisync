@@ -1,4 +1,15 @@
+use std::time::Duration;
+
 use crate::errors::AppError;
+
+/// See `openai_audio::llm_global_timeout` for rationale.
+fn llm_global_timeout() -> Duration {
+    let secs = std::env::var("LLM_GLOBAL_TIMEOUT_SECS")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(60);
+    Duration::from_secs(secs)
+}
 
 pub const GROK_VOICES: &[(&str, &str)] = &[
     ("eve", "Eve"),
@@ -29,7 +40,8 @@ pub async fn text_to_speech(
     let bit_rate = bit_rate_kbps * 1000;
 
     let client = reqwest::Client::new();
-    let resp = client
+    let timeout = llm_global_timeout();
+    let send_fut = client
         .post("https://api.x.ai/v1/tts")
         .bearer_auth(api_key)
         .json(&serde_json::json!({
@@ -41,8 +53,15 @@ pub async fn text_to_speech(
                 "bit_rate": bit_rate,
             }
         }))
-        .send()
+        .send();
+    let resp = tokio::time::timeout(timeout, send_fut)
         .await
+        .map_err(|_| {
+            AppError::InternalError(format!(
+                "A chamada ao provider grok excedeu {}s. Tente resposta mais concisa ou reduza max_tokens.",
+                timeout.as_secs()
+            ))
+        })?
         .map_err(|e| AppError::InternalError(format!("Grok TTS request failed: {e}")))?;
 
     if !resp.status().is_success() {
