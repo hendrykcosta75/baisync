@@ -146,6 +146,49 @@ pub struct TestUrlResponse {
     pub error: Option<String>,
 }
 
+// 30 requests per minute per user. Rate-limit check runs BEFORE URL
+// validation so SSRF attempts also consume the attacker's budget.
+const TEST_URL_RATE_LIMIT_PER_MIN: i64 = 30;
+
+fn current_minute_bucket() -> String {
+    chrono::Utc::now().format("%Y-%m-%dT%H:%M").to_string()
+}
+
+async fn get_test_url_count(db: &DbSession, user_id: &Uuid) -> i64 {
+    let bucket = current_minute_bucket();
+    let result = db
+        .query_unpaged(
+            "SELECT count FROM inertial_eclipse.tools_test_url_rate_limits WHERE user_id = ? AND minute_bucket = ?",
+            (user_id, &bucket as &str),
+        )
+        .await;
+
+    match result {
+        Ok(res) => {
+            if let Ok(rows) = res.into_rows_result() {
+                if let Ok(Some((count,))) = rows.maybe_first_row::<(i64,)>() {
+                    count
+                } else {
+                    0
+                }
+            } else {
+                0
+            }
+        }
+        Err(_) => 0,
+    }
+}
+
+async fn increment_test_url_count(db: &DbSession, user_id: &Uuid) {
+    let bucket = current_minute_bucket();
+    let _ = db
+        .query_unpaged(
+            "UPDATE inertial_eclipse.tools_test_url_rate_limits SET count = count + 1 WHERE user_id = ? AND minute_bucket = ?",
+            (user_id, &bucket as &str),
+        )
+        .await;
+}
+
 const BLOCKED_HOSTS: &[&str] = &[
     "baileys",
     "cassandra",
@@ -226,9 +269,24 @@ fn url_error_response() -> TestUrlResponse {
 }
 
 pub async fn test_url(
-    Extension(_auth_user): Extension<AuthUser>,
+    Extension(db): Extension<DbSession>,
+    Extension(auth_user): Extension<AuthUser>,
     Json(req): Json<TestUrlRequest>,
 ) -> Json<TestUrlResponse> {
+    // Rate limit check FIRST — even invalid URLs consume budget so that
+    // an attacker probing internal hosts can't hammer the endpoint for free.
+    let used = get_test_url_count(&db, &auth_user.user_id).await;
+    if used >= TEST_URL_RATE_LIMIT_PER_MIN {
+        return Json(TestUrlResponse {
+            ok: false,
+            status: 0,
+            content_type: None,
+            content_length: None,
+            error: Some("Muitas requisições. Tente novamente em 1 minuto.".into()),
+        });
+    }
+    increment_test_url_count(&db, &auth_user.user_id).await;
+
     let url = match validate_public_url(&req.url).await {
         Ok(u) => u,
         Err(_) => return Json(url_error_response()),
