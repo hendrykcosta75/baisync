@@ -107,8 +107,28 @@ pub async fn spawn_app() -> TestApp {
     dotenvy::from_filename("../.env.test").ok();
     dotenvy::dotenv().ok();
 
+    // If CASSANDRA_KEYSPACE is set to an isolated test keyspace, bind the
+    // session directly to it (assuming `cargo run --bin setup_test_keyspace`
+    // has already applied migrations there). This avoids polluting the
+    // production keyspace when running integration tests locally or in CI.
+    // When unset, fall back to the default behavior of `db::connect` which
+    // runs migrations and binds to `inertial_eclipse`.
+    let test_keyspace = std::env::var("CASSANDRA_KEYSPACE")
+        .ok()
+        .filter(|s| !s.is_empty() && s != "inertial_eclipse");
+
     let config = backend::config::Config::from_env();
-    let db = backend::db::connect(&config.database_url).await;
+    let db = if let Some(ref ks) = test_keyspace {
+        let session = scylla::SessionBuilder::new()
+            .known_node(&config.database_url)
+            .use_keyspace(ks, false)
+            .build()
+            .await
+            .expect("Failed to connect to Cassandra with test keyspace");
+        std::sync::Arc::new(session)
+    } else {
+        backend::db::connect(&config.database_url).await
+    };
     let encryption = backend::services::encryption::EncryptionService::new(&config.encryption_key)
         .expect("Failed to initialize encryption");
     let conn_store = backend::services::connection_state::ConnectionStateStore::new();
