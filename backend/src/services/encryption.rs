@@ -13,21 +13,19 @@ pub struct EncryptionService {
 
 impl EncryptionService {
     pub fn new(hex_key: &str) -> Result<Self, AppError> {
-        let key = hex::decode(hex_key).map_err(|e| {
-            // Fallback: use the key bytes directly if not valid hex
-            tracing::warn!("ENCRYPTION_KEY is not valid hex, using raw bytes: {e}");
-            e
-        });
-
-        let key = match key {
-            Ok(k) if k.len() == 32 => k,
-            _ => {
-                let mut padded = hex_key.as_bytes().to_vec();
-                padded.resize(32, 0);
-                padded
-            }
-        };
-
+        if hex_key.len() != 64 {
+            return Err(AppError::ConfigError(
+                "ENCRYPTION_KEY must be 64 hex chars (32 bytes)".into(),
+            ));
+        }
+        let key = hex::decode(hex_key).map_err(|_| {
+            AppError::ConfigError("ENCRYPTION_KEY must be valid hex".into())
+        })?;
+        if key.len() != 32 {
+            return Err(AppError::ConfigError(
+                "ENCRYPTION_KEY must decode to exactly 32 bytes".into(),
+            ));
+        }
         Ok(Self { key })
     }
 
@@ -121,14 +119,29 @@ mod tests {
     }
 
     #[test]
-    fn test_new_with_non_hex_key_fallback() {
-        let key = "this-is-not-hex-but-should-work";
-        let service = EncryptionService::new(key);
-        assert!(service.is_ok());
-        // Should still encrypt/decrypt
-        let svc = service.unwrap();
-        let encrypted = svc.encrypt("hello").unwrap();
-        let decrypted = svc.decrypt(&encrypted).unwrap();
-        assert_eq!(decrypted, "hello");
+    fn test_new_with_non_hex_key_fails() {
+        // 64-char non-hex string — length passes, hex decode fails.
+        let key = "this-is-not-hex-but-has-exactly-64-characters-aaaaaaaaaaaaaaaaaa";
+        assert_eq!(key.len(), 64);
+        let result = EncryptionService::new(key);
+        assert!(result.is_err());
+        assert!(matches!(result, Err(AppError::ConfigError(_))));
+    }
+
+    #[test]
+    fn test_new_with_short_key_fails() {
+        let key = "dev";
+        let result = EncryptionService::new(key);
+        assert!(result.is_err());
+        assert!(matches!(result, Err(AppError::ConfigError(_))));
+    }
+
+    #[test]
+    fn test_new_with_short_hex_key_fails() {
+        // 32 hex chars = 16 bytes, not 32.
+        let key = "0123456789abcdef0123456789abcdef";
+        let result = EncryptionService::new(key);
+        assert!(result.is_err());
+        assert!(matches!(result, Err(AppError::ConfigError(_))));
     }
 }

@@ -32,6 +32,9 @@ pub enum AppError {
 
     #[error("Encryption error: {0}")]
     EncryptionError(String),
+
+    #[error("Configuration error: {0}")]
+    ConfigError(String),
 }
 
 impl IntoResponse for AppError {
@@ -47,6 +50,7 @@ impl IntoResponse for AppError {
                 (StatusCode::TOO_MANY_REQUESTS, "Rate limit exceeded".into())
             }
             AppError::EncryptionError(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg.clone()),
+            AppError::ConfigError(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg.clone()),
         };
 
         if status == StatusCode::INTERNAL_SERVER_ERROR {
@@ -139,6 +143,13 @@ mod tests {
     #[test]
     fn test_encryption_error_returns_500() {
         let err = AppError::EncryptionError("x".into());
+        let response = err.into_response();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[test]
+    fn test_config_error_returns_500() {
+        let err = AppError::ConfigError("x".into());
         let response = err.into_response();
         assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
     }

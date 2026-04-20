@@ -25,7 +25,7 @@ async fn main() {
     let config = Config::from_env();
     let db = db::connect(&config.database_url).await;
     let encryption = EncryptionService::new(&config.encryption_key)
-        .expect("Failed to initialize encryption service");
+        .expect("ENCRYPTION_KEY must be 64 hex chars (32 bytes)");
     let conn_store = ConnectionStateStore::new();
 
     // Spawn background health check task
