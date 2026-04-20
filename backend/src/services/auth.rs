@@ -6,11 +6,42 @@ use chrono::{DateTime, Utc};
 use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
 use scylla::frame::value::CqlTimestamp;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use std::collections::HashMap;
+use std::sync::{LazyLock, Mutex};
+use subtle::ConstantTimeEq;
 use uuid::Uuid;
 
 use crate::db::DbSession;
 use crate::errors::AppError;
 use crate::models::user::{AuthResponse, User, UserPublic};
+
+/// In-memory rate limiter for 2FA verification attempts. Keyed by user_id,
+/// value is (attempt_count, window_start). Limit: 5 attempts per 15 minutes.
+/// Resets across process restarts — acceptable for anti-bruteforce.
+static VERIFY_2FA_ATTEMPTS: LazyLock<Mutex<HashMap<Uuid, (u32, DateTime<Utc>)>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+const VERIFY_2FA_MAX_ATTEMPTS: u32 = 5;
+const VERIFY_2FA_WINDOW_MIN: i64 = 15;
+
+fn check_2fa_rate_limit(user_id: &Uuid) -> Result<(), AppError> {
+    let mut map = VERIFY_2FA_ATTEMPTS.lock().unwrap_or_else(|p| p.into_inner());
+    let now = Utc::now();
+    let entry = map.entry(*user_id).or_insert((0, now));
+    if now.signed_duration_since(entry.1).num_minutes() >= VERIFY_2FA_WINDOW_MIN {
+        *entry = (0, now);
+    }
+    if entry.0 >= VERIFY_2FA_MAX_ATTEMPTS {
+        return Err(AppError::RateLimitExceeded);
+    }
+    entry.0 += 1;
+    Ok(())
+}
+
+fn hash_reset_token(token: &str) -> String {
+    hex::encode(Sha256::digest(token.as_bytes()))
+}
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Claims {
@@ -227,7 +258,7 @@ pub async fn login_user(
 pub async fn get_user_by_id(db: &DbSession, user_id: &Uuid) -> Result<User, AppError> {
     let result = db
         .query_unpaged(
-            "SELECT id, email, password_hash, name, two_factor_enabled, two_factor_secret, api_key_openai, api_key_claude, api_key_gemini, api_key_elevenlabs, api_key_mercadopago, api_key_stripe, blocked, created_at, updated_at FROM inertial_eclipse.users WHERE id = ?",
+            "SELECT id, email, password_hash, name, two_factor_enabled, two_factor_secret, two_factor_secret_expires_at, api_key_openai, api_key_claude, api_key_gemini, api_key_elevenlabs, api_key_mercadopago, api_key_stripe, blocked, created_at, updated_at FROM inertial_eclipse.users WHERE id = ?",
             (user_id,),
         )
         .await
@@ -240,6 +271,7 @@ pub async fn get_user_by_id(db: &DbSession, user_id: &Uuid) -> Result<User, AppE
         name,
         two_factor_enabled,
         two_factor_secret,
+        two_factor_secret_expires_at,
         api_key_openai,
         api_key_claude,
         api_key_gemini,
@@ -258,6 +290,7 @@ pub async fn get_user_by_id(db: &DbSession, user_id: &Uuid) -> Result<User, AppE
             String,
             Option<bool>,
             Option<String>,
+            Option<DateTime<Utc>>,
             Option<String>,
             Option<String>,
             Option<String>,
@@ -277,6 +310,7 @@ pub async fn get_user_by_id(db: &DbSession, user_id: &Uuid) -> Result<User, AppE
         name,
         two_factor_enabled: two_factor_enabled.unwrap_or(false),
         two_factor_secret,
+        two_factor_secret_expires_at,
         api_key_openai,
         api_key_claude,
         api_key_gemini,
@@ -297,10 +331,14 @@ pub fn generate_2fa_code() -> String {
 
 pub async fn enable_2fa(db: &DbSession, user_id: &Uuid) -> Result<String, AppError> {
     let code = generate_2fa_code();
+    let now = Utc::now();
+    let expires_at = CqlTimestamp(
+        (now + chrono::Duration::minutes(10)).timestamp_millis(),
+    );
 
     db.query_unpaged(
-        "UPDATE inertial_eclipse.users SET two_factor_secret = ? WHERE id = ?",
-        (&code as &str, user_id),
+        "UPDATE inertial_eclipse.users SET two_factor_secret = ?, two_factor_secret_expires_at = ? WHERE id = ?",
+        (&code as &str, expires_at, user_id),
     )
     .await
     .map_err(|e| AppError::DatabaseError(e.to_string()))?;
@@ -309,12 +347,27 @@ pub async fn enable_2fa(db: &DbSession, user_id: &Uuid) -> Result<String, AppErr
 }
 
 pub async fn verify_2fa(db: &DbSession, user_id: &Uuid, code: &str) -> Result<(), AppError> {
+    check_2fa_rate_limit(user_id)?;
+
     let user = get_user_by_id(db, user_id).await?;
     let secret = user
         .two_factor_secret
         .ok_or_else(|| AppError::BadRequest("2FA not enabled".into()))?;
+    let expires_at = user
+        .two_factor_secret_expires_at
+        .ok_or_else(|| AppError::BadRequest("2FA code expired".into()))?;
+    if Utc::now() > expires_at {
+        return Err(AppError::BadRequest("2FA code expired".into()));
+    }
 
-    if secret != code {
+    // Constant-time comparison to avoid timing side-channel. ct_eq on
+    // slices of different lengths returns 0, so length mismatch is safe.
+    if secret
+        .as_bytes()
+        .ct_eq(code.as_bytes())
+        .unwrap_u8()
+        != 1
+    {
         return Err(AppError::Unauthorized("Invalid 2FA code".into()));
     }
 
@@ -446,10 +499,17 @@ pub fn generate_reset_token() -> String {
 }
 
 pub async fn save_reset_token(db: &DbSession, user_id: &Uuid, token: &str) -> Result<(), AppError> {
-    let val = format!("reset:{token}");
+    // Store only SHA-256(token); the raw token is sent in the reset email and never persisted.
+    let token_hash = hash_reset_token(token);
+    let now = Utc::now();
+    let now_cql = CqlTimestamp(now.timestamp_millis());
+    let expires_cql = CqlTimestamp(
+        (now + chrono::Duration::minutes(30)).timestamp_millis(),
+    );
+
     db.query_unpaged(
-        "UPDATE inertial_eclipse.users SET two_factor_secret = ? WHERE id = ?",
-        (&val as &str, user_id),
+        "INSERT INTO inertial_eclipse.password_reset_tokens (token_hash, user_id, expires_at, created_at) VALUES (?, ?, ?, ?)",
+        (&token_hash as &str, user_id, expires_cql, now_cql),
     )
     .await
     .map_err(|e| AppError::DatabaseError(e.to_string()))?;
@@ -462,30 +522,50 @@ pub async fn reset_password(
     token: &str,
     new_password: &str,
 ) -> Result<(), AppError> {
-    let search_val = format!("reset:{token}");
+    let token_hash = hash_reset_token(token);
+
+    // Lookup by token_hash is a PK read — no ALLOW FILTERING.
     let result = db
         .query_unpaged(
-            "SELECT id FROM inertial_eclipse.users WHERE two_factor_secret = ? ALLOW FILTERING",
-            (&search_val as &str,),
+            "SELECT user_id, expires_at FROM inertial_eclipse.password_reset_tokens WHERE token_hash = ?",
+            (&token_hash as &str,),
         )
         .await
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
-    let (user_id,) = result
+    let (user_id, expires_at) = result
         .into_rows_result()?
-        .single_row::<(Uuid,)>()
+        .single_row::<(Uuid, DateTime<Utc>)>()
         .map_err(|_| AppError::BadRequest("Invalid or expired reset token".into()))?;
+
+    if Utc::now() > expires_at {
+        // Expired — clean it up and surface the generic error.
+        let _ = db
+            .query_unpaged(
+                "DELETE FROM inertial_eclipse.password_reset_tokens WHERE token_hash = ?",
+                (&token_hash as &str,),
+            )
+            .await;
+        return Err(AppError::BadRequest("Invalid or expired reset token".into()));
+    }
 
     let password_hash = hash_password(new_password)?;
     let now = ts_now();
-    let null_str: Option<&str> = None;
 
     db.query_unpaged(
-        "UPDATE inertial_eclipse.users SET password_hash = ?, two_factor_secret = ?, updated_at = ? WHERE id = ?",
-        (&password_hash as &str, null_str, now, &user_id),
+        "UPDATE inertial_eclipse.users SET password_hash = ?, updated_at = ? WHERE id = ?",
+        (&password_hash as &str, now, &user_id),
     )
     .await
     .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+
+    // Single-use: delete the token so it can't be replayed.
+    let _ = db
+        .query_unpaged(
+            "DELETE FROM inertial_eclipse.password_reset_tokens WHERE token_hash = ?",
+            (&token_hash as &str,),
+        )
+        .await;
 
     Ok(())
 }

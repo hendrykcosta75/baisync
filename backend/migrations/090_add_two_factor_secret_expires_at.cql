@@ -1,0 +1,1 @@
+ALTER TABLE inertial_eclipse.users ADD two_factor_secret_expires_at timestamp;
