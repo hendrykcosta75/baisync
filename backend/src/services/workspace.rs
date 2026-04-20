@@ -701,6 +701,15 @@ pub async fn update_api_keys(
 
 /// Get a single decrypted API key for a provider from the workspace_api_keys table.
 /// Falls back to the user table if workspace_api_keys has no entry (migration safety).
+///
+/// S0 note: the 5 legacy user-table columns (`api_key_elevenlabs`,
+/// `api_key_mercadopago`, `api_key_stripe`, `api_key_grok`, `api_key_deepseek`)
+/// were historically stored as plaintext. The read path below uses
+/// `try_decrypt_or_passthrough` so rows written before the encryption code
+/// went live (or before the `bin/encrypt_legacy.rs` backfill has run) remain
+/// usable. Write path for these columns goes through `workspace_api_keys`
+/// which has always been encrypted — no direct user-column write exists in
+/// the backend today.
 pub async fn get_decrypted_api_key(
     db: &DbSession,
     encryption: &EncryptionService,
@@ -721,13 +730,16 @@ pub async fn get_decrypted_api_key(
         _ => None,
     };
 
-    // If workspace has the key, decrypt and return
+    // workspace_api_keys is always encrypted, use strict decrypt.
     if let Some(enc) = encrypted {
         return encryption.decrypt(&enc);
     }
 
     // Fallback: try the user table (for users who haven't migrated keys yet)
-    // workspace_id == user_id for personal workspaces
+    // workspace_id == user_id for personal workspaces.
+    //
+    // The legacy columns may be PLAINTEXT (pre-S0) or CIPHERTEXT (post-S0
+    // backfill). Use `try_decrypt_or_passthrough` so both branches work.
     let user_result = db
         .query_unpaged(
             "SELECT api_key_openai, api_key_claude, api_key_gemini, api_key_elevenlabs, api_key_grok, api_key_deepseek, api_key_mercadopago, api_key_stripe FROM inertial_eclipse.users WHERE id = ?",
@@ -741,10 +753,14 @@ pub async fn get_decrypted_api_key(
     if let Some((openai, claude, gemini, elevenlabs, grok, deepseek, mercadopago, stripe)) =
         user_result
     {
-        let enc = match provider {
+        let raw = match provider {
+            // Historically encrypted columns — go through strict decrypt.
             "openai" => openai,
             "claude" => claude,
             "gemini" => gemini,
+            // Historically PLAINTEXT columns (S0 target). Try decrypt first,
+            // fall back to passthrough to keep legacy rows usable until the
+            // backfill migrates them to ciphertext.
             "elevenlabs" => elevenlabs,
             "grok" => grok,
             "deepseek" => deepseek,
@@ -752,8 +768,14 @@ pub async fn get_decrypted_api_key(
             "stripe" => stripe,
             _ => None,
         };
-        if let Some(e) = enc {
-            return encryption.decrypt(&e);
+        if let Some(e) = raw {
+            return match provider {
+                "openai" | "claude" | "gemini" => encryption.decrypt(&e),
+                "elevenlabs" | "grok" | "deepseek" | "mercadopago" | "stripe" => {
+                    Ok(encryption.try_decrypt_or_passthrough(&e))
+                }
+                _ => encryption.decrypt(&e),
+            };
         }
     }
 

@@ -567,7 +567,7 @@ pub async fn check_charge_status_live(
 
                     if new_status == "approved" {
                         charge.status = "approved".to_string();
-                        notify_card_payment_confirmed(db, config, &charge).await;
+                        notify_card_payment_confirmed(db, encryption, config, &charge).await;
                     } else {
                         charge.status = new_status;
                     }
@@ -692,7 +692,7 @@ pub fn spawn_card_payment_poller(
 
             if new_status == "approved" {
                 if let Ok(charge) = check_charge_status(&db, &user_id, &charge_id, None).await {
-                    notify_card_payment_confirmed(&db, &config, &charge).await;
+                    notify_card_payment_confirmed(&db, &encryption, &config, &charge).await;
                 }
             }
 
@@ -723,6 +723,7 @@ pub fn spawn_card_payment_poller(
 
 pub async fn notify_card_payment_confirmed(
     db: &DbSession,
+    encryption: &crate::services::encryption::EncryptionService,
     config: &crate::config::Config,
     charge: &CardCharge,
 ) {
@@ -792,7 +793,7 @@ pub async fn notify_card_payment_confirmed(
 
         if !channel.is_empty() {
             let integrations =
-                crate::services::assistant::list_integrations(db, assistant_id, user_id)
+                crate::services::assistant::list_integrations(db, encryption, assistant_id, user_id)
                     .await
                     .unwrap_or_default();
             if let Some(integration) = integrations.into_iter().find(|i| i.channel == channel) {
@@ -872,6 +873,7 @@ pub fn verify_stripe_signature(
 /// Process a Stripe webhook for checkout.session.completed.
 pub async fn process_stripe_webhook(
     db: &DbSession,
+    encryption: &crate::services::encryption::EncryptionService,
     config: &crate::config::Config,
     event_bus: &crate::services::events::EventBus,
     body: &serde_json::Value,
@@ -951,7 +953,7 @@ pub async fn process_stripe_webhook(
         .await?;
 
         if let Ok(charge) = check_charge_status(db, &user_id, &charge_id, None).await {
-            notify_card_payment_confirmed(db, config, &charge).await;
+            notify_card_payment_confirmed(db, encryption, config, &charge).await;
         }
     }
 

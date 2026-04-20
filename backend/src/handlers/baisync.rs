@@ -233,6 +233,7 @@ async fn increment_usage(db: &DbSession, user_id: &Uuid) {
 pub async fn chat(
     Extension(db): Extension<DbSession>,
     Extension(config): Extension<Config>,
+    Extension(encryption): Extension<crate::services::encryption::EncryptionService>,
     Extension(auth_user): Extension<AuthUser>,
     Json(req): Json<BaisyncChatRequest>,
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, AppError> {
@@ -288,7 +289,7 @@ pub async fn chat(
 
         // Fetch integrations
         if let Ok(integrations) =
-            crate::services::assistant::list_integrations(&db, &a.id, &user_id).await
+            crate::services::assistant::list_integrations(&db, &encryption, &a.id, &user_id).await
         {
             if !integrations.is_empty() {
                 let int_list: Vec<String> = integrations

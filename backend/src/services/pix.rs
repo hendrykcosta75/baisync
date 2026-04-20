@@ -626,7 +626,7 @@ pub fn spawn_mp_payment_poller(
             // Notify if approved
             if new_status == "approved" {
                 if let Ok(charge) = check_charge_status(&db, &user_id, &charge_id, None).await {
-                    notify_pix_payment_confirmed(&db, &config, &charge).await;
+                    notify_pix_payment_confirmed(&db, &encryption, &config, &charge).await;
                 }
             }
 
@@ -791,7 +791,7 @@ pub async fn check_charge_status_live(
                     // Notify if approved
                     if new_status == "approved" {
                         charge.status = "approved".to_string();
-                        notify_pix_payment_confirmed(db, config, &charge).await;
+                        notify_pix_payment_confirmed(db, encryption, config, &charge).await;
                     } else {
                         charge.status = new_status;
                     }
@@ -830,6 +830,7 @@ pub async fn update_charge_status(
 /// Notify user (in-app + email) and client (WhatsApp/Telegram) that payment was confirmed.
 pub async fn notify_pix_payment_confirmed(
     db: &DbSession,
+    encryption: &crate::services::encryption::EncryptionService,
     config: &crate::config::Config,
     charge: &PixCharge,
 ) {
@@ -902,7 +903,7 @@ pub async fn notify_pix_payment_confirmed(
         if !channel.is_empty() {
             // Find integration for this channel
             let integrations =
-                crate::services::assistant::list_integrations(db, assistant_id, user_id)
+                crate::services::assistant::list_integrations(db, encryption, assistant_id, user_id)
                     .await
                     .unwrap_or_default();
             if let Some(integration) = integrations.into_iter().find(|i| i.channel == channel) {
@@ -992,7 +993,7 @@ pub async fn process_webhook(
     // Notify user and client when payment is approved
     if new_status == "approved" {
         if let Ok(charge) = check_charge_status(db, &user_id, &charge_id, None).await {
-            notify_pix_payment_confirmed(db, config, &charge).await;
+            notify_pix_payment_confirmed(db, encryption, config, &charge).await;
         }
     }
 

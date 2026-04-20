@@ -21,6 +21,7 @@ use crate::services::encryption::EncryptionService;
 pub async fn webhook_stripe(
     Extension(db): Extension<DbSession>,
     Extension(config): Extension<Config>,
+    Extension(encryption): Extension<EncryptionService>,
     Extension(event_bus): Extension<crate::services::events::EventBus>,
     body: Bytes,
 ) -> impl IntoResponse {
@@ -37,9 +38,14 @@ pub async fn webhook_stripe(
 
     // Validation: process_stripe_webhook verifies the session exists in our DB
     // (only charges we created will match), so spoofed events are harmlessly ignored.
-    if let Err(e) =
-        crate::services::card_payment::process_stripe_webhook(&db, &config, &event_bus, &payload)
-            .await
+    if let Err(e) = crate::services::card_payment::process_stripe_webhook(
+        &db,
+        &encryption,
+        &config,
+        &event_bus,
+        &payload,
+    )
+    .await
     {
         tracing::error!(error = %e, "Failed to process Stripe webhook");
     }
@@ -314,8 +320,13 @@ pub async fn process_mp_card_payment(
         let updated_charge =
             crate::services::card_payment::check_charge_status(&db, &user_id, &charge_id, None)
                 .await?;
-        crate::services::card_payment::notify_card_payment_confirmed(&db, &config, &updated_charge)
-            .await;
+        crate::services::card_payment::notify_card_payment_confirmed(
+            &db,
+            &encryption,
+            &config,
+            &updated_charge,
+        )
+        .await;
     }
 
     // Publish SSE

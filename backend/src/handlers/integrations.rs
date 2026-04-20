@@ -13,6 +13,7 @@ use crate::models::integration::{
 };
 use crate::services::assistant as assistant_service;
 use crate::services::connection_state::ConnectionStateStore;
+use crate::services::encryption::EncryptionService;
 use crate::services::workspace as ws_service;
 
 use crate::handlers::assistants::ShareTokenQuery;
@@ -32,6 +33,7 @@ pub async fn messaging_config(
 
 pub async fn list(
     Extension(db): Extension<DbSession>,
+    Extension(encryption): Extension<EncryptionService>,
     Extension(auth_user): Extension<AuthUser>,
     Path(assistant_id): Path<Uuid>,
     Query(query): Query<ShareTokenQuery>,
@@ -44,12 +46,14 @@ pub async fn list(
         "read",
     )
     .await?;
-    let integrations = assistant_service::list_integrations(&db, &assistant_id, &owner_id).await?;
+    let integrations =
+        assistant_service::list_integrations(&db, &encryption, &assistant_id, &owner_id).await?;
     Ok(Json(integrations))
 }
 
 pub async fn create(
     Extension(db): Extension<DbSession>,
+    Extension(encryption): Extension<EncryptionService>,
     Extension(auth_user): Extension<AuthUser>,
     Path(assistant_id): Path<Uuid>,
     Query(query): Query<ShareTokenQuery>,
@@ -67,12 +71,14 @@ pub async fn create(
     )
     .await?;
     let integration =
-        assistant_service::create_integration(&db, &assistant_id, &owner_id, req).await?;
+        assistant_service::create_integration(&db, &encryption, &assistant_id, &owner_id, req)
+            .await?;
     Ok(Json(integration))
 }
 
 pub async fn update(
     Extension(db): Extension<DbSession>,
+    Extension(encryption): Extension<EncryptionService>,
     Extension(auth_user): Extension<AuthUser>,
     Path((assistant_id, integration_id)): Path<(Uuid, Uuid)>,
     Query(query): Query<ShareTokenQuery>,
@@ -89,9 +95,15 @@ pub async fn update(
         "admin",
     )
     .await?;
-    let integration =
-        assistant_service::update_integration(&db, &assistant_id, &owner_id, &integration_id, req)
-            .await?;
+    let integration = assistant_service::update_integration(
+        &db,
+        &encryption,
+        &assistant_id,
+        &owner_id,
+        &integration_id,
+        req,
+    )
+    .await?;
     Ok(Json(integration))
 }
 
@@ -118,6 +130,7 @@ pub async fn delete(
 
 pub async fn connect(
     Extension(db): Extension<DbSession>,
+    Extension(encryption): Extension<EncryptionService>,
     Extension(auth_user): Extension<AuthUser>,
     Extension(config): Extension<Config>,
     Path((assistant_id, integration_id)): Path<(Uuid, Uuid)>,
@@ -134,7 +147,8 @@ pub async fn connect(
         "admin",
     )
     .await?;
-    let integration = get_integration(&db, &assistant_id, &owner_id, &integration_id).await?;
+    let integration =
+        get_integration(&db, &encryption, &assistant_id, &owner_id, &integration_id).await?;
 
     let phone = integration
         .config_phone_number
@@ -180,6 +194,7 @@ pub async fn connect(
 
             assistant_service::update_integration(
                 &db,
+                &encryption,
                 &assistant_id,
                 &owner_id,
                 &integration_id,
@@ -228,6 +243,7 @@ pub async fn connect(
 
             assistant_service::update_integration(
                 &db,
+                &encryption,
                 &assistant_id,
                 &owner_id,
                 &integration_id,
@@ -265,6 +281,7 @@ pub async fn connect(
 
 pub async fn status(
     Extension(db): Extension<DbSession>,
+    Extension(encryption): Extension<EncryptionService>,
     Extension(auth_user): Extension<AuthUser>,
     Extension(conn_store): Extension<ConnectionStateStore>,
     Path((assistant_id, integration_id)): Path<(Uuid, Uuid)>,
@@ -278,7 +295,8 @@ pub async fn status(
         "read",
     )
     .await?;
-    let integration = get_integration(&db, &assistant_id, &owner_id, &integration_id).await?;
+    let integration =
+        get_integration(&db, &encryption, &assistant_id, &owner_id, &integration_id).await?;
 
     let phone = integration
         .config_phone_number
@@ -298,6 +316,7 @@ pub async fn status(
             if is_connected && integration.status != "connected" {
                 assistant_service::update_integration(
                     &db,
+                    &encryption,
                     &assistant_id,
                     &owner_id,
                     &integration_id,
@@ -327,6 +346,7 @@ pub async fn status(
 
 pub async fn disconnect(
     Extension(db): Extension<DbSession>,
+    Extension(encryption): Extension<EncryptionService>,
     Extension(auth_user): Extension<AuthUser>,
     Extension(config): Extension<Config>,
     Extension(conn_store): Extension<ConnectionStateStore>,
@@ -344,7 +364,8 @@ pub async fn disconnect(
         "admin",
     )
     .await?;
-    let integration = get_integration(&db, &assistant_id, &owner_id, &integration_id).await?;
+    let integration =
+        get_integration(&db, &encryption, &assistant_id, &owner_id, &integration_id).await?;
 
     let phone = integration.config_phone_number.clone().unwrap_or_default();
 
@@ -368,11 +389,13 @@ pub async fn disconnect(
 
 async fn get_integration(
     db: &DbSession,
+    encryption: &EncryptionService,
     assistant_id: &Uuid,
     user_id: &Uuid,
     integration_id: &Uuid,
 ) -> Result<AssistantIntegration, AppError> {
-    let integrations = assistant_service::list_integrations(db, assistant_id, user_id).await?;
+    let integrations =
+        assistant_service::list_integrations(db, encryption, assistant_id, user_id).await?;
     integrations
         .into_iter()
         .find(|i| i.id == *integration_id)

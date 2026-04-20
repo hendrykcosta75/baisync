@@ -6,6 +6,7 @@ use uuid::Uuid;
 use crate::config::Config;
 use crate::db::DbSession;
 use crate::services::email;
+use crate::services::encryption::EncryptionService;
 use crate::services::notification;
 
 /// Tracks consecutive health check failures per integration.
@@ -16,17 +17,21 @@ static FAIL_COUNTS: std::sync::LazyLock<Mutex<HashMap<Uuid, u8>>> =
 /// Background task: runs every 5 minutes, checks all connected integrations.
 /// If a connection is lost after 3 consecutive failures, updates the status,
 /// creates an in-app notification, and sends an email to the user.
-pub async fn run(db: DbSession, config: Config) {
+pub async fn run(db: DbSession, encryption: EncryptionService, config: Config) {
     let interval = std::time::Duration::from_secs(300);
     loop {
         tokio::time::sleep(interval).await;
-        if let Err(e) = check_all_connections(&db, &config).await {
+        if let Err(e) = check_all_connections(&db, &encryption, &config).await {
             tracing::error!("Health check error: {e}");
         }
     }
 }
 
-async fn check_all_connections(db: &DbSession, config: &Config) -> Result<(), String> {
+async fn check_all_connections(
+    db: &DbSession,
+    encryption: &EncryptionService,
+    config: &Config,
+) -> Result<(), String> {
     // Query all integrations that are currently "connected"
     let result = db
         .query_unpaged(
@@ -70,6 +75,12 @@ async fn check_all_connections(db: &DbSession, config: &Config) -> Result<(), St
         config_phone_number,
     ) in rows
     {
+        // The stored values may be plaintext (legacy) or ciphertext (post-S0
+        // backfill). Use the try-decrypt fallback so external API calls hit
+        // the real token/phone regardless of storage state.
+        let config_token = encryption.try_decrypt_opt(config_token);
+        let config_phone_number = encryption.try_decrypt_opt(config_phone_number);
+
         let still_connected = check_connection(
             &client,
             config,

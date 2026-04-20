@@ -32,8 +32,9 @@ async fn main() {
     {
         let db_hc = db.clone();
         let config_hc = config.clone();
+        let enc_hc = encryption.clone();
         tokio::spawn(async move {
-            services::health_check::run(db_hc, config_hc).await;
+            services::health_check::run(db_hc, enc_hc, config_hc).await;
         });
     }
 

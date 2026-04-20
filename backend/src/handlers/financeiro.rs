@@ -143,6 +143,7 @@ pub async fn charges(
 pub async fn update_charge_status_handler(
     Extension(db): Extension<DbSession>,
     Extension(config): Extension<crate::config::Config>,
+    Extension(encryption): Extension<crate::services::encryption::EncryptionService>,
     Extension(event_bus): Extension<crate::services::events::EventBus>,
     Extension(auth_user): Extension<AuthUser>,
     Path((assistant_id, charge_id)): Path<(Uuid, Uuid)>,
@@ -193,7 +194,13 @@ pub async fn update_charge_status_handler(
         .await?;
 
         if new_status == "approved" {
-            crate::services::pix::notify_pix_payment_confirmed(&db, &config, &charge).await;
+            crate::services::pix::notify_pix_payment_confirmed(
+                &db,
+                &encryption,
+                &config,
+                &charge,
+            )
+            .await;
         }
 
         event_bus

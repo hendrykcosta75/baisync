@@ -12,6 +12,7 @@ use crate::models::assistant::{
 use crate::models::integration::{
     AssistantIntegration, CreateIntegrationRequest, UpdateIntegrationRequest,
 };
+use crate::services::encryption::EncryptionService;
 
 fn ts_now() -> CqlTimestamp {
     CqlTimestamp(Utc::now().timestamp_millis())
@@ -704,7 +705,15 @@ type IntegrationRow = (
     DateTime<Utc>,  // created_at
 );
 
-fn row_to_integration(r: IntegrationRow) -> AssistantIntegration {
+/// Convert a DB row into an `AssistantIntegration`, transparently decrypting
+/// the four sensitive columns (`config_token`, `config_phone_number`,
+/// `config_chatwoot_url`, `config_webhook_verify_token`) with a passthrough
+/// fallback so legacy plaintext rows survive until the backfill migration
+/// runs. See `EncryptionService::try_decrypt_or_passthrough`.
+fn row_to_integration(
+    encryption: &EncryptionService,
+    r: IntegrationRow,
+) -> AssistantIntegration {
     AssistantIntegration {
         assistant_id: r.0,
         user_id: r.1,
@@ -712,15 +721,15 @@ fn row_to_integration(r: IntegrationRow) -> AssistantIntegration {
         channel: r.3,
         provider: r.4,
         status: r.5.unwrap_or_else(|| "active".into()),
-        config_token: r.6,
-        config_phone_number: r.7,
-        config_chatwoot_url: r.8,
+        config_token: encryption.try_decrypt_opt(r.6),
+        config_phone_number: encryption.try_decrypt_opt(r.7),
+        config_chatwoot_url: encryption.try_decrypt_opt(r.8),
         config_rate_limit_per_day: r.9,
         config_max_message_length: r.10,
         config_audio_response_mode: r.11,
         config_interpret_documents: r.12,
         config_split_messages: r.13,
-        config_webhook_verify_token: r.14,
+        config_webhook_verify_token: encryption.try_decrypt_opt(r.14),
         created_at: r.15,
     }
 }
@@ -729,6 +738,7 @@ const INTEGRATION_COLS: &str = "assistant_id, user_id, id, channel, provider, st
 
 pub async fn list_integrations(
     db: &DbSession,
+    encryption: &EncryptionService,
     assistant_id: &Uuid,
     user_id: &Uuid,
 ) -> Result<Vec<AssistantIntegration>, AppError> {
@@ -743,7 +753,7 @@ pub async fn list_integrations(
     let mut integrations = Vec::new();
     let result = result.into_rows_result()?;
     for row in result.rows::<IntegrationRow>()?.flatten() {
-        integrations.push(row_to_integration(row));
+        integrations.push(row_to_integration(encryption, row));
     }
 
     Ok(integrations)
@@ -751,12 +761,13 @@ pub async fn list_integrations(
 
 pub async fn create_integration(
     db: &DbSession,
+    encryption: &EncryptionService,
     assistant_id: &Uuid,
     user_id: &Uuid,
     req: CreateIntegrationRequest,
 ) -> Result<AssistantIntegration, AppError> {
     // Check for existing integration with same channel+provider for this assistant
-    let existing = list_integrations(db, assistant_id, user_id).await?;
+    let existing = list_integrations(db, encryption, assistant_id, user_id).await?;
     if let Some(found) = existing
         .iter()
         .find(|i| i.channel == req.channel && i.provider == req.provider)
@@ -768,7 +779,8 @@ pub async fn create_integration(
     if let Some(ref phone) = req.config_phone_number {
         if !phone.is_empty() {
             if let Ok(existing_integration) =
-                crate::services::messaging::find_any_integration_by_phone(db, phone).await
+                crate::services::messaging::find_any_integration_by_phone(db, encryption, phone)
+                    .await
             {
                 // Allow if it's the same assistant (re-creation), reject otherwise
                 if existing_integration.assistant_id != *assistant_id
@@ -781,9 +793,8 @@ pub async fn create_integration(
                             (&existing_integration.assistant_id, &existing_integration.user_id, &existing_integration.id),
                         ).await;
                         tracing::info!(
-                            "Cleaned up disconnected integration {} to free phone {} for new user",
-                            existing_integration.id,
-                            phone
+                            "Cleaned up disconnected integration {} to free phone for new user",
+                            existing_integration.id
                         );
                     } else {
                         let is_same_user = existing_integration.user_id == *user_id;
@@ -820,13 +831,23 @@ pub async fn create_integration(
     let id = Uuid::new_v4();
     let now = ts_now();
 
+    // Encrypt the 4 sensitive columns before persisting. Empty strings and
+    // None pass through untouched (see `EncryptionService::encrypt_opt`).
+    let enc_config_token = encryption.encrypt_opt(req.config_token.clone())?;
+    let enc_config_phone_number = encryption.encrypt_opt(req.config_phone_number.clone())?;
+    let enc_config_chatwoot_url = encryption.encrypt_opt(req.config_chatwoot_url.clone())?;
+    let enc_config_webhook_verify_token =
+        encryption.encrypt_opt(req.config_webhook_verify_token.clone())?;
+
     db.query_unpaged(
         "INSERT INTO inertial_eclipse.assistant_integrations (assistant_id, user_id, id, channel, provider, status, config_token, config_phone_number, config_chatwoot_url, config_rate_limit_per_day, config_max_message_length, config_audio_response_mode, config_interpret_documents, config_split_messages, config_webhook_verify_token, created_at) VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (assistant_id, user_id, &id, &req.channel as &str, &req.provider as &str, &req.config_token, &req.config_phone_number, &req.config_chatwoot_url, &req.config_rate_limit_per_day, &req.config_max_message_length, &req.config_audio_response_mode, &req.config_interpret_documents, &req.config_split_messages, &req.config_webhook_verify_token, now),
+        (assistant_id, user_id, &id, &req.channel as &str, &req.provider as &str, &enc_config_token, &enc_config_phone_number, &enc_config_chatwoot_url, &req.config_rate_limit_per_day, &req.config_max_message_length, &req.config_audio_response_mode, &req.config_interpret_documents, &req.config_split_messages, &enc_config_webhook_verify_token, now),
     )
     .await
     .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
+    // Returned object holds PLAINTEXT so the API response is unchanged for the
+    // caller/client — encryption is a storage-layer concern only.
     Ok(AssistantIntegration {
         assistant_id: *assistant_id,
         user_id: *user_id,
@@ -849,12 +870,13 @@ pub async fn create_integration(
 
 pub async fn update_integration(
     db: &DbSession,
+    encryption: &EncryptionService,
     assistant_id: &Uuid,
     user_id: &Uuid,
     integration_id: &Uuid,
     req: UpdateIntegrationRequest,
 ) -> Result<AssistantIntegration, AppError> {
-    let integrations = list_integrations(db, assistant_id, user_id).await?;
+    let integrations = list_integrations(db, encryption, assistant_id, user_id).await?;
     let existing = integrations
         .into_iter()
         .find(|i| i.id == *integration_id)
@@ -865,6 +887,8 @@ pub async fn update_integration(
     let channel = req.channel.unwrap_or(existing.channel);
     let provider = req.provider.unwrap_or(existing.provider);
     let status = req.status.unwrap_or(existing.status);
+    // `existing` already holds plaintext values (row_to_integration decrypts
+    // via the passthrough helper), so merging plaintext+plaintext is safe.
     let config_token = req.config_token.or(existing.config_token);
     let config_phone_number = req
         .config_phone_number
@@ -893,7 +917,8 @@ pub async fn update_integration(
         if let Some(ref phone) = config_phone_number {
             if !phone.is_empty() {
                 if let Ok(existing_integration) =
-                    crate::services::messaging::find_any_integration_by_phone(db, phone).await
+                    crate::services::messaging::find_any_integration_by_phone(db, encryption, phone)
+                        .await
                 {
                     // Allow if it's the same integration being updated, reject otherwise
                     if existing_integration.id != *integration_id {
@@ -903,8 +928,8 @@ pub async fn update_integration(
                                 (&existing_integration.assistant_id, &existing_integration.user_id, &existing_integration.id),
                             ).await;
                             tracing::info!(
-                                "Cleaned up disconnected integration {} to free phone {} for update",
-                                existing_integration.id, phone
+                                "Cleaned up disconnected integration {} to free phone for update",
+                                existing_integration.id
                             );
                         } else {
                             let is_same_user = existing_integration.user_id == *user_id;
@@ -939,13 +964,21 @@ pub async fn update_integration(
         }
     }
 
+    // Encrypt the 4 sensitive columns before persisting.
+    let enc_config_token = encryption.encrypt_opt(config_token.clone())?;
+    let enc_config_phone_number = encryption.encrypt_opt(config_phone_number.clone())?;
+    let enc_config_chatwoot_url = encryption.encrypt_opt(config_chatwoot_url.clone())?;
+    let enc_config_webhook_verify_token =
+        encryption.encrypt_opt(config_webhook_verify_token.clone())?;
+
     db.query_unpaged(
         "UPDATE inertial_eclipse.assistant_integrations SET channel = ?, provider = ?, status = ?, config_token = ?, config_phone_number = ?, config_chatwoot_url = ?, config_rate_limit_per_day = ?, config_max_message_length = ?, config_audio_response_mode = ?, config_interpret_documents = ?, config_split_messages = ?, config_webhook_verify_token = ? WHERE assistant_id = ? AND user_id = ? AND id = ?",
-        (&channel as &str, &provider as &str, &status as &str, &config_token, &config_phone_number, &config_chatwoot_url, &config_rate_limit_per_day, &config_max_message_length, &config_audio_response_mode, &config_interpret_documents, &config_split_messages, &config_webhook_verify_token, assistant_id, user_id, integration_id),
+        (&channel as &str, &provider as &str, &status as &str, &enc_config_token, &enc_config_phone_number, &enc_config_chatwoot_url, &config_rate_limit_per_day, &config_max_message_length, &config_audio_response_mode, &config_interpret_documents, &config_split_messages, &enc_config_webhook_verify_token, assistant_id, user_id, integration_id),
     )
     .await
     .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
+    // Return plaintext to caller (API contract unchanged).
     Ok(AssistantIntegration {
         assistant_id: *assistant_id,
         user_id: *user_id,

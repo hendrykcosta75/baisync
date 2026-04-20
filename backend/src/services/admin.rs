@@ -14,6 +14,7 @@ use crate::models::admin::{
     MonthlyRevenue, MonthlyTokens, ProviderCount, ProviderTokens, RecentUser, UserTokens,
 };
 use crate::services::auth::{create_admin_jwt, hash_password};
+use crate::services::encryption::EncryptionService;
 use std::collections::HashMap;
 
 pub fn admin_login(
@@ -412,7 +413,10 @@ pub async fn block_user(db: &DbSession, user_id: &Uuid, blocked: bool) -> Result
 
 // --- Integrations ---
 
-pub async fn list_all_integrations(db: &DbSession) -> Result<AdminIntegrationsResponse, AppError> {
+pub async fn list_all_integrations(
+    db: &DbSession,
+    encryption: &EncryptionService,
+) -> Result<AdminIntegrationsResponse, AppError> {
     // Build user lookup: id -> (name, email)
     let users_result = db
         .query_unpaged("SELECT id, name, email FROM inertial_eclipse.users", &[])
@@ -500,6 +504,11 @@ pub async fn list_all_integrations(db: &DbSession) -> Result<AdminIntegrationsRe
                 .get(&(user_id, assistant_id))
                 .cloned()
                 .unwrap_or_else(|| "Unknown".into());
+
+            // Phone numbers may be plaintext (legacy) or ciphertext (post-S0
+            // backfill). Decrypt with passthrough so the admin panel sees the
+            // real value either way.
+            let phone = encryption.try_decrypt_opt(phone);
 
             integrations.push(AdminIntegrationInfo {
                 id,
@@ -737,6 +746,7 @@ pub async fn get_platform_usage(db: &DbSession) -> Result<AdminUsageResponse, Ap
 
 pub async fn get_user_detail_enriched(
     db: &DbSession,
+    encryption: &EncryptionService,
     user_id: &Uuid,
 ) -> Result<AdminUserDetailEnriched, AppError> {
     // Get user with security fields
@@ -938,13 +948,16 @@ pub async fn get_user_detail_enriched(
                     .flatten()
                     .flatten()
                 {
+                    // Phone may be plaintext (legacy) or ciphertext
+                    // (post-S0). Try-decrypt so admin UI sees the real value.
+                    let phone = encryption.try_decrypt_opt(row.4);
                     integrations.push(AdminUserIntegration {
                         id: row.0,
                         assistant_id: assistant.id,
                         channel: row.1,
                         provider: row.2,
                         status: row.3,
-                        phone_number: row.4,
+                        phone_number: phone,
                     });
                 }
             }

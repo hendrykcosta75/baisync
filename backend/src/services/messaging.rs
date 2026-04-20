@@ -65,7 +65,15 @@ type IntegrationRow = (
     DateTime<Utc>,
 );
 
-fn row_to_integration(r: IntegrationRow) -> AssistantIntegration {
+/// Convert a DB row into an `AssistantIntegration`, transparently decrypting
+/// the four sensitive columns (`config_token`, `config_phone_number`,
+/// `config_chatwoot_url`, `config_webhook_verify_token`) with a passthrough
+/// fallback so legacy plaintext rows survive until the backfill migration
+/// runs. See `EncryptionService::try_decrypt_or_passthrough`.
+fn row_to_integration(
+    encryption: &EncryptionService,
+    r: IntegrationRow,
+) -> AssistantIntegration {
     AssistantIntegration {
         assistant_id: r.0,
         user_id: r.1,
@@ -73,15 +81,15 @@ fn row_to_integration(r: IntegrationRow) -> AssistantIntegration {
         channel: r.3,
         provider: r.4,
         status: r.5.unwrap_or_else(|| "active".into()),
-        config_token: r.6,
-        config_phone_number: r.7,
-        config_chatwoot_url: r.8,
+        config_token: encryption.try_decrypt_opt(r.6),
+        config_phone_number: encryption.try_decrypt_opt(r.7),
+        config_chatwoot_url: encryption.try_decrypt_opt(r.8),
         config_rate_limit_per_day: r.9,
         config_max_message_length: r.10,
         config_audio_response_mode: r.11,
         config_interpret_documents: r.12,
         config_split_messages: r.13,
-        config_webhook_verify_token: r.14,
+        config_webhook_verify_token: encryption.try_decrypt_opt(r.14),
         created_at: r.15,
     }
 }
@@ -99,9 +107,9 @@ pub async fn process_incoming_message(
         &webhook.connection_phone
     };
     // Try phone-number lookup first; fall back to token lookup (Telegram uses bot token as key)
-    let integration = match find_integration_by_phone(db, lookup_key).await {
+    let integration = match find_integration_by_phone(db, encryption, lookup_key).await {
         Ok(i) => i,
-        Err(_) => find_integration_by_token(db, lookup_key).await?,
+        Err(_) => find_integration_by_token(db, encryption, lookup_key).await?,
     };
     let user_id = integration.user_id;
     let assistant_id = integration.assistant_id;
@@ -1578,8 +1586,23 @@ pub async fn process_incoming_message(
 }
 
 /// Find ANY integration by phone (regardless of status). Used for uniqueness checks.
+///
+/// TODO S0: `config_phone_number` is now encrypted on write. After the backfill
+/// (`bin/encrypt_legacy.rs`) runs, every stored value is ciphertext with a
+/// random AES-GCM nonce, so the `WHERE config_phone_number = ?` equality lookup
+/// below will NEVER match a newly-written row. Legacy plaintext rows continue
+/// to be matchable by the incoming plaintext `phone` until they're re-written.
+///
+/// The permanent fix requires either:
+///   1. A deterministic HMAC-derived lookup column (e.g. `config_phone_fp`),
+///      or
+///   2. Moving uniqueness enforcement to a separate index table keyed by hash.
+/// Both are out of scope for S0. For now this function degrades gracefully: it
+/// returns NotFound on encrypted rows, which makes the "phone already in use"
+/// check a soft guard. Callers MUST treat a NotFound here as "no conflict".
 pub async fn find_any_integration_by_phone(
     db: &DbSession,
+    encryption: &EncryptionService,
     phone: &str,
 ) -> Result<AssistantIntegration, AppError> {
     let result = db
@@ -1595,12 +1618,21 @@ pub async fn find_any_integration_by_phone(
         .maybe_first_row::<IntegrationRow>()?
         .ok_or_else(|| AppError::NotFound("No integration found for this phone number".into()))?;
 
-    Ok(row_to_integration(row))
+    Ok(row_to_integration(encryption, row))
 }
 
 /// Find active (non-disconnected) integration by phone. Used for message routing.
+///
+/// TODO S0: same caveat as `find_any_integration_by_phone` — the `WHERE
+/// config_phone_number = ?` equality lookup will only match LEGACY plaintext
+/// rows once the backfill migration has run. New rows are encrypted with a
+/// random AES-GCM nonce and are therefore unreachable via this query. Webhook
+/// routing will break for any assistant whose integration was re-saved after
+/// the encryption code went live. Needs a fingerprint column; see the header
+/// comment on `find_any_integration_by_phone` for the permanent fix.
 pub async fn find_integration_by_phone(
     db: &DbSession,
+    encryption: &EncryptionService,
     phone: &str,
 ) -> Result<AssistantIntegration, AppError> {
     let result = db
@@ -1616,7 +1648,7 @@ pub async fn find_integration_by_phone(
     let rows = result.into_rows_result()?;
     for row in rows.rows::<IntegrationRow>()? {
         let r = row.map_err(|e| AppError::DatabaseError(e.to_string()))?;
-        all.push(row_to_integration(r));
+        all.push(row_to_integration(encryption, r));
     }
 
     if all.is_empty() {
@@ -1671,8 +1703,15 @@ pub async fn find_integration_by_phone(
     })
 }
 
+/// TODO S0: same caveat as `find_integration_by_phone` — the `WHERE
+/// config_token = ?` equality lookup only matches LEGACY plaintext rows once
+/// the backfill has run. Telegram webhook routing (which uses the bot token as
+/// the lookup key) will break for any integration re-saved after the
+/// encryption code went live. Needs a fingerprint column; see the header
+/// comment on `find_any_integration_by_phone` for the permanent fix.
 pub async fn find_integration_by_token(
     db: &DbSession,
+    encryption: &EncryptionService,
     token: &str,
 ) -> Result<AssistantIntegration, AppError> {
     let result = db
@@ -1688,7 +1727,7 @@ pub async fn find_integration_by_token(
     let rows = result.into_rows_result()?;
     for row in rows.rows::<IntegrationRow>()? {
         let r = row.map_err(|e| AppError::DatabaseError(e.to_string()))?;
-        all.push(row_to_integration(r));
+        all.push(row_to_integration(encryption, r));
     }
 
     if all.is_empty() {
@@ -2244,7 +2283,7 @@ pub async fn sum_tokens(db: &DbSession, conversation_id: &Uuid) -> Result<i64, A
 pub async fn send_direct_message(
     db: &DbSession,
     config: &Config,
-    _encryption: &EncryptionService,
+    encryption: &EncryptionService,
     user_id: &Uuid,
     assistant_id: &Uuid,
     conversation_id: &Uuid,
@@ -2267,7 +2306,7 @@ pub async fn send_direct_message(
 
     // Send via messaging provider if it's a real channel (not playground)
     if conv.channel != "playground" {
-        match find_integration_for_conversation(db, assistant_id, user_id, &conv.channel).await {
+        match find_integration_for_conversation(db, encryption, assistant_id, user_id, &conv.channel).await {
             Ok(integration) => {
                 // Backfill empty channel/contact_number from legacy conversations
                 if conv.channel.is_empty() || conv.contact_number.is_empty() {
@@ -2348,6 +2387,7 @@ pub async fn get_conversation(
 
 async fn find_integration_for_conversation(
     db: &DbSession,
+    encryption: &EncryptionService,
     assistant_id: &Uuid,
     user_id: &Uuid,
     channel: &str,
@@ -2364,7 +2404,7 @@ async fn find_integration_for_conversation(
     let mut fallback: Option<AssistantIntegration> = None;
     for row in rows.rows::<IntegrationRow>()? {
         let r = row.map_err(|e| AppError::DatabaseError(e.to_string()))?;
-        let integration = row_to_integration(r);
+        let integration = row_to_integration(encryption, r);
         if !channel.is_empty() && integration.channel == channel {
             return Ok(integration);
         }

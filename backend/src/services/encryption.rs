@@ -68,6 +68,40 @@ impl EncryptionService {
 
         String::from_utf8(plaintext).map_err(|e| AppError::EncryptionError(e.to_string()))
     }
+
+    /// Try to decrypt the value. If decryption fails (e.g. the value is still
+    /// legacy plaintext because the backfill migration hasn't run yet), return
+    /// the value as-is. This allows deploys to roll out the encryption code
+    /// BEFORE the data backfill, with zero-downtime safety.
+    ///
+    /// After the backfill has been executed in production, every value in the
+    /// column should be ciphertext and the passthrough branch becomes defensive
+    /// only (e.g. a row inserted by a very old replica during the deploy
+    /// window).
+    ///
+    /// Never logs the value (plaintext or ciphertext) per invariant #4.
+    pub fn try_decrypt_or_passthrough(&self, value: &str) -> String {
+        match self.decrypt(value) {
+            Ok(plaintext) => plaintext,
+            Err(_) => value.to_string(),
+        }
+    }
+
+    /// Optional variant of `try_decrypt_or_passthrough` that preserves `None`.
+    pub fn try_decrypt_opt(&self, value: Option<String>) -> Option<String> {
+        value.map(|v| self.try_decrypt_or_passthrough(&v))
+    }
+
+    /// Encrypt an optional value. `None` and empty strings pass through
+    /// unchanged so we don't materialize empty ciphertexts. Returns error
+    /// only on AES init failure.
+    pub fn encrypt_opt(&self, value: Option<String>) -> Result<Option<String>, AppError> {
+        match value {
+            None => Ok(None),
+            Some(v) if v.is_empty() => Ok(Some(v)),
+            Some(v) => self.encrypt(&v).map(Some),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -143,5 +177,78 @@ mod tests {
         let result = EncryptionService::new(key);
         assert!(result.is_err());
         assert!(matches!(result, Err(AppError::ConfigError(_))));
+    }
+
+    #[test]
+    fn test_try_decrypt_or_passthrough_returns_plaintext_on_valid_ciphertext() {
+        let key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let service = EncryptionService::new(key).unwrap();
+        let plaintext = "my secret";
+        let encrypted = service.encrypt(plaintext).unwrap();
+        assert_eq!(service.try_decrypt_or_passthrough(&encrypted), plaintext);
+    }
+
+    #[test]
+    fn test_try_decrypt_or_passthrough_passes_legacy_plaintext_through() {
+        let key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let service = EncryptionService::new(key).unwrap();
+        // Simulate legacy plaintext that was never encrypted.
+        let legacy = "+5511987654321";
+        // Not valid base64 AES-GCM ciphertext — must fall back to passthrough.
+        assert_eq!(service.try_decrypt_or_passthrough(legacy), legacy);
+    }
+
+    #[test]
+    fn test_try_decrypt_or_passthrough_with_random_valid_base64() {
+        let key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let service = EncryptionService::new(key).unwrap();
+        // Valid base64 but too short to be real ciphertext → Err → passthrough.
+        let garbage = BASE64.encode(&[0u8; 5]);
+        assert_eq!(service.try_decrypt_or_passthrough(&garbage), garbage);
+    }
+
+    #[test]
+    fn test_try_decrypt_opt_preserves_none() {
+        let key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let service = EncryptionService::new(key).unwrap();
+        assert!(service.try_decrypt_opt(None).is_none());
+    }
+
+    #[test]
+    fn test_try_decrypt_opt_decrypts_some() {
+        let key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let service = EncryptionService::new(key).unwrap();
+        let plaintext = "hello";
+        let enc = service.encrypt(plaintext).unwrap();
+        assert_eq!(service.try_decrypt_opt(Some(enc)), Some(plaintext.into()));
+    }
+
+    #[test]
+    fn test_encrypt_opt_encrypts_non_empty() {
+        let key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let service = EncryptionService::new(key).unwrap();
+        let enc = service.encrypt_opt(Some("secret".into())).unwrap();
+        assert!(enc.is_some());
+        let enc_val = enc.unwrap();
+        assert_ne!(enc_val, "secret");
+        assert_eq!(service.decrypt(&enc_val).unwrap(), "secret");
+    }
+
+    #[test]
+    fn test_encrypt_opt_preserves_none() {
+        let key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let service = EncryptionService::new(key).unwrap();
+        assert!(service.encrypt_opt(None).unwrap().is_none());
+    }
+
+    #[test]
+    fn test_encrypt_opt_preserves_empty_string() {
+        let key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let service = EncryptionService::new(key).unwrap();
+        // Empty strings are passed through to avoid materializing useless ciphertext.
+        assert_eq!(
+            service.encrypt_opt(Some("".into())).unwrap(),
+            Some("".into())
+        );
     }
 }

@@ -70,8 +70,9 @@ pub async fn delete_user(
 
 pub async fn list_integrations(
     Extension(db): Extension<DbSession>,
+    Extension(encryption): Extension<crate::services::encryption::EncryptionService>,
 ) -> Result<Json<AdminIntegrationsResponse>, AppError> {
-    let data = admin::list_all_integrations(&db).await?;
+    let data = admin::list_all_integrations(&db, &encryption).await?;
     Ok(Json(data))
 }
 
@@ -84,8 +85,9 @@ pub async fn platform_usage(
 
 pub async fn get_user_enriched(
     Extension(db): Extension<DbSession>,
+    Extension(encryption): Extension<crate::services::encryption::EncryptionService>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<AdminUserDetailEnriched>, AppError> {
-    let detail = admin::get_user_detail_enriched(&db, &id).await?;
+    let detail = admin::get_user_detail_enriched(&db, &encryption, &id).await?;
     Ok(Json(detail))
 }

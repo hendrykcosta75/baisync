@@ -90,7 +90,9 @@ pub async fn webhook_baileys(
 
     // connection.update events (QR codes, status changes) are allowed without a registered integration
     // because the integration may not exist yet during the initial pairing flow.
-    let phone_integration = messaging::find_integration_by_phone(&db, &phone).await.ok();
+    let phone_integration = messaging::find_integration_by_phone(&db, &encryption, &phone)
+        .await
+        .ok();
     if phone_integration.is_none() && event != "connection.update" {
         tracing::warn!("Baileys webhook received for unknown phone: {phone} event={event}");
         return Err(AppError::NotFound(
@@ -126,7 +128,7 @@ pub async fn webhook_baileys(
                     },
                 );
                 // Persist connected state to DB immediately
-                update_baileys_status(&db, &config, &phone, "connected").await;
+                update_baileys_status(&db, &encryption, &config, &phone, "connected").await;
             } else if connection == "close" {
                 // Check if this is a permanent logout (status 401) vs temporary disconnect
                 let is_logged_out = data["lastDisconnect"]["error"]["output"]["statusCode"]
@@ -136,7 +138,7 @@ pub async fn webhook_baileys(
                 if is_logged_out {
                     // Permanent: user removed device from WhatsApp
                     conn_store.remove(&phone);
-                    update_baileys_status(&db, &config, &phone, "disconnected").await;
+                    update_baileys_status(&db, &encryption, &config, &phone, "disconnected").await;
                 } else {
                     // Temporary: Baileys will auto-reconnect, don't mark as disconnected.
                     // The health check will mark as disconnected after sustained failures.
@@ -355,8 +357,14 @@ pub async fn webhook_baileys(
 
 /// Updates the DB status for the integration matching this phone number.
 /// When transitioning to "disconnected", also creates an in-app notification and sends an email.
-async fn update_baileys_status(db: &DbSession, config: &Config, phone: &str, new_status: &str) {
-    let integration = match messaging::find_integration_by_phone(db, phone).await {
+async fn update_baileys_status(
+    db: &DbSession,
+    encryption: &EncryptionService,
+    config: &Config,
+    phone: &str,
+    new_status: &str,
+) {
+    let integration = match messaging::find_integration_by_phone(db, encryption, phone).await {
         Ok(i) => i,
         Err(_) => return,
     };
@@ -367,6 +375,7 @@ async fn update_baileys_status(db: &DbSession, config: &Config, phone: &str, new
 
     if let Err(e) = assistant_service::update_integration(
         db,
+        encryption,
         &integration.assistant_id,
         &integration.user_id,
         &integration.id,
@@ -485,6 +494,18 @@ pub struct MetaVerifyQuery {
 }
 
 /// GET /api/webhooks/meta — Meta webhook verification (challenge-response)
+///
+/// TODO S0: `config_webhook_verify_token` is now encrypted on write. The
+/// `WHERE config_webhook_verify_token = ?` equality lookup below will only
+/// match LEGACY plaintext rows once the backfill migration has run. After the
+/// backfill this query will need to either:
+///   1. Iterate all integrations and try each decrypted verify token
+///      (expensive but constant time ~= N integrations), or
+///   2. Add a fingerprint column (deterministic HMAC) for lookup.
+/// Until that redesign ships, Meta webhook verification breaks for any
+/// integration re-saved after the encryption code went live. The underlying
+/// POST signature check (`X-Hub-Signature-256` via `META_APP_SECRET`) is the
+/// real security boundary — this verify_token is defense-in-depth only.
 pub async fn webhook_meta_verify(
     Extension(db): Extension<DbSession>,
     Query(query): Query<MetaVerifyQuery>,
@@ -877,6 +898,7 @@ pub async fn playground_chat(
 pub async fn list_conversations(
     Extension(db): Extension<DbSession>,
     Extension(config): Extension<Config>,
+    Extension(encryption): Extension<EncryptionService>,
     Extension(auth_user): Extension<AuthUser>,
     Path(assistant_id): Path<Uuid>,
     Query(query): Query<ConversationListQuery>,
@@ -941,6 +963,7 @@ pub async fn list_conversations(
     if !backfill_targets.is_empty() {
         let db_bg = db.clone();
         let config_bg = config.clone();
+        let encryption_bg = encryption.clone();
         let owner_id_bg = owner_id;
         let assistant_id_bg = assistant_id;
         tokio::spawn(async move {
@@ -951,7 +974,11 @@ pub async fn list_conversations(
             let Ok(rows) = result.into_rows_result() else { return };
             let mut connection_phone: Option<String> = None;
             for row in rows.rows::<(Option<String>,)>().into_iter().flatten().flatten() {
-                if let Some(phone) = row.0.filter(|s| !s.is_empty()) {
+                // Phone may be plaintext (legacy) or ciphertext (post-S0
+                // backfill). Decrypt with passthrough so the Baileys API call
+                // below hits the real number either way.
+                let decrypted = encryption_bg.try_decrypt_opt(row.0);
+                if let Some(phone) = decrypted.filter(|s| !s.is_empty()) {
                     connection_phone = Some(phone);
                     break;
                 }
