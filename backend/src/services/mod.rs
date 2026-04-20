@@ -26,4 +26,5 @@ pub mod pix;
 pub mod rag;
 pub mod team;
 pub mod transcription;
+pub mod webhook_dedup;
 pub mod workspace;

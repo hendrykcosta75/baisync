@@ -19,6 +19,7 @@ use crate::services::assistant as assistant_service;
 use crate::services::connection_state::{ConnectionState, ConnectionStateStore};
 use crate::services::encryption::EncryptionService;
 use crate::services::messaging::{self, IncomingWebhook, PlaygroundResponse, SummaryResponse};
+use crate::services::webhook_dedup;
 use crate::services::{email, notification};
 
 #[derive(Serialize)]
@@ -166,6 +167,19 @@ pub async fn webhook_baileys(
                     let from_me = msg["key"]["fromMe"].as_bool().unwrap_or(false);
                     if from_me {
                         continue;
+                    }
+
+                    // I2 — shadow dedup (per-message)
+                    let event_id = msg["key"]["id"].as_str().unwrap_or("").to_string();
+                    match webhook_dedup::check_and_mark(&db, "baileys", &event_id).await {
+                        Ok(webhook_dedup::DedupResult::Applied) => {}
+                        Ok(webhook_dedup::DedupResult::Duplicate) => {
+                            // Only reached in Mode::Block (T1.4); skip this message.
+                            continue;
+                        }
+                        Err(e) => {
+                            tracing::warn!(error = %e, "dedup check failed, continuing");
+                        }
                     }
 
                     // Prefer remoteJidAlt (real phone) over remoteJid (may be a LID)
@@ -611,6 +625,19 @@ pub async fn webhook_meta(
                             let msg_id = msg["id"].as_str().map(|s| s.to_string());
                             let msg_type = msg["type"].as_str().unwrap_or("");
 
+                            // I2 — shadow dedup (per-message)
+                            let event_id = msg_id.clone().unwrap_or_default();
+                            match webhook_dedup::check_and_mark(&db, "meta", &event_id).await {
+                                Ok(webhook_dedup::DedupResult::Applied) => {}
+                                Ok(webhook_dedup::DedupResult::Duplicate) => {
+                                    // Only reached in Mode::Block (T1.4); skip this message.
+                                    continue;
+                                }
+                                Err(e) => {
+                                    tracing::warn!(error = %e, "dedup check failed, continuing");
+                                }
+                            }
+
                             let (message, media_url, media_type) = match msg_type {
                                 "text" => (
                                     msg["text"]["body"].as_str().unwrap_or("").to_string(),
@@ -740,6 +767,25 @@ pub async fn webhook_telegram(
         Some(id) => id.to_string(),
         None => return Ok(Json(serde_json::json!({"status": "ok"}))),
     };
+
+    // I2 — shadow dedup. Telegram message_id is unique per chat only, so we
+    // combine chat_id + message_id to ensure global uniqueness.
+    let tg_msg_id = message["message_id"].as_i64().unwrap_or(0);
+    let event_id = if tg_msg_id != 0 {
+        format!("{chat_id}:{tg_msg_id}")
+    } else {
+        String::new()
+    };
+    match webhook_dedup::check_and_mark(&db, "telegram", &event_id).await {
+        Ok(webhook_dedup::DedupResult::Applied) => {}
+        Ok(webhook_dedup::DedupResult::Duplicate) => {
+            // Only reached in Mode::Block (T1.4).
+            return Ok(Json(serde_json::json!({"status": "ok"})));
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "dedup check failed, continuing");
+        }
+    }
 
     // Extract contact name from Telegram message
     let tg_first = message["from"]["first_name"].as_str().unwrap_or("");
