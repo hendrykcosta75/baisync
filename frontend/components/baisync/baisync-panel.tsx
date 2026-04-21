@@ -61,6 +61,8 @@ export function BaisyncPanel() {
     setActiveSkill,
     pushLocalMessage,
     appendLiveTranscript,
+    hydrate,
+    hydrated,
   } = useBaisyncStore()
 
   const { user } = useAuthStore()
@@ -446,6 +448,13 @@ export function BaisyncPanel() {
   useEffect(() => {
     if (isOpen) fetchRateLimit()
   }, [isOpen, fetchRateLimit])
+
+  // S2.1 — On first open, pull Sophie history from the server so chat state
+  // survives across devices/browsers. `hydrate()` guards against repeat calls
+  // internally (sets `hydrated` on first attempt, success or silent-fail).
+  useEffect(() => {
+    if (isOpen && !hydrated) void hydrate()
+  }, [isOpen, hydrated, hydrate])
 
   useEffect(() => {
     const el = messagesRef.current

@@ -1,4 +1,4 @@
-use axum::extract::Extension;
+use axum::extract::{Extension, Path};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::Json;
 use chrono::{DateTime, Utc};
@@ -987,6 +987,171 @@ pub async fn platform_health(
     }))
 }
 
+// ─── S2.1 — Sophie session hydration endpoints ───────────────────────────────
+//
+// Two GET endpoints that let the frontend rebuild Sophie's chat history from
+// the server instead of trusting localStorage as the source of truth. Both
+// scope strictly to `auth_user.user_id`; no cross-tenant data escapes.
+//
+// Design notes:
+//   - Sophie rows are identified by `assistant_id = Uuid::nil() AND
+//     conversation_id = Uuid::nil()` (the sentinel convention set in T2.1).
+//     We filter in memory after fetching the user's partition so the query
+//     stays partition-key scoped (no ALLOW FILTERING).
+//   - 30-day retention is a product promise, not a storage guarantee. The
+//     `session_events` table has TTL 90 days; we let callers (the frontend)
+//     decide what to surface.
+//   - `get_session` reuses `services::session::get_events`, which enforces
+//     both PK columns (`user_id` + `session_id`). An empty result is treated
+//     as 404 to avoid session-id enumeration.
+
+/// One row returned by `GET /api/baisync/sessions`. Fields are strings/ISO
+/// for easy consumption by the frontend (no scylla types leak into the API).
+#[derive(Serialize)]
+pub struct SophieSessionSummary {
+    pub session_id: String,
+    pub status: String,
+    pub checkpoint_at: Option<String>,
+    pub created_at: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct ListSophieSessionsResponse {
+    pub sessions: Vec<SophieSessionSummary>,
+}
+
+/// One event as surfaced by `GET /api/baisync/session/{session_id}`. The
+/// `payload` is the raw JSON string the backend stored — the frontend is
+/// responsible for parsing it per `event_type`.
+#[derive(Serialize)]
+pub struct SessionEventDto {
+    pub event_id: String,
+    pub event_type: String,
+    pub payload: String,
+    pub created_at: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct SophieSessionResponse {
+    pub session_id: String,
+    pub events: Vec<SessionEventDto>,
+}
+
+/// How many Sophie sessions to return, newest-first.
+const SOPHIE_SESSION_LIST_LIMIT: usize = 50;
+
+/// True iff the `(conversation_id, assistant_id)` pair matches the Sophie
+/// sentinel convention (`Uuid::nil()` on both). Extracted so the filter can be
+/// unit-tested without needing a live Cassandra fixture.
+fn is_sophie_session(conversation_id: Option<Uuid>, assistant_id: Option<Uuid>) -> bool {
+    conversation_id.unwrap_or(Uuid::nil()) == Uuid::nil()
+        && assistant_id.unwrap_or(Uuid::nil()) == Uuid::nil()
+}
+
+/// GET `/api/baisync/sessions`
+///
+/// Lists the authenticated user's most recent Sophie sessions. The query is
+/// partition-key scoped (`WHERE user_id = ?`), and we filter in memory to
+/// Sophie rows (`assistant_id == nil && conversation_id == nil`) so no
+/// ALLOW FILTERING is needed. Returns at most `SOPHIE_SESSION_LIST_LIMIT`
+/// entries, newest first (clustering order is already DESC on session_id).
+pub async fn list_sessions(
+    Extension(db): Extension<DbSession>,
+    Extension(auth_user): Extension<AuthUser>,
+) -> Result<Json<ListSophieSessionsResponse>, AppError> {
+    let user_id = auth_user.user_id;
+
+    // Over-fetch a bit so in-memory filtering (Sophie rows only) still
+    // returns up to `SOPHIE_SESSION_LIST_LIMIT` Sophie sessions even if
+    // non-Sophie rows are interleaved in the partition.
+    let fetch_cap: i32 = (SOPHIE_SESSION_LIST_LIMIT as i32).saturating_mul(4);
+
+    let result = db
+        .query_unpaged(
+            "SELECT session_id, conversation_id, assistant_id, status, checkpoint_at, created_at \
+             FROM inertial_eclipse.sessions \
+             WHERE user_id = ? LIMIT ?",
+            (&user_id, fetch_cap),
+        )
+        .await
+        .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+
+    type SessionRow = (
+        CqlTimeuuid,
+        Option<Uuid>, // conversation_id
+        Option<Uuid>, // assistant_id
+        Option<String>, // status
+        Option<DateTime<Utc>>, // checkpoint_at
+        Option<DateTime<Utc>>, // created_at
+    );
+
+    let rows = result.into_rows_result()?;
+    let mut sessions: Vec<SophieSessionSummary> = Vec::new();
+    for row in rows.rows::<SessionRow>()?.flatten() {
+        let (session_tuuid, conv_id, asst_id, status, checkpoint_at, created_at) = row;
+
+        // Sophie rows use the nil uuid sentinel (set by baisync::chat when
+        // creating a session — see T2.1). Any other value means this row
+        // belongs to a user-created assistant, not Sophie.
+        if !is_sophie_session(conv_id, asst_id) {
+            continue;
+        }
+
+        let session_uuid: Uuid = Uuid::from_bytes(*session_tuuid.as_bytes());
+        sessions.push(SophieSessionSummary {
+            session_id: session_uuid.to_string(),
+            status: status.unwrap_or_default(),
+            checkpoint_at: checkpoint_at.map(|t| t.to_rfc3339()),
+            created_at: created_at.map(|t| t.to_rfc3339()),
+        });
+
+        if sessions.len() >= SOPHIE_SESSION_LIST_LIMIT {
+            break;
+        }
+    }
+
+    Ok(Json(ListSophieSessionsResponse { sessions }))
+}
+
+/// GET `/api/baisync/session/{session_id}`
+///
+/// Returns the events belonging to a specific Sophie session. Scoped by the
+/// authenticated `user_id` (via `services::session::get_events`, which
+/// filters on the full `(user_id, session_id)` partition key). A session that
+/// doesn't exist for this user returns 404 — indistinguishable from a session
+/// that belongs to another tenant, so we don't leak existence across users.
+pub async fn get_session(
+    Extension(db): Extension<DbSession>,
+    Extension(auth_user): Extension<AuthUser>,
+    Path(session_id): Path<Uuid>,
+) -> Result<Json<SophieSessionResponse>, AppError> {
+    let user_id = auth_user.user_id;
+
+    // `get_events` scopes by `(user_id, session_id)`. If the session belongs
+    // to another user or doesn't exist, we get an empty Vec — treat it as
+    // 404 so we don't distinguish "no access" from "doesn't exist".
+    let events = crate::services::session::get_events(&db, &user_id, &session_id).await?;
+
+    if events.is_empty() {
+        return Err(AppError::NotFound("session not found".into()));
+    }
+
+    let dto_events: Vec<SessionEventDto> = events
+        .into_iter()
+        .map(|e| SessionEventDto {
+            event_id: e.event_id,
+            event_type: e.event_type,
+            payload: e.payload,
+            created_at: e.created_at.map(|t| t.to_rfc3339()),
+        })
+        .collect();
+
+    Ok(Json(SophieSessionResponse {
+        session_id: session_id.to_string(),
+        events: dto_events,
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1215,5 +1380,80 @@ E esta está quebrada:
         }
 
         llm::reset_circuit_breaker_state();
+    }
+
+    // ─── S2.1: Sophie session hydration filter ───────────────────────────
+    //
+    // The `list_sessions` handler filters the caller's `sessions` partition
+    // in memory to Sophie rows (assistant_id = nil AND conversation_id = nil).
+    // We can't unit-test the full handler without a live Cassandra fixture,
+    // but we can cover the classification helper exhaustively here — which
+    // is the tricky bit that decides whether a row is considered a Sophie
+    // session or a user-assistant session.
+
+    #[test]
+    fn test_list_sophie_sessions_filter_by_assistant_nil() {
+        let nil = Uuid::nil();
+        let some_assistant = Uuid::new_v4();
+        let some_conversation = Uuid::new_v4();
+
+        // Both ids nil → Sophie row (the sentinel convention from T2.1).
+        assert!(is_sophie_session(Some(nil), Some(nil)));
+        // Absent columns (schema permits NULL on both) default to nil.
+        assert!(is_sophie_session(None, None));
+        assert!(is_sophie_session(Some(nil), None));
+        assert!(is_sophie_session(None, Some(nil)));
+
+        // Any non-nil on either side disqualifies the row.
+        assert!(!is_sophie_session(Some(some_conversation), Some(nil)));
+        assert!(!is_sophie_session(Some(nil), Some(some_assistant)));
+        assert!(!is_sophie_session(Some(some_conversation), Some(some_assistant)));
+        assert!(!is_sophie_session(None, Some(some_assistant)));
+        assert!(!is_sophie_session(Some(some_conversation), None));
+    }
+
+    #[test]
+    fn test_sophie_session_summary_serialization_shape() {
+        // Pinning the response shape so frontend consumers don't break if
+        // someone renames a field or changes the ISO format.
+        let summary = SophieSessionSummary {
+            session_id: "11111111-1111-1111-1111-111111111111".to_string(),
+            status: "completed".to_string(),
+            checkpoint_at: Some("2026-04-20T12:00:00+00:00".to_string()),
+            created_at: Some("2026-04-20T11:59:00+00:00".to_string()),
+        };
+        let rendered = serde_json::to_value(&summary).expect("serialize");
+        assert_eq!(rendered["session_id"], "11111111-1111-1111-1111-111111111111");
+        assert_eq!(rendered["status"], "completed");
+        assert_eq!(rendered["checkpoint_at"], "2026-04-20T12:00:00+00:00");
+        assert_eq!(rendered["created_at"], "2026-04-20T11:59:00+00:00");
+
+        // Null created_at / checkpoint_at surface as JSON null, not missing.
+        let empty = SophieSessionSummary {
+            session_id: "22222222-2222-2222-2222-222222222222".to_string(),
+            status: "active".to_string(),
+            checkpoint_at: None,
+            created_at: None,
+        };
+        let rendered = serde_json::to_value(&empty).expect("serialize");
+        assert!(rendered["checkpoint_at"].is_null());
+        assert!(rendered["created_at"].is_null());
+    }
+
+    #[test]
+    fn test_session_event_dto_serialization_shape() {
+        let dto = SessionEventDto {
+            event_id: "33333333-3333-3333-3333-333333333333".to_string(),
+            event_type: "user_msg".to_string(),
+            payload: r#"{"content":"oi"}"#.to_string(),
+            created_at: Some("2026-04-20T12:00:00+00:00".to_string()),
+        };
+        let rendered = serde_json::to_value(&dto).expect("serialize");
+        assert_eq!(rendered["event_id"], "33333333-3333-3333-3333-333333333333");
+        assert_eq!(rendered["event_type"], "user_msg");
+        // Payload must be surfaced as the raw string, not a parsed object —
+        // the frontend is the parser.
+        assert_eq!(rendered["payload"], r#"{"content":"oi"}"#);
+        assert_eq!(rendered["created_at"], "2026-04-20T12:00:00+00:00");
     }
 }

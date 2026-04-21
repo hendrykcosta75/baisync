@@ -44,6 +44,15 @@ interface BaisyncState {
   streamingContent: string
   activeSkill: string | null
   rateLimit: RateLimit | null
+  /**
+   * True once `hydrate()` has attempted a server sync in this browser tab
+   * session (success OR silent-fallback). Guards against repeated hydrations
+   * when the panel is opened/closed multiple times.
+   *
+   * Not persisted (by omission from `partialize`): we want every fresh tab
+   * to try the server once.
+   */
+  hydrated: boolean
 
   toggle: () => void
   open: () => void
@@ -55,6 +64,13 @@ interface BaisyncState {
   setActiveSkill: (skill: string | null) => void
   pushLocalMessage: (msg: Omit<BaisyncMessage, 'id' | 'timestamp'>) => void
   appendLiveTranscript: (role: 'user' | 'assistant', text: string) => void
+  /**
+   * S2.1 — Pull Sophie's latest session from the server and merge into
+   * `messages` only when the local chat is empty. On any failure (offline,
+   * 401, 500) we silently keep the localStorage cache that `persist` already
+   * loaded — a warning is logged but the UI does not error.
+   */
+  hydrate: () => Promise<void>
 }
 
 function generateId(): string {
@@ -129,6 +145,80 @@ function parseActions(content: string): { cleanContent: string; actions: Baisync
   return { cleanContent: cleaned.trim(), actions }
 }
 
+/**
+ * Shape returned by `GET /api/baisync/sessions`. Kept private — the store
+ * only exposes `hydrate()` which calls this endpoint internally.
+ */
+interface SophieSessionSummaryResponse {
+  session_id: string
+  status: string
+  checkpoint_at: string | null
+  created_at: string | null
+}
+
+interface ListSophieSessionsApiResponse {
+  sessions: SophieSessionSummaryResponse[]
+}
+
+interface SessionEventApiDto {
+  event_id: string
+  event_type: string
+  payload: string
+  created_at: string | null
+}
+
+interface SophieSessionApiResponse {
+  session_id: string
+  events: SessionEventApiDto[]
+}
+
+/**
+ * Product promise: Sophie history is visible for 30 days. The backend's
+ * `session_events` table has a 90-day TTL, but we filter more aggressively
+ * client-side so users see consistent behavior regardless of backend TTL
+ * tuning.
+ */
+const HYDRATION_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
+
+/**
+ * Map a single server-side session event onto the UI's `BaisyncMessage`
+ * shape. Returns `null` for event types the UI can't render (tool_call,
+ * tool_result, evaluator_verdict, compaction, plan, wake) — those are
+ * harness internals, not user-facing turns.
+ */
+function sessionEventToMessage(
+  event: SessionEventApiDto,
+  index: number,
+): BaisyncMessage | null {
+  let role: 'user' | 'assistant'
+  if (event.event_type === 'user_msg') {
+    role = 'user'
+  } else if (event.event_type === 'llm_msg') {
+    role = 'assistant'
+  } else {
+    return null
+  }
+
+  let content = ''
+  try {
+    const parsed = JSON.parse(event.payload) as { content?: unknown }
+    if (typeof parsed.content === 'string') content = parsed.content
+  } catch {
+    // Malformed payload — drop rather than surface raw JSON to the user.
+    return null
+  }
+
+  // Trust the server event_id (TIMEUUID string) for the message id so
+  // subsequent hydrations don't produce duplicate keys if we ever re-merge.
+  const timestamp = event.created_at ? Date.parse(event.created_at) : Date.now() + index
+  return {
+    id: event.event_id,
+    role,
+    content,
+    timestamp: Number.isFinite(timestamp) ? timestamp : Date.now() + index,
+  }
+}
+
 export const useBaisyncStore = create<BaisyncState>()(
   persist(
   (set, get) => ({
@@ -138,6 +228,7 @@ export const useBaisyncStore = create<BaisyncState>()(
   streamingContent: '',
   activeSkill: null,
   rateLimit: null,
+  hydrated: false,
 
   toggle: () => set((s) => ({ isOpen: !s.isOpen })),
   open: () => set({ isOpen: true }),
@@ -184,6 +275,51 @@ export const useBaisyncStore = create<BaisyncState>()(
       })
     } catch {
       // ignore
+    }
+  },
+
+  hydrate: async () => {
+    // Mark hydrated up-front: even if the server call fails we don't want to
+    // retry on every panel open — the localStorage cache is already usable.
+    if (get().hydrated) return
+    set({ hydrated: true })
+
+    try {
+      const listRes = await apiFetch<ListSophieSessionsApiResponse>('/api/baisync/sessions')
+      const latest = listRes.sessions?.[0]
+      if (!latest) return
+
+      // 30-day retention filter (product promise — see constant comment).
+      if (latest.created_at) {
+        const createdMs = Date.parse(latest.created_at)
+        if (Number.isFinite(createdMs) && Date.now() - createdMs > HYDRATION_RETENTION_MS) {
+          return
+        }
+      }
+
+      const sessionRes = await apiFetch<SophieSessionApiResponse>(
+        `/api/baisync/session/${encodeURIComponent(latest.session_id)}`,
+      )
+
+      const hydratedMessages: BaisyncMessage[] = []
+      sessionRes.events.forEach((event, index) => {
+        const msg = sessionEventToMessage(event, index)
+        if (msg) hydratedMessages.push(msg)
+      })
+
+      if (hydratedMessages.length === 0) return
+
+      // Only merge when local chat is empty. A non-empty `messages` array
+      // means the user is mid-conversation (or localStorage already holds
+      // the persisted copy of this same session) — clobbering would be
+      // visibly wrong.
+      set((s) => {
+        if (s.messages.length > 0) return s
+        return { messages: hydratedMessages }
+      })
+    } catch (err) {
+      // Silent fallback: localStorage cache is already loaded via persist().
+      console.warn('[baisync] hydrate failed; keeping local cache:', err)
     }
   },
 

@@ -388,6 +388,15 @@ pub fn build_router(
             "/api/baisync/actions/platform_health",
             get(handlers::baisync::platform_health),
         )
+        // S2.1 — Sophie session hydration (server-side history)
+        .route(
+            "/api/baisync/sessions",
+            get(handlers::baisync::list_sessions),
+        )
+        .route(
+            "/api/baisync/session/{session_id}",
+            get(handlers::baisync::get_session),
+        )
         // Test Agent
         .route("/api/test-agent/chat", post(handlers::test_agent::chat))
         .route(

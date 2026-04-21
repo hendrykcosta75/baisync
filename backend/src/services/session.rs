@@ -196,9 +196,7 @@ pub async fn update_status(
 /// its canonical string form so the frontend / API consumers don't need a
 /// scylla-specific type.
 ///
-/// `#[allow(dead_code)]`: only produced today by `get_events`, which is
-/// consumed by S2.1's REST handler (not yet wired).
-#[allow(dead_code)]
+/// Consumed by S2.1's REST handler (`handlers::baisync::get_session`).
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct SessionEventRow {
     pub event_id: String,
@@ -210,8 +208,7 @@ pub struct SessionEventRow {
 /// Fetch all events for a session. Scoped by the full `(user_id, session_id)`
 /// partition key so a cross-tenant read is impossible.
 ///
-/// `#[allow(dead_code)]`: consumed by S2.1's REST handler (not yet wired).
-#[allow(dead_code)]
+/// Consumed by S2.1's REST handler (`handlers::baisync::get_session`).
 pub async fn get_events(
     db: &DbSession,
     user_id: &Uuid,
