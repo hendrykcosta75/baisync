@@ -802,6 +802,9 @@ mod tests {
             evaluator_model_default: "gpt-4o-mini".into(),
             evaluator_max_concurrent: 20,
             evaluator_timeout_secs: 15,
+            // T3.3 — curation poller is orthogonal to compaction tests;
+            // disabled here so no background task is implied by the struct.
+            curation_enabled: false,
         }
     }
 

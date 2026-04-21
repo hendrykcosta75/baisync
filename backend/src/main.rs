@@ -39,6 +39,10 @@ async fn main() {
     // both EVALUATOR_API_KEY and COMPACTION_API_KEY are unset so
     // assistants with config_enable_evaluator=true silently no-op.
     config.log_evaluator_status();
+    // T3.3 — same treatment for the nightly curation poller: WARN when
+    // CURATION_ENABLED is not set, so operators know no
+    // `curation_suggestion` notifications will be created.
+    config.log_curation_status();
     let db = db::connect(&config.database_url).await;
     let encryption = EncryptionService::new(&config.encryption_key)
         .expect("ENCRYPTION_KEY must be 64 hex chars (32 bytes)");
@@ -100,6 +104,13 @@ async fn main() {
         let enc_rec = encryption.clone();
         messaging_recovery::spawn_recovery_poller(db_rec, config_rec, enc_rec);
     }
+
+    // T3.3 — Background curation agent. Nightly scan of llm_call_logs per
+    // assistant for the last 7 days, emits a `curation_suggestion`
+    // notification when error_rate > 5% (with a 10-call floor and 24h
+    // per-assistant dedup). Gated by CURATION_ENABLED=true; spawns a task
+    // that self-exits when disabled so the wire-up stays uniform.
+    services::curation::spawn_curation_poller(db.clone(), config.curation_enabled);
 
     let event_bus = services::events::EventBus::new();
     services::events::init_global(event_bus.clone());

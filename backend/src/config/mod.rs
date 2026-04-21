@@ -100,6 +100,24 @@ pub struct Config {
     /// evaluator LLM call. Default: 15. Shorter than the primary-turn
     /// timeout on purpose — evaluator must be fast or give up.
     pub evaluator_timeout_secs: u64,
+
+    // ──────────────────────────────────────────────────────────────────────
+    // T3.3 — Background curation agent (nightly).
+    //
+    // Scans `llm_call_logs` last 7d per assistant, computes per-assistant
+    // error_rate, and emits a `curation_suggestion` notification when the
+    // assistant crosses the 5% threshold. Idempotent: won't re-emit within
+    // 24h for the same assistant.
+    //
+    // Default `false` in prod so operators opt in — prevents surprise
+    // notifications the moment the feature ships. The 5% threshold + 10-call
+    // floor already filters noise; this flag is the operator-visible kill
+    // switch.
+    // ──────────────────────────────────────────────────────────────────────
+    /// When `false`, `spawn_curation_poller` is a no-op (a WARN is logged at
+    /// startup so operators notice the feature is inert). When `true`, the
+    /// poller runs a pass once every 24h.
+    pub curation_enabled: bool,
 }
 
 impl Config {
@@ -224,6 +242,18 @@ impl Config {
                 .ok()
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(15_u64),
+
+            // T3.3 — Curation poller is opt-in. Any of `true`/`1`/`yes` (case
+            // insensitive) enables it; anything else (including the default
+            // absent case) leaves it disabled. Matches the documented
+            // contract in `.env.example`.
+            curation_enabled: env::var("CURATION_ENABLED")
+                .ok()
+                .map(|s| {
+                    let v = s.trim().to_lowercase();
+                    v == "true" || v == "1" || v == "yes"
+                })
+                .unwrap_or(false),
         }
     }
 
@@ -258,6 +288,25 @@ impl Config {
                 max_concurrent = self.evaluator_max_concurrent,
                 timeout_secs = self.evaluator_timeout_secs,
                 "post-turn evaluator enabled",
+            );
+        }
+    }
+
+    /// T3.3 — emit a startup log describing whether the background curation
+    /// poller will run this process. Defaults to disabled (WARN) so operators
+    /// see why `notifications` of type `curation_suggestion` aren't appearing.
+    pub fn log_curation_status(&self) {
+        if self.curation_enabled {
+            tracing::info!(
+                event = "curation.enabled",
+                "T3.3 curation poller enabled: once-per-24h scan of llm_call_logs \
+                 (7d window, >5% error-rate threshold, 10-call minimum, 24h per-assistant dedup).",
+            );
+        } else {
+            tracing::warn!(
+                event = "curation.disabled",
+                "CURATION_ENABLED is not true: background curation agent is disabled. \
+                 Set CURATION_ENABLED=true to let the poller emit curation_suggestion notifications.",
             );
         }
     }

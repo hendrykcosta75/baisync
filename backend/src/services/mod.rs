@@ -5,6 +5,7 @@ pub mod auth;
 pub mod channel;
 pub mod compaction;
 pub mod connection_state;
+pub mod curation;
 pub mod elevenlabs;
 pub mod email;
 pub mod encryption;
