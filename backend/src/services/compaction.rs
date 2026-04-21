@@ -28,8 +28,30 @@
 //   - Compaction LLM tokens are NOT counted in `usage_stats.total_messages`
 //     because `update_usage_stats` is only called from the primary user-turn
 //     path in `services/messaging.rs` (R6).
+//
+// W2.2 — Structured handoff.
+//
+// After a successful compaction, a SECOND cheap LLM call extracts a
+// structured JSON handoff (open tasks, customer facts, unresolved issues)
+// and stores it in `conversation_handoffs` (migration 100). On subsequent
+// LLM calls for the same conversation, the handoff is loaded and
+// prepended as an initial system message so the next call has immediate
+// context on what's still pending. The structured extraction is logged
+// with `kind='handoff'` in `llm_call_logs` for audit/budget parity with
+// compaction. Any failure in the handoff path (LLM error, JSON parse
+// failure, missing API key) is logged as a warning and does NOT fail
+// the compaction — the textual summary is always the durable fallback.
+//
+// Rationale for a new `conversation_handoffs` table instead of reusing
+// `sessions.handoff_summary` (which exists in migration 096): T2.1's
+// messaging flow creates a fresh `session_id` per inbound user turn, so
+// `sessions.handoff_summary` would be tied to a single turn rather than to
+// "the latest known state of this conversation". Using a per-conversation
+// keyed table keeps the one-row-per-conversation shape that matches how
+// the next LLM call needs to read it, with zero coupling to T2.1 semantics.
 
 use scylla::frame::value::CqlTimestamp;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::config::Config;
@@ -173,7 +195,7 @@ pub struct CompactionResult {
 /// platform `COMPACTION_API_KEY`, NOT the user's decrypted key, so no
 /// `workspace::get_decrypted_api_key` is involved here.
 pub async fn compact_conversation(
-    _db: &DbSession,
+    db: &DbSession,
     config: &Config,
     assistant: &Assistant,
     user_id: Uuid,
@@ -321,11 +343,413 @@ agradecimentos ou análise de qualidade — apenas o resumo factual.";
         created_at: chrono::Utc::now(),
     };
 
+    // W2.2 — structured handoff extraction. Best-effort: a failure here
+    // (LLM error, parse failure, DB write error) is logged and swallowed so
+    // the textual summary above remains the durable compaction result. The
+    // older-segment slice is the same input the textual summarizer saw.
+    if let Some(handoff) = build_handoff(
+        config,
+        assistant,
+        user_id,
+        _conversation_id,
+        older,
+    )
+    .await
+    {
+        if let Err(e) = save_handoff(db, user_id, _conversation_id, &handoff).await {
+            tracing::warn!(
+                event = "handoff.save_failed",
+                error = %e,
+                conversation_id = %_conversation_id,
+                "handoff save failed; continuing (textual summary is the fallback)"
+            );
+        } else {
+            tracing::info!(
+                event = "handoff.saved",
+                conversation_id = %_conversation_id,
+                open_tasks = handoff.open_tasks.len(),
+                customer_facts = handoff.customer_facts.len(),
+                has_unresolved = !handoff.unresolved.trim().is_empty(),
+            );
+        }
+    } else {
+        tracing::debug!(
+            event = "handoff.skipped",
+            conversation_id = %_conversation_id,
+            "handoff extraction produced no result (missing key, empty older, LLM/parse error)"
+        );
+    }
+
     Ok(CompactionResult {
         summary_message,
         replaced_count: split,
         tokens_used: response.tokens_used.max(0) as u32,
     })
+}
+
+// ---------------------------------------------------------------------------
+// W2.2 — Structured handoff.
+// ---------------------------------------------------------------------------
+
+/// Structured handoff produced after compaction. One row per conversation is
+/// persisted in `conversation_handoffs` and prepended as an initial system
+/// message on the next LLM call for the same conversation.
+///
+/// Shape matches the W2.2 contract:
+/// ```json
+/// {
+///   "open_tasks": ["..."],
+///   "customer_facts": {"nome": "João", "plano": "premium"},
+///   "unresolved": "..."
+/// }
+/// ```
+///
+/// Deserialization is lenient: missing fields default to empty so a partial
+/// LLM output still yields a usable handoff (instead of a parse failure that
+/// discards every field).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct HandoffSummary {
+    #[serde(default)]
+    pub open_tasks: Vec<String>,
+    #[serde(default)]
+    pub customer_facts: serde_json::Map<String, serde_json::Value>,
+    #[serde(default)]
+    pub unresolved: String,
+}
+
+/// Call a cheap LLM with a structured-output prompt to extract a
+/// [`HandoffSummary`] from the older conversation prefix.
+///
+/// Returns `Ok(None)` (never `Err`) when any step fails: no API key, empty
+/// older segment, LLM error, or unparseable output. The caller — `compact_conversation` —
+/// logs a warn and continues; the textual summary from step 1 is the durable
+/// fallback.
+///
+/// Uses the same `COMPACTION_API_KEY` as the textual summarizer (same budget,
+/// same provider). `llm_call_logs` row is emitted with `kind='handoff'` via
+/// the T1.2 mpsc pipeline.
+pub async fn build_handoff(
+    config: &Config,
+    assistant: &Assistant,
+    user_id: Uuid,
+    conversation_id: Uuid,
+    older_messages: &[Message],
+) -> Option<HandoffSummary> {
+    let api_key = match config
+        .compaction_api_key
+        .as_deref()
+        .filter(|k| !k.is_empty())
+    {
+        Some(k) => k,
+        None => return None,
+    };
+
+    if older_messages.is_empty() {
+        return None;
+    }
+
+    // Same transcript shape as `compact_conversation`, bounded per-message and
+    // globally so the extractor stays within the summarizer model's context.
+    let mut transcript = String::with_capacity(older_messages.len() * 160);
+    for m in older_messages {
+        let role = if m.role == "user" { "Cliente" } else { "Agente" };
+        let mut body = m.content.clone().unwrap_or_default();
+        if let Some(extracted) = m.media_extracted_text.as_deref() {
+            if !extracted.is_empty() {
+                const PER_MSG_CAP: usize = 8_000;
+                let slice = if extracted.len() > PER_MSG_CAP {
+                    let mut cut = PER_MSG_CAP;
+                    while cut > 0 && !extracted.is_char_boundary(cut) {
+                        cut -= 1;
+                    }
+                    &extracted[..cut]
+                } else {
+                    extracted
+                };
+                if !body.is_empty() {
+                    body.push('\n');
+                }
+                body.push_str("[conteúdo extraído]\n");
+                body.push_str(slice);
+            }
+        }
+        transcript.push_str(&format!("{role}: {body}\n"));
+    }
+    const TRANSCRIPT_CAP: usize = 80_000;
+    if transcript.len() > TRANSCRIPT_CAP {
+        let mut cut = TRANSCRIPT_CAP;
+        while cut > 0 && !transcript.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        transcript.truncate(cut);
+        transcript.push_str("\n…[transcrição truncada]");
+    }
+
+    let system_prompt = "Você é um extrator de informação para handoff de atendimento. \
+Leia a conversa abaixo e produza APENAS um JSON válido (sem markdown, sem texto fora do JSON) \
+com EXATAMENTE esta estrutura:\n\n\
+{\n\
+  \"open_tasks\": [\"ação pendente 1\", \"ação pendente 2\"],\n\
+  \"customer_facts\": {\"chave\": \"valor\"},\n\
+  \"unresolved\": \"descrição do que ainda está pendente do ponto de vista do cliente\"\n\
+}\n\n\
+- open_tasks: lista de ações pendentes do agente/atendimento (strings curtas).\n\
+- customer_facts: dicionário com fatos estáveis do cliente (ex: nome, plano, empresa, email). \
+Não inclua dados sensíveis como CPF ou cartão. Strings em ambos os lados.\n\
+- unresolved: frase curta descrevendo o que ainda não foi resolvido; string vazia se tudo fechou.\n\
+Sempre inclua as três chaves, mesmo que vazias.";
+    let user_content = format!("Conversa para extrair handoff:\n\n{transcript}");
+
+    let llm_messages = vec![
+        LlmMessage {
+            role: "system".into(),
+            content: system_prompt.into(),
+            media_base64: None,
+            media_mime_type: None,
+        },
+        LlmMessage {
+            role: "user".into(),
+            content: user_content,
+            media_base64: None,
+            media_mime_type: None,
+        },
+    ];
+
+    // `kind='handoff'` in llm_call_logs distinguishes this call from the
+    // `kind='compaction'` textual summarizer and from `kind='primary'` user
+    // turns. Same tenant key so UPDATE WHERE clauses scope correctly.
+    let ctx = ToolContext {
+        db: None,
+        assistant_id: Some(assistant.id),
+        user_id: Some(user_id),
+        conversation_id: Some(conversation_id),
+        config: None,
+        encryption: None,
+        max_tool_rounds: None,
+        max_duration_ms: None,
+        call_kind: Some("handoff"),
+    };
+
+    let response = match llm::call_llm_with_tools_ctx(
+        &config.compaction_provider,
+        &config.compaction_model,
+        api_key,
+        llm_messages,
+        0.1,   // near-deterministic extraction
+        1_024, // JSON is typically small
+        &[],
+        &ctx,
+    )
+    .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!(
+                event = "handoff.llm_failed",
+                error = %e,
+                conversation_id = %conversation_id,
+                "handoff LLM call failed; skipping structured extraction"
+            );
+            return None;
+        }
+    };
+
+    parse_handoff_json(&response.content).or_else(|| {
+        tracing::warn!(
+            event = "handoff.parse_failed",
+            conversation_id = %conversation_id,
+            "handoff JSON parse failed; skipping structured extraction"
+        );
+        None
+    })
+}
+
+/// Parse an LLM response into a [`HandoffSummary`]. Handles:
+///   - raw JSON object: `{...}`
+///   - JSON wrapped in a ```json fenced code block
+///   - leading/trailing whitespace
+///
+/// Returns `None` if no JSON object is detected. The deserialization itself
+/// is lenient via `#[serde(default)]` on each field, so a partial JSON (e.g.
+/// missing `customer_facts`) still parses into the matching defaults.
+fn parse_handoff_json(raw: &str) -> Option<HandoffSummary> {
+    let trimmed = raw.trim();
+    // Strip ```json / ``` fences if the model emitted them.
+    let body = if let Some(rest) = trimmed.strip_prefix("```json") {
+        rest.trim_start()
+            .strip_suffix("```")
+            .unwrap_or(rest)
+            .trim()
+    } else if let Some(rest) = trimmed.strip_prefix("```") {
+        rest.trim_start()
+            .strip_suffix("```")
+            .unwrap_or(rest)
+            .trim()
+    } else {
+        trimmed
+    };
+    // Bracket-match from first `{` to the last `}` so trailing commentary is
+    // tolerated.
+    let start = body.find('{')?;
+    let end = body.rfind('}')?;
+    if end < start {
+        return None;
+    }
+    let json_slice = &body[start..=end];
+    serde_json::from_str::<HandoffSummary>(json_slice).ok()
+}
+
+/// Persist the latest handoff for this conversation. Overwrites any prior
+/// row — the table holds at most one row per `(user_id, conversation_id)`
+/// by design.
+///
+/// Multi-tenancy: the full partition key is always included in the INSERT.
+pub async fn save_handoff(
+    db: &DbSession,
+    user_id: Uuid,
+    conversation_id: Uuid,
+    handoff: &HandoffSummary,
+) -> Result<(), AppError> {
+    let json = serde_json::to_string(handoff)
+        .map_err(|e| AppError::InternalError(format!("handoff serialize failed: {e}")))?;
+    let now = CqlTimestamp(chrono::Utc::now().timestamp_millis());
+    db.query_unpaged(
+        "INSERT INTO inertial_eclipse.conversation_handoffs \
+         (user_id, conversation_id, handoff_json, updated_at) VALUES (?, ?, ?, ?)",
+        (&user_id, &conversation_id, &json, now),
+    )
+    .await
+    .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+    Ok(())
+}
+
+/// Load the latest handoff for this conversation, if any. Returns `Ok(None)`
+/// when no row exists OR the stored JSON no longer parses — i.e. a schema
+/// drift never breaks the user flow (graceful degradation).
+///
+/// Multi-tenancy: partition key is `((user_id, conversation_id))` and both
+/// are always in the WHERE clause.
+pub async fn load_handoff(
+    db: &DbSession,
+    user_id: Uuid,
+    conversation_id: Uuid,
+) -> Result<Option<HandoffSummary>, AppError> {
+    let res = db
+        .query_unpaged(
+            "SELECT handoff_json FROM inertial_eclipse.conversation_handoffs \
+             WHERE user_id = ? AND conversation_id = ?",
+            (&user_id, &conversation_id),
+        )
+        .await
+        .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+
+    let rows = res.into_rows_result()?;
+    // Non-PK column is nullable; use Option<String>.
+    let row = match rows.maybe_first_row::<(Option<String>,)>()? {
+        Some(r) => r,
+        None => return Ok(None),
+    };
+    let json = match row.0 {
+        Some(s) if !s.is_empty() => s,
+        _ => return Ok(None),
+    };
+    Ok(serde_json::from_str::<HandoffSummary>(&json).ok())
+}
+
+/// Render a [`HandoffSummary`] into the `role="system"` message prepended to
+/// the LLM call before the textual compaction summary and the recent tail.
+///
+/// Format is compact PT-BR so the agent can cite facts and open tasks
+/// directly. Pure function — no I/O — and `#[must_use]` because the caller
+/// is expected to push the result onto the message list.
+#[must_use]
+pub fn handoff_as_system_message(h: &HandoffSummary) -> Message {
+    let mut body = String::from("[Handoff resumido]\n");
+
+    body.push_str("Tarefas abertas:");
+    if h.open_tasks.is_empty() {
+        body.push_str(" (nenhuma)\n");
+    } else {
+        body.push('\n');
+        for task in &h.open_tasks {
+            body.push_str(" - ");
+            body.push_str(task);
+            body.push('\n');
+        }
+    }
+
+    body.push_str("Fatos do cliente:");
+    if h.customer_facts.is_empty() {
+        body.push_str(" (nenhum)\n");
+    } else {
+        let facts: Vec<String> = h
+            .customer_facts
+            .iter()
+            .map(|(k, v)| {
+                let display = match v {
+                    serde_json::Value::String(s) => s.clone(),
+                    other => other.to_string(),
+                };
+                format!("{k}={display}")
+            })
+            .collect();
+        body.push(' ');
+        body.push_str(&facts.join(", "));
+        body.push('\n');
+    }
+
+    let unresolved = h.unresolved.trim();
+    if unresolved.is_empty() {
+        body.push_str("Pendente: (nenhum)");
+    } else {
+        body.push_str("Pendente: ");
+        body.push_str(unresolved);
+    }
+
+    Message {
+        conversation_id: Uuid::nil(), // synthetic message, not persisted
+        id: Uuid::new_v4(),
+        role: "system".into(),
+        content: Some(body),
+        media_url: None,
+        media_type: None,
+        media_base64: None,
+        media_extracted_text: None,
+        tokens_used: None,
+        sub_agent_id: None,
+        created_at: chrono::Utc::now(),
+    }
+}
+
+/// Assemble the final message list for an LLM call: handoff first (if any),
+/// then the compaction/plain message list (which already has its own summary
+/// prefix when compaction fired).
+///
+/// Pure function — no I/O. Exposed for unit testing the ordering invariant:
+///   1. handoff system message (if present)
+///   2. `[Resumo das primeiras N mensagens]` system message from compaction
+///      (when compaction ran — already inside `messages`)
+///   3. recent kept messages (rest of `messages`)
+///
+/// `#[allow(dead_code)]`: `messaging.rs` inlines the same ordering against its
+/// own `Vec<LlmMessage>` type (which includes media fields the generic
+/// `Message` lacks). This pure helper encodes the same invariant over
+/// `Message` for test coverage (`test_merge_handoff_order`).
+#[allow(dead_code)]
+#[must_use]
+pub fn merge_handoff_with_messages(
+    handoff: Option<&HandoffSummary>,
+    messages: Vec<Message>,
+) -> Vec<Message> {
+    match handoff {
+        Some(h) => {
+            let mut out = Vec::with_capacity(messages.len() + 1);
+            out.push(handoff_as_system_message(h));
+            out.extend(messages);
+            out
+        }
+        None => messages,
+    }
 }
 
 #[cfg(test)]
@@ -486,4 +910,263 @@ mod tests {
         assert!(!trigger.should_compact);
         assert_eq!(trigger.reason, "below_token_threshold");
     }
+
+    // -----------------------------------------------------------------------
+    // W2.2 — Structured handoff tests.
+    // -----------------------------------------------------------------------
+
+    fn make_handoff(
+        tasks: Vec<&str>,
+        facts: Vec<(&str, &str)>,
+        unresolved: &str,
+    ) -> HandoffSummary {
+        let mut customer_facts = serde_json::Map::new();
+        for (k, v) in facts {
+            customer_facts.insert(k.to_string(), serde_json::Value::String(v.to_string()));
+        }
+        HandoffSummary {
+            open_tasks: tasks.into_iter().map(String::from).collect(),
+            customer_facts,
+            unresolved: unresolved.to_string(),
+        }
+    }
+
+    fn make_message(role: &str, content: &str) -> Message {
+        Message {
+            conversation_id: Uuid::new_v4(),
+            id: Uuid::new_v4(),
+            role: role.into(),
+            content: Some(content.into()),
+            media_url: None,
+            media_type: None,
+            media_base64: None,
+            media_extracted_text: None,
+            tokens_used: None,
+            sub_agent_id: None,
+            created_at: Utc::now(),
+        }
+    }
+
+    #[test]
+    fn test_handoff_summary_serializes() {
+        // Shape must match the W2.2 contract exactly — the persisted JSON is
+        // prepended verbatim to the next LLM call, so the field set is part
+        // of the public contract.
+        let h = make_handoff(
+            vec!["enviar contrato", "ligar amanhã"],
+            vec![("nome", "João"), ("plano", "premium")],
+            "aguardando assinatura do contrato",
+        );
+        let json = serde_json::to_value(&h).expect("serialize");
+        assert!(json.is_object());
+        let obj = json.as_object().unwrap();
+        // Exactly three top-level keys — no drift from the spec.
+        assert_eq!(obj.len(), 3);
+        assert!(obj.contains_key("open_tasks"));
+        assert!(obj.contains_key("customer_facts"));
+        assert!(obj.contains_key("unresolved"));
+
+        assert_eq!(obj["open_tasks"][0], "enviar contrato");
+        assert_eq!(obj["open_tasks"][1], "ligar amanhã");
+        assert_eq!(obj["customer_facts"]["nome"], "João");
+        assert_eq!(obj["customer_facts"]["plano"], "premium");
+        assert_eq!(obj["unresolved"], "aguardando assinatura do contrato");
+    }
+
+    #[test]
+    fn test_handoff_summary_deserializes_missing_fields() {
+        // If the LLM omits a field, serde's `#[serde(default)]` fills in
+        // empty defaults rather than rejecting the whole payload. This
+        // guarantees a partial extraction still yields a usable handoff.
+
+        // All three fields missing.
+        let h: HandoffSummary = serde_json::from_str("{}").expect("empty object parses");
+        assert!(h.open_tasks.is_empty());
+        assert!(h.customer_facts.is_empty());
+        assert_eq!(h.unresolved, "");
+
+        // Only open_tasks present.
+        let h: HandoffSummary =
+            serde_json::from_str(r#"{"open_tasks": ["x"]}"#).expect("partial parses");
+        assert_eq!(h.open_tasks, vec!["x".to_string()]);
+        assert!(h.customer_facts.is_empty());
+        assert_eq!(h.unresolved, "");
+
+        // Only customer_facts present.
+        let h: HandoffSummary = serde_json::from_str(
+            r#"{"customer_facts": {"nome": "Ana"}}"#,
+        )
+        .expect("partial parses");
+        assert!(h.open_tasks.is_empty());
+        assert_eq!(
+            h.customer_facts.get("nome").and_then(|v| v.as_str()),
+            Some("Ana"),
+        );
+        assert_eq!(h.unresolved, "");
+    }
+
+    #[test]
+    fn test_handoff_as_system_message_formats() {
+        // The rendered system message must include the header marker, all
+        // open tasks (one per line), the customer facts as `k=v` pairs, and
+        // the unresolved text. The next LLM call reads this verbatim.
+        let h = make_handoff(
+            vec!["enviar contrato", "ligar amanhã"],
+            vec![("nome", "João"), ("plano", "premium")],
+            "aguardando assinatura",
+        );
+        let msg = handoff_as_system_message(&h);
+        assert_eq!(msg.role, "system");
+        let body = msg.content.expect("content");
+        assert!(body.contains("[Handoff resumido]"));
+        assert!(body.contains("Tarefas abertas:"));
+        assert!(body.contains(" - enviar contrato"));
+        assert!(body.contains(" - ligar amanhã"));
+        assert!(body.contains("Fatos do cliente:"));
+        assert!(body.contains("nome=João"));
+        assert!(body.contains("plano=premium"));
+        assert!(body.contains("Pendente: aguardando assinatura"));
+    }
+
+    #[test]
+    fn test_handoff_as_system_message_empty_fields() {
+        // Edge case: an all-empty handoff still produces a sensible system
+        // message so the prepended block is never malformed.
+        let h = HandoffSummary {
+            open_tasks: vec![],
+            customer_facts: serde_json::Map::new(),
+            unresolved: String::new(),
+        };
+        let msg = handoff_as_system_message(&h);
+        let body = msg.content.unwrap();
+        assert!(body.contains("[Handoff resumido]"));
+        assert!(body.contains("Tarefas abertas: (nenhuma)"));
+        assert!(body.contains("Fatos do cliente: (nenhum)"));
+        assert!(body.contains("Pendente: (nenhum)"));
+    }
+
+    #[test]
+    fn test_parse_handoff_json_plain_object() {
+        // The LLM usually emits a bare JSON object — simplest path.
+        let raw = r#"{"open_tasks": ["a"], "customer_facts": {"k": "v"}, "unresolved": "x"}"#;
+        let h = parse_handoff_json(raw).expect("parses");
+        assert_eq!(h.open_tasks, vec!["a".to_string()]);
+        assert_eq!(h.unresolved, "x");
+        assert_eq!(
+            h.customer_facts.get("k").and_then(|v| v.as_str()),
+            Some("v"),
+        );
+    }
+
+    #[test]
+    fn test_parse_handoff_json_with_fence() {
+        // Some models wrap JSON in a ```json fenced code block — the parser
+        // must strip the fence before parsing.
+        let raw = "```json\n{\"open_tasks\": [\"a\"]}\n```";
+        let h = parse_handoff_json(raw).expect("parses fenced");
+        assert_eq!(h.open_tasks, vec!["a".to_string()]);
+    }
+
+    #[test]
+    fn test_parse_handoff_json_with_surrounding_text() {
+        // Defensive: tolerate a model that adds a short preamble or suffix.
+        // We bracket-match `{` → `}` so non-JSON noise is stripped.
+        let raw = "Aqui está o JSON:\n{\"open_tasks\": [\"a\"]}\nFim.";
+        let h = parse_handoff_json(raw).expect("parses with noise");
+        assert_eq!(h.open_tasks, vec!["a".to_string()]);
+    }
+
+    #[test]
+    fn test_parse_handoff_json_invalid_returns_none() {
+        // Non-JSON garbage must NOT panic or partially parse. The caller
+        // treats `None` as "missing handoff" and continues without it.
+        assert!(parse_handoff_json("").is_none());
+        assert!(parse_handoff_json("not json at all").is_none());
+        assert!(parse_handoff_json("{broken").is_none());
+    }
+
+    #[test]
+    fn test_merge_handoff_order_with_handoff() {
+        // Invariant: when a handoff is present, it is the FIRST message in
+        // the merged list, and the compaction/plain messages follow in their
+        // original order (compaction's `[Resumo das primeiras N mensagens]`
+        // system message stays second, recent tail third — by virtue of the
+        // caller passing them in that order inside `messages`).
+        let h = make_handoff(
+            vec!["task1"],
+            vec![("nome", "João")],
+            "unresolved",
+        );
+
+        let compaction_summary = make_message(
+            "system",
+            "[Resumo das primeiras 30 mensagens: …]",
+        );
+        let recent_1 = make_message("user", "oi de novo");
+        let recent_2 = make_message("assistant", "bem-vindo de volta");
+
+        let compaction_or_plain = vec![
+            compaction_summary.clone(),
+            recent_1.clone(),
+            recent_2.clone(),
+        ];
+
+        let merged = merge_handoff_with_messages(Some(&h), compaction_or_plain);
+
+        assert_eq!(merged.len(), 4);
+        // 1. Handoff system message is first.
+        assert_eq!(merged[0].role, "system");
+        assert!(merged[0]
+            .content
+            .as_deref()
+            .unwrap()
+            .contains("[Handoff resumido]"));
+        // 2. Compaction summary is second.
+        assert_eq!(merged[1].role, "system");
+        assert!(merged[1]
+            .content
+            .as_deref()
+            .unwrap()
+            .contains("[Resumo das primeiras"));
+        // 3. Recent messages follow in order.
+        assert_eq!(merged[2].content.as_deref(), Some("oi de novo"));
+        assert_eq!(merged[3].content.as_deref(), Some("bem-vindo de volta"));
+    }
+
+    #[test]
+    fn test_merge_handoff_order_without_handoff() {
+        // When no handoff exists, the message list passes through unchanged —
+        // the graceful-degrade path is a clean no-op.
+        let recent = make_message("user", "oi");
+        let input = vec![recent.clone()];
+        let merged = merge_handoff_with_messages(None, input);
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].content.as_deref(), Some("oi"));
+    }
+
+    #[test]
+    fn test_handoff_json_roundtrip() {
+        // Round-trip through `serde_json::to_string` → `from_str` preserves
+        // all fields. This matches what `save_handoff` / `load_handoff` do
+        // on the Cassandra side.
+        let h = make_handoff(
+            vec!["t1", "t2"],
+            vec![("nome", "Maria"), ("empresa", "ACME")],
+            "confirmar reunião",
+        );
+        let json = serde_json::to_string(&h).expect("serialize");
+        let back: HandoffSummary = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back, h);
+    }
+
+    // Note on integration tests: `load_handoff` and `save_handoff` touch
+    // Cassandra and are exercised end-to-end by the live test suite
+    // (`cargo test` against a running ScyllaDB). We deliberately do not
+    // stub a mock Cassandra here — the other storage-tier modules in this
+    // service follow the same convention (see `session.rs` tests, which
+    // only exercise the enqueue path). The graceful-degradation guarantee
+    // "absent row → Ok(None)" is covered structurally: `load_handoff`
+    // uses `maybe_first_row`, which returns `None` when the partition has
+    // no row; the subsequent `match` maps that to `Ok(None)` before any
+    // JSON parse happens.
 }

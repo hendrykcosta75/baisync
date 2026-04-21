@@ -734,6 +734,44 @@ pub async fn process_incoming_message(
             media_mime_type: None,
         });
     }
+
+    // W2.2 — Prepend the structured handoff (if any) right after the assistant's
+    // base system prompt and BEFORE the conversation history. Order invariants:
+    //   1. assistant base system prompt (already pushed above)
+    //   2. handoff system message (THIS BLOCK, if present)
+    //   3. `[Resumo das primeiras N mensagens]` from compaction, if fired
+    //      (first entry of `history` when compaction ran)
+    //   4. recent kept messages (rest of `history`)
+    //
+    // A missing row, an unparseable JSON, or a DB error all degrade gracefully
+    // to "no handoff" — the primary flow never fails because of W2.2.
+    match crate::services::compaction::load_handoff(db, user_id, conversation.id).await {
+        Ok(Some(h)) => {
+            let msg = crate::services::compaction::handoff_as_system_message(&h);
+            llm_messages.push(LlmMessage {
+                role: "system".into(),
+                content: msg.content.unwrap_or_default(),
+                media_base64: None,
+                media_mime_type: None,
+            });
+            tracing::debug!(
+                event = "handoff.prepended",
+                conversation_id = %conversation.id,
+                open_tasks = h.open_tasks.len(),
+                customer_facts = h.customer_facts.len(),
+            );
+        }
+        Ok(None) => { /* no handoff yet for this conversation — no-op */ }
+        Err(e) => {
+            tracing::warn!(
+                event = "handoff.load_failed",
+                error = %e,
+                conversation_id = %conversation.id,
+                "handoff load failed; continuing without it"
+            );
+        }
+    }
+
     for msg in &history {
         let has_extracted = msg
             .media_extracted_text
