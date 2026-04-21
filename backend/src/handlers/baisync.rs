@@ -1,4 +1,4 @@
-use axum::extract::{Extension, Path};
+use axum::extract::{Extension, Path, Query};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::Json;
 use chrono::{DateTime, Utc};
@@ -6,6 +6,7 @@ use scylla::frame::value::CqlTimeuuid;
 
 use futures::stream::Stream;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::convert::Infallible;
 use std::sync::OnceLock;
 use tokio::sync::mpsc;
@@ -147,6 +148,7 @@ pub async fn chat(
     Extension(config): Extension<Config>,
     Extension(encryption): Extension<crate::services::encryption::EncryptionService>,
     Extension(auth_user): Extension<AuthUser>,
+    Query(qs): Query<HashMap<String, String>>,
     Json(req): Json<BaisyncChatRequest>,
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, AppError> {
     let api_key = config.baisync_api_key.clone();
@@ -155,6 +157,15 @@ pub async fn chat(
             "BAISYNC_API_KEY not configured".into(),
         ));
     }
+
+    // S2.2 — `?planner=true` (or `?planner=1`) opts into the 2-call pipeline.
+    // When absent or any other value, Sophie runs through the single-call
+    // flow exactly as before — the planner code path is never touched. The
+    // flag is dev/QA only; production keeps the default single-call path.
+    let planner_enabled = qs
+        .get("planner")
+        .map(|v| v == "true" || v == "1")
+        .unwrap_or(false);
 
     let user_id = auth_user.user_id;
 
@@ -426,11 +437,46 @@ pub async fn chat(
     // consumed later when building the Gemini body.
     let session_user_msg = req.message.clone();
 
+    // S2.2 — capture planner inputs BEFORE the spawn so they survive the
+    // `move` closure. Only the role + content pair is needed; attachments
+    // and file_refs are irrelevant to the planner's text-only reasoning.
+    // We only materialize these clones when `planner_enabled` is true so
+    // the default single-call path stays cheap.
+    let planner_history: Vec<(String, String)> = if planner_enabled {
+        req.history
+            .iter()
+            .map(|m| (m.role.clone(), m.content.clone()))
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let planner_user_msg: String = if planner_enabled {
+        req.message.clone()
+    } else {
+        String::new()
+    };
+
+    // Owned copy of the config for the spawn — the planner call needs it
+    // (effective_evaluator_api_key + evaluator_provider/model). Only
+    // cloned when the planner flag is on; otherwise the default flow
+    // uses the existing captured values without paying for the clone.
+    let planner_config: Option<Config> = if planner_enabled {
+        Some(config.clone())
+    } else {
+        None
+    };
+
     // Create channel for SSE events
     let (tx, rx) = mpsc::channel::<Result<Event, Infallible>>(128);
 
     // Spawn streaming task
     tokio::spawn(async move {
+        // Mutable rebinding so the S2.2 planner path (below) can prepend
+        // the plan preamble to the system prompt before the Gemini call
+        // is assembled. When the planner flag is off, this is a no-op —
+        // the variable is the same string captured from the handler.
+        let mut system_prompt = system_prompt;
+
         // T2.1 — log the user message as early as possible in the spawned
         // task so a downstream panic / early-return still leaves us a record
         // of the turn the user kicked off.
@@ -441,6 +487,78 @@ pub async fn chat(
                 crate::services::session::SessionEventType::UserMsg,
                 serde_json::json!({ "content": session_user_msg }).to_string(),
             );
+        }
+
+        // S2.2 — optional Planner call. Runs BEFORE the Gemini generator
+        // HTTP request so the plan can be prepended to the system prompt
+        // as an advisory hint. Critically:
+        //   * Planner failure (no API key, LLM error, unparseable JSON)
+        //     logs a WARN and falls through to the single-call flow; the
+        //     user-facing response is never degraded.
+        //   * The plan is recorded in `session_events` as a `plan` event
+        //     via the T2.1 mpsc, inspectable through
+        //     `GET /api/baisync/session/:id`.
+        //   * The planner uses the `EVALUATOR_API_KEY` (or COMPACTION_API_KEY
+        //     fallback) — NEVER the user's decrypted key.
+        if planner_enabled {
+            if let Some(ref p_config) = planner_config {
+                match crate::services::sophie_pipeline::run_planner(
+                    p_config,
+                    user_id,
+                    &system_prompt,
+                    &planner_history,
+                    &planner_user_msg,
+                )
+                .await
+                {
+                    Ok(Some(plan)) => {
+                        // Audit log: the plan is durable in session_events
+                        // so QA can inspect the exact JSON the planner
+                        // produced for a given session.
+                        crate::services::sophie_pipeline::record_plan_event(
+                            user_id,
+                            session_id_opt,
+                            &plan,
+                        );
+                        // Prepend the plan preamble to the system prompt.
+                        // Keeps the plan structurally separate from the
+                        // base Sophie prompt via the `[Plano antecipado]`
+                        // header so the generator can recognise it.
+                        let preamble =
+                            crate::services::sophie_pipeline::format_plan_as_generator_preamble(
+                                &plan,
+                            );
+                        let mut combined = String::with_capacity(
+                            preamble.len() + system_prompt.len() + 4,
+                        );
+                        combined.push_str(&preamble);
+                        combined.push_str("\n\n");
+                        combined.push_str(&system_prompt);
+                        system_prompt = combined;
+                        tracing::info!(
+                            event = "sophie.planner.applied",
+                            step_count = plan.steps.len(),
+                            "plan applied as generator preamble"
+                        );
+                    }
+                    Ok(None) => {
+                        tracing::debug!(
+                            event = "sophie.planner.unavailable",
+                            "planner returned no plan; continuing with single-call flow"
+                        );
+                    }
+                    Err(e) => {
+                        // Defensive: run_planner currently never returns
+                        // an Err, but if a future refactor surfaces one
+                        // we still want the generator path to run.
+                        tracing::warn!(
+                            event = "sophie.planner.error",
+                            error = %e,
+                            "planner errored; continuing with single-call flow"
+                        );
+                    }
+                }
+            }
         }
 
         // Send thinking status

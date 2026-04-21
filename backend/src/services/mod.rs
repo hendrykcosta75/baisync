@@ -20,6 +20,7 @@ pub mod metrics;
 pub mod notification;
 pub mod okr;
 pub mod session;
+pub mod sophie_pipeline;
 pub mod strategy_map;
 pub mod swot;
 
