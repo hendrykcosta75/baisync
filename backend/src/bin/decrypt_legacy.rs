@@ -25,7 +25,6 @@ use scylla::{Session, SessionBuilder};
 use std::process::ExitCode;
 use uuid::Uuid;
 
-use backend::errors::AppError;
 use backend::services::encryption::EncryptionService;
 
 const KEYSPACE: &str = "inertial_eclipse";
