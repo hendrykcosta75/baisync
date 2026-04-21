@@ -1,0 +1,104 @@
+name: Security
+
+on:
+  pull_request:
+    branches: [master, main]
+  push:
+    branches: [master, main]
+  # Catch new CVEs disclosed against existing deps without requiring a push.
+  schedule:
+    - cron: '0 6 * * 1'
+
+permissions:
+  contents: read
+  security-events: write
+  pull-requests: read
+
+jobs:
+  # Scan commits for leaked secrets. On PRs the action scans only the PR
+  # diff by default, so legacy leaks in history do not re-fire on every PR.
+  gitleaks:
+    name: Gitleaks (secrets)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # SAST across Rust, TS/React, and generic security rulesets. Findings are
+  # uploaded to the GitHub Security tab as SARIF; the job itself does not
+  # fail the build (|| true) so existing findings don't block merges while
+  # the team triages. Flip off the `|| true` once the backlog is burned down.
+  semgrep:
+    name: Semgrep (SAST)
+    runs-on: ubuntu-latest
+    container:
+      image: returntocorp/semgrep
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run semgrep
+        run: |
+          semgrep scan \
+            --config=p/security-audit \
+            --config=p/secrets \
+            --config=p/owasp-top-ten \
+            --config=p/rust \
+            --config=p/typescript \
+            --config=p/react \
+            --config=p/javascript \
+            --sarif --output=semgrep.sarif || true
+      - uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: semgrep.sarif
+        continue-on-error: true
+
+  # Checks Cargo.lock against the RustSec advisory database. Fails on any
+  # vulnerability; yank/unmaintained warnings are informational.
+  cargo-audit:
+    name: cargo-audit (Rust deps)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: backend
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+      - name: Run cargo audit
+        working-directory: backend
+        run: cargo audit --deny warnings
+
+  # Frontend dep advisory check. yarn 1 exits with a bitmask on findings —
+  # we care about high/critical only; moderate tends to be noisy in the
+  # JS ecosystem. Prod deps only (no dev/test tooling).
+  yarn-audit:
+    name: yarn audit (npm deps)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install frontend deps
+        working-directory: frontend
+        run: yarn install --frozen-lockfile --ignore-scripts
+      - name: Run yarn audit
+        working-directory: frontend
+        run: yarn audit --level high --groups dependencies
+
+  # Lint the workflow files themselves. Catches shell-quoting bugs in `run:`
+  # blocks and invalid action references before they silently fail in CI.
+  actionlint:
+    name: actionlint (workflow lint)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run actionlint
+        uses: docker://rhysd/actionlint:latest
+        with:
+          args: -color

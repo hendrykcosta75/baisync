@@ -9,6 +9,16 @@ pre-commit:
       root: backend/
       glob: "*.rs"
       run: cargo check
+    # Block secrets from entering the index. `protect --staged` scans only the
+    # staged diff, so legacy leaks already in history don't fail every commit.
+    # The matching CI job enforces on PRs; this is the best-effort local guard.
+    gitleaks:
+      run: |
+        if command -v gitleaks >/dev/null 2>&1; then
+          gitleaks protect --staged --no-banner --redact
+        else
+          echo "[lefthook] gitleaks not installed — skipping local scan. Install: https://github.com/gitleaks/gitleaks"
+        fi
 
 pre-push:
   commands:
@@ -20,3 +30,19 @@ pre-push:
       run: cargo test --lib
     consistency:
       run: bash tests/consistency/check.sh
+    # Rust advisory-db check. Mirrors the `.github/workflows/security.yml`
+    # cargo-audit job so regressions surface before push.
+    cargo-audit:
+      root: backend/
+      run: |
+        if command -v cargo-audit >/dev/null 2>&1; then
+          cargo audit
+        else
+          echo "[lefthook] cargo-audit not installed — skipping. Install: cargo install cargo-audit --locked"
+        fi
+    # npm advisory check for prod deps only. `|| true` because yarn 1 exits
+    # non-zero on any finding at or above the threshold — CI is the blocker;
+    # local is informational.
+    yarn-audit:
+      root: frontend/
+      run: yarn audit --level high --groups dependencies || true
