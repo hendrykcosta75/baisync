@@ -5,6 +5,7 @@ use axum::Json;
 use futures::stream::Stream;
 use serde::{Deserialize, Serialize};
 use std::convert::Infallible;
+use std::sync::OnceLock;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 
@@ -509,6 +510,11 @@ pub async fn chat(
                     }
                 }
 
+                // S1.2 — Log-only XML/JSON validation of baisync-action
+                // payloads. Foundation for W2.1 evaluator. Must not touch
+                // `full_content`, SSE events, or rate-limit state.
+                validate_baisync_actions(&full_content);
+
                 // Send rate limit warning if approaching limit
                 if pct >= 60.0 {
                     let warning_msg = if pct >= 100.0 {
@@ -556,6 +562,59 @@ pub async fn chat(
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
+
+/// Compiled-once regex for scanning `<baisync-action>...</baisync-action>`
+/// payloads inside the streamed response. The `(?s)` inline flag enables
+/// DOTALL so `.` matches newlines — actions frequently span multiple lines.
+fn action_regex() -> &'static regex::Regex {
+    static R: OnceLock<regex::Regex> = OnceLock::new();
+    R.get_or_init(|| {
+        regex::Regex::new(r"(?s)<baisync-action>(.+?)</baisync-action>")
+            .expect("static baisync-action regex must compile")
+    })
+}
+
+/// S1.2 — Validate every `<baisync-action>…</baisync-action>` payload Sophie
+/// emitted in the completed response. Log-only: malformed JSON produces a
+/// `baisync.xml_malformed` warn, a non-zero total produces a single info
+/// summary. Does NOT mutate the content, the SSE stream, or any state.
+///
+/// Foundation for W2.1 (evaluator); today it just gives us observability.
+fn validate_baisync_actions(content: &str) {
+    let mut total: usize = 0;
+    let mut malformed: usize = 0;
+
+    for cap in action_regex().captures_iter(content) {
+        total += 1;
+        // capture group 1 is the inner payload; regex guarantees presence.
+        let inner = match cap.get(1) {
+            Some(m) => m.as_str(),
+            None => continue,
+        };
+
+        if let Err(e) = serde_json::from_str::<serde_json::Value>(inner) {
+            malformed += 1;
+            // Truncate by chars (not bytes) — Gemini emits UTF-8 Portuguese
+            // with multibyte accents; slicing by bytes would panic.
+            let preview: String = inner.chars().take(200).collect();
+            tracing::warn!(
+                event = "baisync.xml_malformed",
+                error = %e,
+                content_preview = %preview,
+                "malformed baisync-action payload"
+            );
+        }
+    }
+
+    if total > 0 {
+        tracing::info!(
+            event = "baisync.actions_parsed",
+            total = total,
+            malformed = malformed,
+            "sophie emitted actions"
+        );
+    }
+}
 
 /// Merge consecutive same-role Gemini contents into one entry.
 fn coalesce_contents(contents: Vec<serde_json::Value>) -> Vec<serde_json::Value> {
@@ -673,5 +732,69 @@ mod tests {
         assert!(get_skill_prompt("criar_atendente").is_some());
         assert!(get_skill_prompt("sobre_plataforma").is_some());
         assert!(get_skill_prompt("inexistente").is_none());
+    }
+
+    // ─── S1.2: validate_baisync_actions ──────────────────────────────────
+    //
+    // `validate_baisync_actions` is log-only and returns `()`. These tests
+    // are smoke checks that the function does not panic on the expected
+    // input shapes. The regex behavior is covered separately by
+    // `test_action_regex_dotall` so we can catch the DOTALL regression if
+    // someone drops the `(?s)` flag. Upstream crates (regex, serde_json)
+    // are themselves well-tested, so we don't reimplement a log capture
+    // here.
+
+    #[test]
+    fn test_validate_baisync_actions_valid_passes() {
+        let content = r#"Claro! Aqui vão as ações:
+<baisync-action>{"action": "list_assistants", "data": {}}</baisync-action>
+Depois, esta também:
+<baisync-action>{"action": "open_channel", "data": {"id": "abc"}}</baisync-action>
+Pronto."#;
+        // Must not panic. Both payloads are well-formed JSON.
+        validate_baisync_actions(content);
+    }
+
+    #[test]
+    fn test_validate_baisync_actions_malformed_detected() {
+        let content = r#"Vou tentar duas:
+<baisync-action>{"action": "list_assistants", "data": {}}</baisync-action>
+E esta está quebrada:
+<baisync-action>{not json}</baisync-action>"#;
+        // Must not panic; the malformed one triggers a warn log internally.
+        validate_baisync_actions(content);
+    }
+
+    #[test]
+    fn test_validate_baisync_actions_no_matches() {
+        let content = "Nenhuma ação aqui, apenas texto em português com acentuação (ção).";
+        // Zero matches → zero warns, no info log, no panic.
+        validate_baisync_actions(content);
+    }
+
+    #[test]
+    fn test_validate_baisync_actions_multiline_action() {
+        // Multi-line JSON inside the tag — DOTALL must allow `.` across `\n`.
+        let content = "<baisync-action>{\n  \"action\": \"multi\",\n  \"data\": {\n    \"k\": \"v\"\n  }\n}</baisync-action>";
+        // Must not panic; the JSON inside is valid once parsed.
+        validate_baisync_actions(content);
+    }
+
+    #[test]
+    fn test_action_regex_dotall() {
+        // Direct regex sanity check — if someone drops `(?s)`, the `.+?`
+        // will refuse to match across `\n` and this test fails.
+        let input = "<baisync-action>{\n  \"action\": \"x\"\n}</baisync-action>";
+        let re = action_regex();
+
+        let matches: Vec<_> = re.captures_iter(input).collect();
+        assert_eq!(matches.len(), 1, "expected exactly one match");
+
+        let inner = matches[0].get(1).expect("capture group 1").as_str();
+        assert!(inner.contains("\"action\": \"x\""));
+        // The captured group must be parseable as JSON.
+        let parsed: serde_json::Value =
+            serde_json::from_str(inner).expect("multiline JSON must parse");
+        assert_eq!(parsed["action"], "x");
     }
 }

@@ -255,6 +255,7 @@ dependencies = [
  "qrcode",
  "quick-xml 0.36.2",
  "rand 0.9.3",
+ "regex",
  "reqwest",
  "scylla",
  "serde",
