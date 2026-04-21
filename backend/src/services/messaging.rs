@@ -46,6 +46,19 @@ fn ts_now() -> CqlTimestamp {
     CqlTimestamp(Utc::now().timestamp_millis())
 }
 
+/// T2.3 — helper used by the compaction fallback path. Takes the tail of a
+/// wide message pull when compaction didn't actually run (rate-limited,
+/// failed, or short-circuited). Returns a `Vec` owned by the caller because
+/// the hot path mutates it downstream.
+#[inline]
+fn fallback_tail(mut wide: Vec<Message>, keep: usize) -> Vec<Message> {
+    if wide.len() > keep {
+        let drop_prefix = wide.len() - keep;
+        wide.drain(..drop_prefix);
+    }
+    wide
+}
+
 type IntegrationRow = (
     Uuid,
     Uuid,
@@ -551,7 +564,112 @@ pub async fn process_incoming_message(
         .await?;
     }
 
-    let history = get_recent_messages(db, &conversation.id, 20).await?;
+    // T2.3 — auto-compaction check. Pull a wider window (up to 100 msgs) so
+    // the trigger sees the actual conversation length. If the assistant opts
+    // out or thresholds aren't met, `evaluate_trigger` short-circuits to a
+    // no-op and the `history` pulled below remains the canonical 20 msgs.
+    //
+    // Compaction is "best-effort": any failure in the evaluator / LWT claim /
+    // LLM call falls through to the raw recent-history path. The user never
+    // sees a compaction failure and no side-effects are retried.
+    let history: Vec<Message> = if assistant.config_auto_compact.unwrap_or(false)
+        && config.is_compaction_enabled()
+    {
+        let wide = get_recent_messages(db, &conversation.id, 100).await?;
+        let total_tokens: u32 = wide
+            .iter()
+            .map(|m| m.tokens_used.unwrap_or(0).max(0) as u32)
+            .sum();
+        let trigger = crate::services::compaction::evaluate_trigger(
+            &assistant,
+            wide.len(),
+            total_tokens,
+            config,
+        );
+        tracing::info!(
+            event = "compaction.evaluated",
+            conversation_id = %conversation.id,
+            assistant_id = %assistant_id,
+            reason = trigger.reason,
+            should_compact = trigger.should_compact,
+            msg_count = trigger.msg_count,
+            token_pct = trigger.token_pct,
+        );
+        if trigger.should_compact {
+            match crate::services::compaction::try_claim_rate_limit_slot(
+                db,
+                user_id,
+                conversation.id,
+            )
+            .await
+            {
+                Ok(true) => {
+                    match crate::services::compaction::compact_conversation(
+                        db,
+                        config,
+                        &assistant,
+                        user_id,
+                        conversation.id,
+                        wide.clone(),
+                    )
+                    .await
+                    {
+                        Ok(result) => {
+                            tracing::info!(
+                                event = "compaction.completed",
+                                conversation_id = %conversation.id,
+                                assistant_id = %assistant_id,
+                                replaced = result.replaced_count,
+                                tokens = result.tokens_used,
+                            );
+                            // Keep only the recent suffix; prepend the
+                            // synthetic summary. `keep_recent` is bounded by
+                            // the wide pull's length inside `compact_conversation`.
+                            let keep = config.compaction_keep_recent.min(wide.len());
+                            let recent_tail: Vec<Message> =
+                                wide.iter().rev().take(keep).rev().cloned().collect();
+                            let mut merged = Vec::with_capacity(recent_tail.len() + 1);
+                            merged.push(result.summary_message);
+                            merged.extend(recent_tail);
+                            merged
+                        }
+                        Err(e) => {
+                            // Graceful degradation — keep the raw wide
+                            // history (truncated below to the normal 20) so
+                            // the user's reply is never delayed.
+                            tracing::warn!(
+                                error = %e,
+                                conversation_id = %conversation.id,
+                                "compaction failed; falling back to recent messages"
+                            );
+                            fallback_tail(wide, 20)
+                        }
+                    }
+                }
+                Ok(false) => {
+                    tracing::info!(
+                        event = "compaction.rate_limited",
+                        conversation_id = %conversation.id,
+                    );
+                    fallback_tail(wide, 20)
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        conversation_id = %conversation.id,
+                        "compaction rate-limit check failed; continuing without compaction"
+                    );
+                    fallback_tail(wide, 20)
+                }
+            }
+        } else {
+            // Trigger didn't fire — reuse the wide pull trimmed to 20 to
+            // avoid a second DB round trip.
+            fallback_tail(wide, 20)
+        }
+    } else {
+        get_recent_messages(db, &conversation.id, 20).await?
+    };
 
     let api_key = crate::services::workspace::get_decrypted_api_key(
         db,
@@ -706,6 +824,7 @@ pub async fn process_incoming_message(
         encryption: Some(encryption),
         max_tool_rounds: assistant.config_max_tool_rounds,
         max_duration_ms: assistant.config_max_duration_ms,
+        call_kind: None, // primary user-turn call
     };
 
     // T2.1 — open a session BEFORE invoking the LLM. `create_session` is the
@@ -2678,6 +2797,7 @@ pub async fn playground_chat(
         encryption: Some(encryption),
         max_tool_rounds: assistant.config_max_tool_rounds,
         max_duration_ms: assistant.config_max_duration_ms,
+        call_kind: None, // playground primary call
     };
     let llm_response = llm::call_llm_with_tools_ctx(
         &assistant.llm_provider,

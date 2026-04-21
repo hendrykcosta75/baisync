@@ -582,6 +582,11 @@ pub struct ToolContext<'a> {
     /// [`DEFAULT_MAX_DURATION_MS`]. Enforced between rounds; a running HTTP
     /// call is still allowed to finish.
     pub max_duration_ms: Option<i32>,
+    /// T2.3 — logical kind written to `llm_call_logs.kind`. Defaults to
+    /// `"primary"` when `None`. Compaction / evaluator callers override to
+    /// `"compaction"` / `"evaluator"` so these calls are distinguishable in
+    /// the session log and can be excluded from user-facing usage stats.
+    pub call_kind: Option<&'static str>,
 }
 
 /// W1.2 defaults applied when the assistant has no override. Exposed so
@@ -1136,6 +1141,7 @@ pub async fn call_llm_with_tools(
         encryption: None,
         max_tool_rounds: None,
         max_duration_ms: None,
+        call_kind: None,
     };
     call_llm_with_tools_ctx(
         provider,
@@ -1231,6 +1237,10 @@ pub async fn call_llm_with_tools_ctx(
     let session_id: Option<Uuid> =
         if let (Some(user_id), Some(assistant_id)) = (ctx.user_id, ctx.assistant_id) {
             let id = timeuuid_from_ms(started_at_ms);
+            // T2.3 — honour caller-supplied kind (e.g. "compaction") so
+            // `llm_call_logs.kind` distinguishes background calls from
+            // user-turn calls. Defaults to "primary".
+            let kind = ctx.call_kind.unwrap_or("primary").to_string();
             enqueue(LlmCallLogEvent::Started {
                 user_id,
                 assistant_id,
@@ -1240,7 +1250,7 @@ pub async fn call_llm_with_tools_ctx(
                 model: model.to_string(),
                 started_at_ms,
                 messages_digest: digest_messages(&messages),
-                kind: "primary".to_string(),
+                kind,
             });
             Some(id)
         } else {

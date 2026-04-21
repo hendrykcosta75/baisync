@@ -3,6 +3,7 @@ pub mod appointment;
 pub mod assistant;
 pub mod auth;
 pub mod channel;
+pub mod compaction;
 pub mod connection_state;
 pub mod elevenlabs;
 pub mod email;

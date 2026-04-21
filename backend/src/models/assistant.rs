@@ -34,6 +34,10 @@ pub struct Assistant {
     // W1.2 thresholds — defaults applied in code: 5 rounds, 30000 ms.
     pub config_max_tool_rounds: Option<i32>,
     pub config_max_duration_ms: Option<i32>,
+    // T2.3 — opt-in auto-compaction. Default in code: false.
+    // Requires `COMPACTION_API_KEY` set at the platform level; see
+    // `Config::is_compaction_enabled`.
+    pub config_auto_compact: Option<bool>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -95,6 +99,9 @@ pub struct UpdateAssistantRequest {
     pub config_max_tool_rounds: Option<i32>,
     #[serde(alias = "configMaxDurationMs")]
     pub config_max_duration_ms: Option<i32>,
+    // T2.3 — opt-in auto-compaction.
+    #[serde(alias = "configAutoCompact")]
+    pub config_auto_compact: Option<bool>,
 }
 
 #[allow(dead_code)]

@@ -31,6 +31,10 @@ async fn main() {
         .init();
 
     let config = Config::from_env();
+    // T2.3 — emit a WARN at startup when auto-compaction is globally
+    // disabled (COMPACTION_API_KEY unset), so operators notice inert
+    // assistants. Does not fail startup.
+    config.log_compaction_status();
     let db = db::connect(&config.database_url).await;
     let encryption = EncryptionService::new(&config.encryption_key)
         .expect("ENCRYPTION_KEY must be 64 hex chars (32 bytes)");
