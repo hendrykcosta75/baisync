@@ -370,6 +370,14 @@ pub fn build_router(
             "/api/baisync/rate-limit",
             get(handlers::baisync::rate_limit),
         )
+        .route(
+            "/api/baisync/actions/my_recent_errors",
+            get(handlers::baisync::my_recent_errors),
+        )
+        .route(
+            "/api/baisync/actions/platform_health",
+            get(handlers::baisync::platform_health),
+        )
         // Test Agent
         .route("/api/test-agent/chat", post(handlers::test_agent::chat))
         .route(

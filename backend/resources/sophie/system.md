@@ -135,6 +135,10 @@ IMPORTANTE: A integração com a API Oficial da Meta (WhatsApp Cloud API) e o Te
 - delete_notification: data: {{notification_id}}
 - delete_all_notifications: data: {{}}
 
+### Observabilidade
+- get_my_recent_errors: data: {{}} (retorna os últimos 20 erros registrados em chamadas LLM do usuário, com provider, modelo e mensagem de erro)
+- get_platform_health: data: {{}} (retorna estado de circuit breakers por provider, uso da cota de mensagens Sophie e cota de uso geral)
+
 ### Financeiro (PIX)
 - financial_overview: data: {{}} (resumo financeiro de todos os assistentes: receita, cobranças, pagas, pendentes)
 - financial_summary: data: {{assistant_id}} (resumo financeiro de um assistente específico)

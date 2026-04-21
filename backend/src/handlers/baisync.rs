@@ -1,6 +1,8 @@
 use axum::extract::Extension;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::Json;
+use chrono::{DateTime, Utc};
+use scylla::frame::value::CqlTimeuuid;
 
 use futures::stream::Stream;
 use serde::{Deserialize, Serialize};
@@ -15,6 +17,7 @@ use crate::config::Config;
 use crate::db::DbSession;
 use crate::errors::AppError;
 use crate::middleware::auth::AuthUser;
+use crate::services::llm;
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -658,6 +661,259 @@ pub async fn rate_limit(
     }))
 }
 
+// ─── S1.3 — Sophie self-introspection endpoints ──────────────────────────────
+//
+// Two GET endpoints Sophie can call via <baisync-action> to inspect her own
+// failures and the platform health. Both scope strictly to the authenticated
+// user_id; neither exposes data from other tenants.
+
+/// Canonical LLM providers that the circuit breaker tracks. Keep this list in
+/// sync with `services/llm.rs` callers (`openai`, `claude`, `gemini`, `grok`,
+/// `deepseek`). Providers never seen by `record_failure` still appear in the
+/// response with `open=false, fail_count_last_60s=0` so Sophie always gets a
+/// complete picture regardless of recent traffic.
+const CANONICAL_PROVIDERS: &[&str] = &["openai", "claude", "gemini", "grok", "deepseek"];
+
+#[derive(Serialize)]
+pub struct RecentError {
+    pub id: String,
+    pub assistant_id: String,
+    pub conversation_id: Option<String>,
+    pub provider: String,
+    pub model: String,
+    pub error: String,
+    pub created_at: String,
+    pub duration_ms: Option<i32>,
+    pub tool_rounds: Option<i32>,
+}
+
+#[derive(Serialize)]
+pub struct MyRecentErrorsResponse {
+    pub errors: Vec<RecentError>,
+    pub count: usize,
+}
+
+#[derive(Serialize)]
+pub struct ProviderHealthSnapshot {
+    pub provider: String,
+    pub open: bool,
+    pub fail_count_last_60s: u32,
+}
+
+#[derive(Serialize)]
+pub struct BaisyncRateLimitSnapshot {
+    pub used: i64,
+    pub limit: i32,
+    pub reset_at: String,
+}
+
+#[derive(Serialize)]
+pub struct UsageQuotaSnapshot {
+    pub total_messages: i64,
+    pub total_tokens: i64,
+}
+
+#[derive(Serialize)]
+pub struct PlatformHealthResponse {
+    pub circuit_breaker_state: Vec<ProviderHealthSnapshot>,
+    pub baisync_rate_limit_usage: BaisyncRateLimitSnapshot,
+    pub usage_quota: UsageQuotaSnapshot,
+}
+
+/// GET /api/baisync/actions/my_recent_errors
+///
+/// Returns up to 20 most recent LLM call failures for the authenticated user,
+/// across all of their assistants. Strategy (a) from the plan: first list the
+/// user's assistants, then scan each partition individually, merge + truncate
+/// in memory. This respects the `((user_id, assistant_id), id)` partition key
+/// and never issues an `ALLOW FILTERING` scan of cross-tenant data.
+pub async fn my_recent_errors(
+    Extension(db): Extension<DbSession>,
+    Extension(auth_user): Extension<AuthUser>,
+) -> Result<Json<MyRecentErrorsResponse>, AppError> {
+    let user_id = auth_user.user_id;
+
+    // 1. List user's assistants (partition-key scoped).
+    let assistants = crate::services::assistant::list_assistants(&db, &user_id)
+        .await
+        .unwrap_or_default();
+
+    // 2. For each assistant partition, pull up to 20 rows newest-first and
+    //    filter to those carrying a non-empty `error`. Cassandra `error` is
+    //    nullable (non-PK), so we scope by the primary key and post-filter in
+    //    memory. No ALLOW FILTERING needed.
+    //
+    //    Row shape mirrors the existing `assistant_llm_logs` query in
+    //    `handlers/stats.rs` so the two endpoints stay consistent.
+    type LogRow = (
+        CqlTimeuuid,
+        Option<Uuid>,     // conversation_id
+        Option<String>,   // provider
+        Option<String>,   // model
+        Option<i32>,      // duration_ms
+        Option<i32>,      // tool_rounds
+        Option<String>,   // error
+        Option<DateTime<Utc>>, // created_at
+    );
+
+    // Over-fetch per partition so non-error rows don't starve the final 20.
+    // 40 rows per assistant keeps the total bounded even with many assistants.
+    const PER_ASSISTANT_SCAN: i32 = 40;
+
+    let mut candidates: Vec<(CqlTimeuuid, Uuid, LogRow)> = Vec::new();
+    for asst in &assistants {
+        let result = db
+            .query_unpaged(
+                "SELECT id, conversation_id, provider, model, duration_ms, \
+                        tool_rounds, error, created_at \
+                 FROM inertial_eclipse.llm_call_logs \
+                 WHERE user_id = ? AND assistant_id = ? LIMIT ?",
+                (&user_id, &asst.id, PER_ASSISTANT_SCAN),
+            )
+            .await
+            .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+
+        let rows = result.into_rows_result()?;
+        for row in rows.rows::<LogRow>()?.flatten() {
+            // Filter by non-empty error (post-fetch — the column is nullable
+            // and there is no SAI index on `error`; a proper SAI index would
+            // let us push this into the query but the data volume is small).
+            if row.6.as_deref().map(|s| !s.is_empty()).unwrap_or(false) {
+                candidates.push((row.0, asst.id, row));
+            }
+        }
+    }
+
+    // 3. Sort newest-first by TIMEUUID (natural time ordering) and truncate.
+    candidates.sort_by(|a, b| b.0.cmp(&a.0));
+    candidates.truncate(20);
+
+    let errors: Vec<RecentError> = candidates
+        .into_iter()
+        .map(|(id_tuuid, assistant_id, row)| {
+            let id_uuid: Uuid = Uuid::from(id_tuuid);
+            RecentError {
+                id: id_uuid.to_string(),
+                assistant_id: assistant_id.to_string(),
+                conversation_id: row.1.map(|u| u.to_string()),
+                provider: row.2.unwrap_or_default(),
+                model: row.3.unwrap_or_default(),
+                error: row.6.unwrap_or_default(),
+                created_at: row
+                    .7
+                    .map(|t| t.to_rfc3339())
+                    .unwrap_or_default(),
+                duration_ms: row.4,
+                tool_rounds: row.5,
+            }
+        })
+        .collect();
+
+    let count = errors.len();
+    Ok(Json(MyRecentErrorsResponse { errors, count }))
+}
+
+/// Merge the raw snapshot from `services/llm.rs` with the canonical provider
+/// list so providers never seen by `record_failure` still appear with
+/// zeroed counters. Extracted from the handler for unit-test coverage.
+fn merge_with_canonical_providers(
+    raw: Vec<(String, bool, u32)>,
+) -> Vec<ProviderHealthSnapshot> {
+    let mut seen: std::collections::HashMap<String, (bool, u32)> = raw
+        .into_iter()
+        .map(|(p, open, n)| (p, (open, n)))
+        .collect();
+
+    let mut out: Vec<ProviderHealthSnapshot> = Vec::with_capacity(CANONICAL_PROVIDERS.len());
+    for p in CANONICAL_PROVIDERS {
+        let (open, n) = seen
+            .remove(*p)
+            .unwrap_or((false, 0));
+        out.push(ProviderHealthSnapshot {
+            provider: (*p).to_string(),
+            open,
+            fail_count_last_60s: n,
+        });
+    }
+    // Any extra providers that were tracked but aren't in the canonical list
+    // (future-proofing) are appended at the end so the response is still
+    // complete.
+    for (provider, (open, n)) in seen {
+        out.push(ProviderHealthSnapshot {
+            provider,
+            open,
+            fail_count_last_60s: n,
+        });
+    }
+    out
+}
+
+/// GET /api/baisync/actions/platform_health
+///
+/// Snapshot of platform health for Sophie:
+///   - circuit_breaker_state: one entry per canonical provider
+///   - baisync_rate_limit_usage: current-hour Sophie usage for this user
+///   - usage_quota: aggregate messages/tokens from `usage_stats` for the user
+///
+/// Every query scopes to `auth_user.user_id`; no cross-tenant data escapes.
+pub async fn platform_health(
+    Extension(db): Extension<DbSession>,
+    Extension(config): Extension<Config>,
+    Extension(auth_user): Extension<AuthUser>,
+) -> Result<Json<PlatformHealthResponse>, AppError> {
+    let user_id = auth_user.user_id;
+
+    // 1. Circuit breaker — live in-memory snapshot, no DB query.
+    let raw = llm::snapshot_circuit_breaker_state();
+    let circuit_breaker_state = merge_with_canonical_providers(raw);
+
+    // 2. Baisync rate limit — current-hour count vs. configured limit.
+    let used = get_usage_count(&db, &user_id).await;
+    let baisync_rate_limit_usage = BaisyncRateLimitSnapshot {
+        used,
+        limit: config.baisync_rate_limit,
+        reset_at: next_hour_reset(),
+    };
+
+    // 3. Usage quota — sum `total_messages` + `total_tokens` across all
+    //    (user_id, assistant_id) rows in `usage_stats`. Mirrors the pattern
+    //    in `handlers/stats.rs::user_usage` but aggregates instead of binning.
+    let assistants = crate::services::assistant::list_assistants(&db, &user_id)
+        .await
+        .unwrap_or_default();
+
+    let mut total_messages: i64 = 0;
+    let mut total_tokens: i64 = 0;
+    for asst in &assistants {
+        let result = db
+            .query_unpaged(
+                "SELECT total_messages, total_tokens \
+                 FROM inertial_eclipse.usage_stats \
+                 WHERE user_id = ? AND assistant_id = ?",
+                (&user_id, &asst.id),
+            )
+            .await
+            .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+
+        let rows = result.into_rows_result()?;
+        for row in rows.rows::<(Option<i64>, Option<i64>)>()?.flatten() {
+            total_messages += row.0.unwrap_or(0);
+            total_tokens += row.1.unwrap_or(0);
+        }
+    }
+
+    let usage_quota = UsageQuotaSnapshot {
+        total_messages,
+        total_tokens,
+    };
+
+    Ok(Json(PlatformHealthResponse {
+        circuit_breaker_state,
+        baisync_rate_limit_usage,
+        usage_quota,
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -688,7 +944,9 @@ mod tests {
         );
 
         // Byte length captured pre-refactor (r#"..."# literal with same fixture).
-        const EXPECTED_LEN: usize = 15719;
+        // S1.3 bumped the snapshot by 301 bytes when the new Observabilidade
+        // section (get_my_recent_errors + get_platform_health) was added.
+        const EXPECTED_LEN: usize = 16020;
         assert_eq!(
             rendered.len(),
             EXPECTED_LEN,
@@ -796,5 +1054,93 @@ E esta está quebrada:
         let parsed: serde_json::Value =
             serde_json::from_str(inner).expect("multiline JSON must parse");
         assert_eq!(parsed["action"], "x");
+    }
+
+    // ─── S1.3: circuit breaker snapshot for platform_health endpoint ─────
+    //
+    // These tests exercise the public snapshot API exposed by
+    // `services/llm.rs` and the merge logic used by the `platform_health`
+    // handler. Static state is mutated, so the two tests share a mutex-like
+    // sequential pattern: each one resets state at entry. They live in the
+    // same `mod tests` block because they need access to private helpers
+    // and the crate-local constants from `handlers::baisync`.
+
+    /// Serialises circuit-breaker snapshot tests so they don't race on the
+    /// shared global `PROVIDER_HEALTH` map. `cargo test --lib` runs tests
+    /// in parallel by default; without this mutex, the two tests below
+    /// would interleave `record_failure` calls and fail non-deterministically.
+    static CB_TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn test_snapshot_circuit_breaker_includes_all_providers() {
+        let _guard = CB_TEST_MUTEX.lock().unwrap();
+        llm::reset_circuit_breaker_state();
+
+        let raw = llm::snapshot_circuit_breaker_state();
+        let merged = merge_with_canonical_providers(raw);
+
+        // All 5 canonical providers must be present, all closed, all zero.
+        assert_eq!(
+            merged.len(),
+            CANONICAL_PROVIDERS.len(),
+            "expected exactly the canonical providers when state is empty"
+        );
+        for snap in &merged {
+            assert!(
+                CANONICAL_PROVIDERS.contains(&snap.provider.as_str()),
+                "unexpected provider in snapshot: {}",
+                snap.provider
+            );
+            assert!(!snap.open, "provider {} should be closed", snap.provider);
+            assert_eq!(
+                snap.fail_count_last_60s, 0,
+                "provider {} should have zero failures",
+                snap.provider
+            );
+        }
+    }
+
+    #[test]
+    fn test_snapshot_circuit_breaker_reflects_failures() {
+        let _guard = CB_TEST_MUTEX.lock().unwrap();
+        llm::reset_circuit_breaker_state();
+
+        // Trigger 3 failures on openai — circuit still closed (threshold=5).
+        for _ in 0..3 {
+            llm::test_record_failure("openai");
+        }
+        let raw = llm::snapshot_circuit_breaker_state();
+        let merged = merge_with_canonical_providers(raw);
+        let openai = merged
+            .iter()
+            .find(|s| s.provider == "openai")
+            .expect("openai must be present");
+        assert_eq!(openai.fail_count_last_60s, 3);
+        assert!(!openai.open, "openai circuit should still be closed at 3 failures");
+
+        // Two more failures — now at 5, circuit opens.
+        for _ in 0..2 {
+            llm::test_record_failure("openai");
+        }
+        let raw = llm::snapshot_circuit_breaker_state();
+        let merged = merge_with_canonical_providers(raw);
+        let openai = merged
+            .iter()
+            .find(|s| s.provider == "openai")
+            .expect("openai must be present");
+        assert_eq!(openai.fail_count_last_60s, 5);
+        assert!(openai.open, "openai circuit should open at 5 failures");
+
+        // Other providers remain closed and zero.
+        for other in ["claude", "gemini", "grok", "deepseek"] {
+            let snap = merged
+                .iter()
+                .find(|s| s.provider == other)
+                .unwrap_or_else(|| panic!("{other} must be present in merged snapshot"));
+            assert!(!snap.open);
+            assert_eq!(snap.fail_count_last_60s, 0);
+        }
+
+        llm::reset_circuit_breaker_state();
     }
 }

@@ -287,6 +287,9 @@ const ACTION_LABELS: Record<string, { running: string; done: string; error: stri
   get_assistant_stats: { running: 'Buscando estatísticas...', done: 'Estatísticas carregadas', error: 'Falha ao buscar estatísticas' },
   get_assistant_logs: { running: 'Buscando logs...', done: 'Logs carregados', error: 'Falha ao buscar logs' },
   get_activity: { running: 'Buscando atividade...', done: 'Atividade carregada', error: 'Falha ao buscar atividade' },
+  // Observabilidade (Sophie self-introspection)
+  get_my_recent_errors: { running: 'Buscando meus erros recentes...', done: 'Erros carregados', error: 'Falha ao buscar erros' },
+  get_platform_health: { running: 'Verificando saúde da plataforma...', done: 'Saúde carregada', error: 'Falha ao buscar saúde' },
   // Workspaces e Canais
   list_workspaces: { running: 'Buscando workspaces...', done: 'Workspaces carregados', error: 'Falha ao buscar workspaces' },
   switch_workspace: { running: 'Trocando workspace...', done: 'Workspace alterado', error: 'Falha ao trocar workspace' },
@@ -1192,6 +1195,55 @@ function ActionSequence({ actions }: { actions: BaisyncAction[] }) {
           : activity.map((a) =>
               `- [${a.timestamp}] **${a.event_type}** (${a.assistant_name}): ${a.description.slice(0, 100)}`
             ).join('\n')
+        useBaisyncStore.getState().sendActionResult(summary)
+        return { status: 'done' }
+      }
+
+      // ─── Observabilidade (Sophie self-introspection — S1.3) ─────────────
+      if (action.action === 'get_my_recent_errors') {
+        const res = await apiFetch<{
+          errors: { id: string; assistant_id: string; conversation_id: string | null
+            provider: string; model: string; error: string; created_at: string
+            duration_ms: number | null; tool_rounds: number | null }[]
+          count: number
+        }>('/api/baisync/actions/my_recent_errors')
+        const summary = res.count === 0
+          ? 'Nenhum erro registrado em chamadas LLM recentes.'
+          : [
+              `Últimos ${res.count} erros:`,
+              ...res.errors.map((e) => {
+                const msg = e.error.length > 200 ? `${e.error.slice(0, 200)}...` : e.error
+                return `- [${e.provider}/${e.model}] ${msg} (${e.created_at})`
+              }),
+            ].join('\n')
+        useBaisyncStore.getState().sendActionResult(summary)
+        return { status: 'done' }
+      }
+
+      if (action.action === 'get_platform_health') {
+        const res = await apiFetch<{
+          circuit_breaker_state: { provider: string; open: boolean; fail_count_last_60s: number }[]
+          baisync_rate_limit_usage: { used: number; limit: number; reset_at: string }
+          usage_quota: { total_messages: number; total_tokens: number }
+        }>('/api/baisync/actions/platform_health')
+        const cbLines = res.circuit_breaker_state.map((s) => {
+          const label = s.open ? '**aberto**' : 'ok'
+          return `- ${s.provider}: ${label} (${s.fail_count_last_60s} falhas em 60s)`
+        })
+        const rl = res.baisync_rate_limit_usage
+        const pct = rl.limit > 0 ? Math.round((rl.used / rl.limit) * 100) : 0
+        const q = res.usage_quota
+        const summary = [
+          '## Circuit Breakers',
+          ...cbLines,
+          '',
+          '## Rate Limit Sophie',
+          `Usado: ${rl.used}/${rl.limit} (${pct}%) — reset em ${rl.reset_at}`,
+          '',
+          '## Cota Geral',
+          `Mensagens: ${q.total_messages}`,
+          `Tokens: ${q.total_tokens}`,
+        ].join('\n')
         useBaisyncStore.getState().sendActionResult(summary)
         return { status: 'done' }
       }

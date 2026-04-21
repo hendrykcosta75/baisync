@@ -32,6 +32,10 @@ echo "--- Baisync Agent Coverage ---"
 npx --prefix "$CONSISTENCY_DIR" tsx "$CONSISTENCY_DIR/baisync-coverage.ts" || FAILED=1
 echo ""
 
+echo "--- Baisync Sophie Endpoints (S1.3) ---"
+npx --prefix "$CONSISTENCY_DIR" tsx "$CONSISTENCY_DIR/baisync-endpoints.ts" || FAILED=1
+echo ""
+
 if [ $FAILED -eq 0 ]; then
   echo "=== All Consistency Checks Passed ==="
 else

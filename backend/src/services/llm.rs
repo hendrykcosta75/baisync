@@ -135,10 +135,41 @@ fn record_success(provider: &str) {
 
 /// Test-only helper to reset all circuit-breaker state between unit tests.
 #[cfg(test)]
-fn reset_circuit_breaker_state() {
+pub fn reset_circuit_breaker_state() {
     if let Ok(mut map) = health_map().write() {
         map.clear();
     }
+}
+
+/// Test-only helper to allow other modules to seed failures without going
+/// through a provider HTTP call.
+#[cfg(test)]
+pub fn test_record_failure(provider: &str) {
+    record_failure(provider);
+}
+
+/// Snapshot of the in-memory circuit-breaker state for every provider that
+/// has recorded at least one failure. Returns `(provider, open_bool, fail_count_last_60s)`.
+///
+/// Callers that need the five canonical providers (`openai`, `claude`,
+/// `gemini`, `grok`, `deepseek`) should merge missing entries as
+/// `(provider, false, 0)` — providers that never failed will not appear here.
+pub fn snapshot_circuit_breaker_state() -> Vec<(String, bool, u32)> {
+    let now = Instant::now();
+    let Ok(map) = health_map().read() else {
+        return Vec::new();
+    };
+    let mut out: Vec<(String, bool, u32)> = Vec::with_capacity(map.len());
+    for (provider, entry) in map.iter() {
+        let fresh_fails = entry
+            .recent_failures
+            .iter()
+            .filter(|t| now.duration_since(**t) < FAIL_WINDOW)
+            .count();
+        let open = fresh_fails >= FAIL_THRESHOLD;
+        out.push((provider.clone(), open, fresh_fails as u32));
+    }
+    out
 }
 
 /// Decode a base64 blob and extract plain text via the RAG text extractor.
