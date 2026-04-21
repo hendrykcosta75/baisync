@@ -1,6 +1,18 @@
+use std::time::Duration;
+
 use base64::Engine as _;
 
 use crate::errors::AppError;
+use crate::services::llm::retry_http_post;
+
+/// Per-attempt timeout for transcription POSTs. Reuses `LLM_GLOBAL_TIMEOUT_SECS`.
+fn transcription_timeout() -> Duration {
+    let secs = std::env::var("LLM_GLOBAL_TIMEOUT_SECS")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(60);
+    Duration::from_secs(secs)
+}
 
 /// Default MIME mapping used by OpenAI/ElevenLabs/Grok STT endpoints
 /// (they all accept the same container set).
@@ -30,25 +42,40 @@ pub async fn transcribe_openai(
     filename: &str,
 ) -> Result<String, AppError> {
     let client = reqwest::Client::new();
-
     let mime = mime_from_filename(filename);
+    let timeout = transcription_timeout();
 
-    let file_part = reqwest::multipart::Part::bytes(audio_bytes)
-        .file_name(filename.to_string())
+    // Validate MIME up-front — rebuilding the `Part` inside the retry closure
+    // with a known-good static string never fails, so the closure can assume it.
+    let _probe = reqwest::multipart::Part::bytes(Vec::<u8>::new())
         .mime_str(mime)
         .map_err(|e| AppError::InternalError(format!("MIME error: {e}")))?;
 
-    let form = reqwest::multipart::Form::new()
-        .text("model", "whisper-1")
-        .part("file", file_part);
-
-    let resp = client
-        .post("https://api.openai.com/v1/audio/transcriptions")
-        .bearer_auth(openai_key)
-        .multipart(form)
-        .send()
-        .await
-        .map_err(|e| AppError::InternalError(format!("Whisper request failed: {e}")))?;
+    // T2.2 — retry initial POST on transient failures. Multipart body is
+    // consumed by `.send()`, so each attempt rebuilds the form from scratch
+    // (clones `audio_bytes`).
+    let audio_ref = &audio_bytes;
+    let (resp_result, _outcome) = retry_http_post("whisper_transcribe", timeout, || {
+        let file_part = reqwest::multipart::Part::bytes(audio_ref.clone())
+            .file_name(filename.to_string())
+            .mime_str(mime)
+            .expect("mime validated above");
+        let form = reqwest::multipart::Form::new()
+            .text("model", "whisper-1")
+            .part("file", file_part);
+        client
+            .post("https://api.openai.com/v1/audio/transcriptions")
+            .bearer_auth(openai_key)
+            .multipart(form)
+            .send()
+    })
+    .await;
+    let resp = resp_result.map_err(|e| match e {
+        AppError::InternalError(msg) => {
+            AppError::InternalError(format!("Whisper request failed: {msg}"))
+        }
+        other => other,
+    })?;
 
     if !resp.status().is_success() {
         let status = resp.status();
@@ -79,25 +106,36 @@ pub async fn transcribe_elevenlabs(
     filename: &str,
 ) -> Result<String, AppError> {
     let client = reqwest::Client::new();
-
     let mime = mime_from_filename(filename);
+    let timeout = transcription_timeout();
 
-    let file_part = reqwest::multipart::Part::bytes(audio_bytes)
-        .file_name(filename.to_string())
+    let _probe = reqwest::multipart::Part::bytes(Vec::<u8>::new())
         .mime_str(mime)
         .map_err(|e| AppError::InternalError(format!("MIME error: {e}")))?;
 
-    let form = reqwest::multipart::Form::new()
-        .text("model_id", "scribe_v1")
-        .part("file", file_part);
-
-    let resp = client
-        .post("https://api.elevenlabs.io/v1/speech-to-text")
-        .header("xi-api-key", api_key)
-        .multipart(form)
-        .send()
-        .await
-        .map_err(|e| AppError::InternalError(format!("ElevenLabs STT request failed: {e}")))?;
+    let audio_ref = &audio_bytes;
+    // T2.2 — retry initial POST on transient failures.
+    let (resp_result, _outcome) = retry_http_post("elevenlabs_transcribe", timeout, || {
+        let file_part = reqwest::multipart::Part::bytes(audio_ref.clone())
+            .file_name(filename.to_string())
+            .mime_str(mime)
+            .expect("mime validated above");
+        let form = reqwest::multipart::Form::new()
+            .text("model_id", "scribe_v1")
+            .part("file", file_part);
+        client
+            .post("https://api.elevenlabs.io/v1/speech-to-text")
+            .header("xi-api-key", api_key)
+            .multipart(form)
+            .send()
+    })
+    .await;
+    let resp = resp_result.map_err(|e| match e {
+        AppError::InternalError(msg) => {
+            AppError::InternalError(format!("ElevenLabs STT request failed: {msg}"))
+        }
+        other => other,
+    })?;
 
     if !resp.status().is_success() {
         let status = resp.status();
@@ -128,23 +166,34 @@ pub async fn transcribe_grok(
     filename: &str,
 ) -> Result<String, AppError> {
     let client = reqwest::Client::new();
-
     let mime = mime_from_filename(filename);
+    let timeout = transcription_timeout();
 
-    let file_part = reqwest::multipart::Part::bytes(audio_bytes)
-        .file_name(filename.to_string())
+    let _probe = reqwest::multipart::Part::bytes(Vec::<u8>::new())
         .mime_str(mime)
         .map_err(|e| AppError::InternalError(format!("MIME error: {e}")))?;
 
-    let form = reqwest::multipart::Form::new().part("file", file_part);
-
-    let resp = client
-        .post("https://api.x.ai/v1/stt")
-        .bearer_auth(api_key)
-        .multipart(form)
-        .send()
-        .await
-        .map_err(|e| AppError::InternalError(format!("Grok STT request failed: {e}")))?;
+    let audio_ref = &audio_bytes;
+    // T2.2 — retry initial POST on transient failures.
+    let (resp_result, _outcome) = retry_http_post("grok_transcribe", timeout, || {
+        let file_part = reqwest::multipart::Part::bytes(audio_ref.clone())
+            .file_name(filename.to_string())
+            .mime_str(mime)
+            .expect("mime validated above");
+        let form = reqwest::multipart::Form::new().part("file", file_part);
+        client
+            .post("https://api.x.ai/v1/stt")
+            .bearer_auth(api_key)
+            .multipart(form)
+            .send()
+    })
+    .await;
+    let resp = resp_result.map_err(|e| match e {
+        AppError::InternalError(msg) => {
+            AppError::InternalError(format!("Grok STT request failed: {msg}"))
+        }
+        other => other,
+    })?;
 
     if !resp.status().is_success() {
         let status = resp.status();
@@ -201,20 +250,29 @@ pub async fn transcribe_gemini(
     );
 
     let client = reqwest::Client::new();
-    let resp = client
-        .post(&url)
-        .json(&serde_json::json!({
-            "contents": [{
-                "parts": [
-                    {"inline_data": {"mime_type": mime, "data": b64}},
-                    {"text": "Transcreva este áudio literalmente. Retorne apenas a transcrição, sem comentários."}
-                ]
-            }],
-            "generationConfig": { "responseMimeType": "text/plain" }
-        }))
-        .send()
-        .await
-        .map_err(|e| AppError::InternalError(format!("Gemini STT request failed: {e}")))?;
+    let timeout = transcription_timeout();
+    let body = serde_json::json!({
+        "contents": [{
+            "parts": [
+                {"inline_data": {"mime_type": mime, "data": b64}},
+                {"text": "Transcreva este áudio literalmente. Retorne apenas a transcrição, sem comentários."}
+            ]
+        }],
+        "generationConfig": { "responseMimeType": "text/plain" }
+    });
+    let body_ref = &body;
+    let url_ref = url.as_str();
+    // T2.2 — retry initial POST on transient failures.
+    let (resp_result, _outcome) = retry_http_post("gemini_transcribe", timeout, || {
+        client.post(url_ref).json(body_ref).send()
+    })
+    .await;
+    let resp = resp_result.map_err(|e| match e {
+        AppError::InternalError(msg) => {
+            AppError::InternalError(format!("Gemini STT request failed: {msg}"))
+        }
+        other => other,
+    })?;
 
     if !resp.status().is_success() {
         let status = resp.status();

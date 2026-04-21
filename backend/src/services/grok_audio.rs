@@ -1,6 +1,7 @@
 use std::time::Duration;
 
 use crate::errors::AppError;
+use crate::services::llm::retry_http_post;
 
 /// See `openai_audio::llm_global_timeout` for rationale.
 fn llm_global_timeout() -> Duration {
@@ -41,28 +42,35 @@ pub async fn text_to_speech(
 
     let client = reqwest::Client::new();
     let timeout = llm_global_timeout();
-    let send_fut = client
-        .post("https://api.x.ai/v1/tts")
-        .bearer_auth(api_key)
-        .json(&serde_json::json!({
-            "voice_id": voice_id,
-            "text": text,
-            "output_format": {
-                "codec": codec,
-                "sample_rate": sample_rate,
-                "bit_rate": bit_rate,
-            }
-        }))
-        .send();
-    let resp = tokio::time::timeout(timeout, send_fut)
-        .await
-        .map_err(|_| {
-            AppError::InternalError(format!(
-                "A chamada ao provider grok excedeu {}s. Tente resposta mais concisa ou reduza max_tokens.",
-                timeout.as_secs()
-            ))
-        })?
-        .map_err(|e| AppError::InternalError(format!("Grok TTS request failed: {e}")))?;
+    let body = serde_json::json!({
+        "voice_id": voice_id,
+        "text": text,
+        "output_format": {
+            "codec": codec,
+            "sample_rate": sample_rate,
+            "bit_rate": bit_rate,
+        }
+    });
+    let body_ref = &body;
+    // T2.2 — retry initial POST on transient failures.
+    let (resp_result, _outcome) = retry_http_post("grok_tts", timeout, || {
+        client
+            .post("https://api.x.ai/v1/tts")
+            .bearer_auth(api_key)
+            .json(body_ref)
+            .send()
+    })
+    .await;
+    let resp = resp_result.map_err(|e| match e {
+        AppError::InternalError(msg) if msg.contains("timeout") => AppError::InternalError(format!(
+            "A chamada ao provider grok excedeu {}s. Tente resposta mais concisa ou reduza max_tokens.",
+            timeout.as_secs()
+        )),
+        AppError::InternalError(msg) => {
+            AppError::InternalError(format!("Grok TTS request failed: {msg}"))
+        }
+        other => other,
+    })?;
 
     if !resp.status().is_success() {
         let status = resp.status();

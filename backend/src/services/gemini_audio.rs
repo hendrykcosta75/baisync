@@ -3,6 +3,7 @@ use std::time::Duration;
 use base64::{engine::general_purpose, Engine as _};
 
 use crate::errors::AppError;
+use crate::services::llm::retry_http_post;
 
 /// See `openai_audio::llm_global_timeout` for rationale — env var read direct
 /// because these services aren't wired through `Config`.
@@ -63,29 +64,34 @@ pub async fn text_to_speech(
 
     let client = reqwest::Client::new();
     let timeout = llm_global_timeout();
-    let send_fut = client
-        .post(&url)
-        .json(&serde_json::json!({
-            "contents": [{"parts": [{"text": text}]}],
-            "generationConfig": {
-                "responseModalities": ["AUDIO"],
-                "speechConfig": {
-                    "voiceConfig": {
-                        "prebuiltVoiceConfig": { "voiceName": voice_name }
-                    }
+    let body = serde_json::json!({
+        "contents": [{"parts": [{"text": text}]}],
+        "generationConfig": {
+            "responseModalities": ["AUDIO"],
+            "speechConfig": {
+                "voiceConfig": {
+                    "prebuiltVoiceConfig": { "voiceName": voice_name }
                 }
             }
-        }))
-        .send();
-    let resp = tokio::time::timeout(timeout, send_fut)
-        .await
-        .map_err(|_| {
-            AppError::InternalError(format!(
-                "A chamada ao provider gemini excedeu {}s. Tente resposta mais concisa ou reduza max_tokens.",
-                timeout.as_secs()
-            ))
-        })?
-        .map_err(|e| AppError::InternalError(format!("Gemini TTS request failed: {e}")))?;
+        }
+    });
+    let body_ref = &body;
+    let url_ref = url.as_str();
+    // T2.2 — retry initial POST on transient failures.
+    let (resp_result, _outcome) = retry_http_post("gemini_tts", timeout, || {
+        client.post(url_ref).json(body_ref).send()
+    })
+    .await;
+    let resp = resp_result.map_err(|e| match e {
+        AppError::InternalError(msg) if msg.contains("timeout") => AppError::InternalError(format!(
+            "A chamada ao provider gemini excedeu {}s. Tente resposta mais concisa ou reduza max_tokens.",
+            timeout.as_secs()
+        )),
+        AppError::InternalError(msg) => {
+            AppError::InternalError(format!("Gemini TTS request failed: {msg}"))
+        }
+        other => other,
+    })?;
 
     if !resp.status().is_success() {
         let status = resp.status();

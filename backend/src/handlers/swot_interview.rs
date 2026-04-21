@@ -209,27 +209,36 @@ pub async fn interview_chat(
             api_key
         );
 
-        // T1.3 — timeout só na resposta inicial do SSE.
-        let send_fut = client
-            .post(&url)
-            .header("Content-Type", "application/json")
-            .json(&body)
-            .send();
-        let resp = match tokio::time::timeout(
+        // T1.3 + T2.2 — retry the initial POST (connect + headers) only. Once
+        // the SSE stream starts, we never rewind — parsed-response frames are
+        // committed to the client (R1).
+        let body_ref = &body;
+        let url_ref = url.as_str();
+        let (resp_outer, _outcome) = crate::services::llm::retry_http_post(
+            "gemini_swot_stream",
             std::time::Duration::from_secs(llm_timeout_secs),
-            send_fut,
+            || {
+                client
+                    .post(url_ref)
+                    .header("Content-Type", "application/json")
+                    .json(body_ref)
+                    .send()
+            },
         )
-        .await
-        {
-            Ok(res) => res,
-            Err(_) => {
-                let msg = format!(
-                    "A chamada ao provider gemini excedeu {llm_timeout_secs}s. Tente resposta mais concisa ou reduza max_tokens."
-                );
-                tracing::error!(
-                    "Gemini SWOT interview request timed out after {}s",
-                    llm_timeout_secs
-                );
+        .await;
+        let response = match resp_outer {
+            Ok(r) => r,
+            Err(e) => {
+                let msg = match e {
+                    crate::errors::AppError::InternalError(inner) if inner.contains("timeout") => {
+                        format!(
+                            "A chamada ao provider gemini excedeu {llm_timeout_secs}s. Tente resposta mais concisa ou reduza max_tokens."
+                        )
+                    }
+                    crate::errors::AppError::InternalError(inner) => inner,
+                    other => other.to_string(),
+                };
+                tracing::error!("Gemini SWOT interview request failed: {msg}");
                 let _ = tx
                     .send(Ok(Event::default().event("error").data(
                         serde_json::json!({"error": msg}).to_string(),
@@ -240,8 +249,10 @@ pub async fn interview_chat(
             }
         };
 
-        match resp {
-            Ok(response) => {
+        // Retry helper already delivered a ready `reqwest::Response`; flow
+        // straight into SSE streaming without re-matching.
+        {
+            {
                 if !response.status().is_success() {
                     let error_text = response.text().await.unwrap_or_default();
                     tracing::error!("Gemini API error for SWOT interview: {}", error_text);
@@ -319,16 +330,6 @@ pub async fn interview_chat(
                         serde_json::json!({"content_length": full_content.len()}).to_string(),
                     )))
                     .await;
-            }
-            Err(e) => {
-                tracing::error!("SWOT interview request failed: {}", e);
-                let _ = tx
-                    .send(Ok(Event::default().event("error").data(
-                        serde_json::json!({"error": "Erro de conexao. Tente novamente."})
-                            .to_string(),
-                    )))
-                    .await;
-                let _ = tx.send(Ok(Event::default().event("done").data("{}"))).await;
             }
         }
     });

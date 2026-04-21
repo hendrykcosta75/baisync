@@ -142,25 +142,34 @@ pub async fn preview_voice(
     );
 
     let timeout = llm_global_timeout();
-    let send_fut = client
-        .post(&url)
-        .header("xi-api-key", &api_key)
-        .header("Content-Type", "application/json")
-        .json(&serde_json::json!({
-            "text": text,
-            "model_id": "eleven_multilingual_v2",
-            "output_format": "mp3_44100_128"
-        }))
-        .send();
-    let resp = tokio::time::timeout(timeout, send_fut)
-        .await
-        .map_err(|_| {
-            AppError::InternalError(format!(
-                "A chamada ao provider elevenlabs excedeu {}s. Tente resposta mais concisa ou reduza max_tokens.",
-                timeout.as_secs()
-            ))
-        })?
-        .map_err(|e| AppError::InternalError(format!("ElevenLabs TTS request failed: {e}")))?;
+    let req_body = serde_json::json!({
+        "text": text,
+        "model_id": "eleven_multilingual_v2",
+        "output_format": "mp3_44100_128"
+    });
+    let body_ref = &req_body;
+    let url_ref = url.as_str();
+    // T2.2 — retry initial POST on transient failures.
+    let (resp_result, _outcome) =
+        crate::services::llm::retry_http_post("elevenlabs_preview", timeout, || {
+            client
+                .post(url_ref)
+                .header("xi-api-key", &api_key)
+                .header("Content-Type", "application/json")
+                .json(body_ref)
+                .send()
+        })
+        .await;
+    let resp = resp_result.map_err(|e| match e {
+        AppError::InternalError(msg) if msg.contains("timeout") => AppError::InternalError(format!(
+            "A chamada ao provider elevenlabs excedeu {}s. Tente resposta mais concisa ou reduza max_tokens.",
+            timeout.as_secs()
+        )),
+        AppError::InternalError(msg) => {
+            AppError::InternalError(format!("ElevenLabs TTS request failed: {msg}"))
+        }
+        other => other,
+    })?;
 
     if !resp.status().is_success() {
         let status = resp.status();
