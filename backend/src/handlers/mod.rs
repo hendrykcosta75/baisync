@@ -16,6 +16,7 @@ pub mod grok_audio;
 pub mod integrations;
 pub mod meetings;
 pub mod messages;
+pub mod metrics;
 pub mod models;
 pub mod notifications;
 pub mod okrs;

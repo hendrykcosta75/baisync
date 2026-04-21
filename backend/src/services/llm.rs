@@ -39,6 +39,22 @@ fn llm_timeout_error(provider: &str, secs: u64) -> AppError {
     ))
 }
 
+/// S2.3 — classify an `AppError` returned by a provider call into a
+/// Prometheus-friendly status label. Only three non-ok statuses are
+/// surfaced:
+///   - `"timeout"`   — tokio timeout or retry-exhausted timeout path
+///   - `"error"`     — any other provider failure (parse, 4xx, 5xx)
+/// `"circuit_open"` is handled separately at the call site because the
+/// short-circuit path never invokes `retry_http_post`.
+fn classify_llm_error(err: &AppError) -> &'static str {
+    match err {
+        AppError::InternalError(msg) if msg.contains("timeout") || msg.contains("excedeu") => {
+            "timeout"
+        }
+        _ => "error",
+    }
+}
+
 // ---------------------------------------------------------------------------
 // T2.2 — HTTP retry helper with exponential backoff for outbound LLM POSTs.
 //
@@ -649,6 +665,19 @@ pub struct ToolCallRecord {
     pub error: Option<String>,
     pub duration_ms: i32,
     pub tool_type: String,
+}
+
+/// S2.3 — classify a completed tool dispatch for the
+/// `tool_calls_total{tool, status}` counter. Errors include both transport
+/// failures (`error` set) and HTTP 4xx/5xx (`status_code >= 400`).
+fn tool_call_status(record: &ToolCallRecord) -> &'static str {
+    if record.error.is_some() {
+        return "error";
+    }
+    match record.status_code {
+        Some(code) if code >= 400 => "error",
+        _ => "ok",
+    }
 }
 
 /// Sanitize a tool name to match OpenAI's pattern: ^[a-zA-Z0-9_-]+$
@@ -2391,6 +2420,15 @@ async fn call_openai_with_tools(
                             },
                         )
                     };
+                    // S2.3 — bump tool_calls_total{tool, status} before the
+                    // record is moved into `all_records`. Status classifier
+                    // folds HTTP 4xx/5xx into "error" so Grafana gets a
+                    // clean ok/error split across all providers.
+                    crate::services::metrics::inc_tool_call(
+                        &record.tool_name,
+                        tool_call_status(&record),
+                    )
+                    .await;
                     all_records.push(record);
 
                     raw_messages.push(json!({
@@ -2435,9 +2473,16 @@ async fn call_openai_raw(
 ) -> Result<RawLlmResult, AppError> {
     // W1.1 — short-circuit if provider health is poor.
     if let Some(err) = check_circuit_open("openai") {
+        // S2.3 — record the short-circuit explicitly so the open circuit
+        // shows up on the Grafana panel as its own status.
+        crate::services::metrics::inc_llm_call("openai", "circuit_open").await;
         return Err(AppError::InternalError(err));
     }
 
+    // S2.3 — time the full HTTP round-trip (retries included). We observe
+    // duration regardless of outcome so the histogram reflects real latency
+    // under failure too.
+    let started = Instant::now();
     let result: Result<RawLlmResult, AppError> = async {
         let mut body = json!({
             "model": model,
@@ -2545,6 +2590,16 @@ async fn call_openai_raw(
         })
     }
     .await;
+
+    // S2.3 — emit metrics regardless of outcome. `observe_llm_duration` is
+    // provider-agnostic (shared histogram); `inc_llm_call` carries the
+    // provider label for breakdown.
+    crate::services::metrics::observe_llm_duration(started.elapsed().as_secs_f64()).await;
+    let status = match &result {
+        Ok(_) => "ok",
+        Err(e) => classify_llm_error(e),
+    };
+    crate::services::metrics::inc_llm_call("openai", status).await;
 
     match &result {
         Ok(_) => record_success("openai"),
@@ -2724,6 +2779,15 @@ async fn call_claude_with_tools(
                             },
                         )
                     };
+                    // S2.3 — bump tool_calls_total{tool, status} before the
+                    // record is moved into `all_records`. Status classifier
+                    // folds HTTP 4xx/5xx into "error" so Grafana gets a
+                    // clean ok/error split across all providers.
+                    crate::services::metrics::inc_tool_call(
+                        &record.tool_name,
+                        tool_call_status(&record),
+                    )
+                    .await;
                     all_records.push(record);
 
                     tool_result_blocks.push(json!({
@@ -2774,9 +2838,13 @@ async fn call_claude_raw(
 ) -> Result<RawLlmResult, AppError> {
     // W1.1 — short-circuit if provider health is poor.
     if let Some(err) = check_circuit_open("claude") {
+        // S2.3 — record circuit_open as its own status.
+        crate::services::metrics::inc_llm_call("claude", "circuit_open").await;
         return Err(AppError::InternalError(err));
     }
 
+    // S2.3 — time the HTTP round-trip (retries included).
+    let started = Instant::now();
     let result: Result<RawLlmResult, AppError> = async {
         let mut body = json!({
             "model": model,
@@ -2880,6 +2948,14 @@ async fn call_claude_raw(
         })
     }
     .await;
+
+    // S2.3 — observe duration + bump llm_calls_total regardless of outcome.
+    crate::services::metrics::observe_llm_duration(started.elapsed().as_secs_f64()).await;
+    let status = match &result {
+        Ok(_) => "ok",
+        Err(e) => classify_llm_error(e),
+    };
+    crate::services::metrics::inc_llm_call("claude", status).await;
 
     match &result {
         Ok(_) => record_success("claude"),
@@ -3020,6 +3096,15 @@ async fn call_gemini_with_tools(
                             },
                         )
                     };
+                    // S2.3 — bump tool_calls_total{tool, status} before the
+                    // record is moved into `all_records`. Status classifier
+                    // folds HTTP 4xx/5xx into "error" so Grafana gets a
+                    // clean ok/error split across all providers.
+                    crate::services::metrics::inc_tool_call(
+                        &record.tool_name,
+                        tool_call_status(&record),
+                    )
+                    .await;
                     all_records.push(record);
 
                     // Gemini requires functionResponse.response to be an object.
@@ -3078,9 +3163,13 @@ async fn call_gemini_raw(
 ) -> Result<RawLlmResult, AppError> {
     // W1.1 — short-circuit if provider health is poor.
     if let Some(err) = check_circuit_open("gemini") {
+        // S2.3 — record circuit_open as its own status.
+        crate::services::metrics::inc_llm_call("gemini", "circuit_open").await;
         return Err(AppError::InternalError(err));
     }
 
+    // S2.3 — time the HTTP round-trip (retries included).
+    let started = Instant::now();
     let result: Result<RawLlmResult, AppError> = async {
         let mut body = json!({
             "contents": contents,
@@ -3185,6 +3274,14 @@ async fn call_gemini_raw(
         })
     }
     .await;
+
+    // S2.3 — observe duration + bump llm_calls_total regardless of outcome.
+    crate::services::metrics::observe_llm_duration(started.elapsed().as_secs_f64()).await;
+    let status = match &result {
+        Ok(_) => "ok",
+        Err(e) => classify_llm_error(e),
+    };
+    crate::services::metrics::inc_llm_call("gemini", status).await;
 
     match &result {
         Ok(_) => record_success("gemini"),
@@ -3361,6 +3458,15 @@ async fn call_grok_with_tools(
                             },
                         )
                     };
+                    // S2.3 — bump tool_calls_total{tool, status} before the
+                    // record is moved into `all_records`. Status classifier
+                    // folds HTTP 4xx/5xx into "error" so Grafana gets a
+                    // clean ok/error split across all providers.
+                    crate::services::metrics::inc_tool_call(
+                        &record.tool_name,
+                        tool_call_status(&record),
+                    )
+                    .await;
                     all_records.push(record);
 
                     raw_messages.push(json!({
@@ -3405,9 +3511,13 @@ async fn call_grok_raw(
 ) -> Result<RawLlmResult, AppError> {
     // W1.1 — short-circuit if provider health is poor.
     if let Some(err) = check_circuit_open("grok") {
+        // S2.3 — record circuit_open as its own status.
+        crate::services::metrics::inc_llm_call("grok", "circuit_open").await;
         return Err(AppError::InternalError(err));
     }
 
+    // S2.3 — time the HTTP round-trip (retries included).
+    let started = Instant::now();
     let result: Result<RawLlmResult, AppError> = async {
         let mut body = json!({
             "model": model,
@@ -3501,6 +3611,14 @@ async fn call_grok_raw(
         })
     }
     .await;
+
+    // S2.3 — observe duration + bump llm_calls_total regardless of outcome.
+    crate::services::metrics::observe_llm_duration(started.elapsed().as_secs_f64()).await;
+    let status = match &result {
+        Ok(_) => "ok",
+        Err(e) => classify_llm_error(e),
+    };
+    crate::services::metrics::inc_llm_call("grok", status).await;
 
     match &result {
         Ok(_) => record_success("grok"),
@@ -3655,6 +3773,15 @@ async fn call_deepseek_with_tools(
                             },
                         )
                     };
+                    // S2.3 — bump tool_calls_total{tool, status} before the
+                    // record is moved into `all_records`. Status classifier
+                    // folds HTTP 4xx/5xx into "error" so Grafana gets a
+                    // clean ok/error split across all providers.
+                    crate::services::metrics::inc_tool_call(
+                        &record.tool_name,
+                        tool_call_status(&record),
+                    )
+                    .await;
                     all_records.push(record);
 
                     raw_messages.push(json!({
@@ -3699,9 +3826,13 @@ async fn call_deepseek_raw(
 ) -> Result<RawLlmResult, AppError> {
     // W1.1 — short-circuit if provider health is poor.
     if let Some(err) = check_circuit_open("deepseek") {
+        // S2.3 — record circuit_open as its own status.
+        crate::services::metrics::inc_llm_call("deepseek", "circuit_open").await;
         return Err(AppError::InternalError(err));
     }
 
+    // S2.3 — time the HTTP round-trip (retries included).
+    let started = Instant::now();
     let result: Result<RawLlmResult, AppError> = async {
         let mut body = json!({
             "model": model,
@@ -3795,6 +3926,14 @@ async fn call_deepseek_raw(
         })
     }
     .await;
+
+    // S2.3 — observe duration + bump llm_calls_total regardless of outcome.
+    crate::services::metrics::observe_llm_duration(started.elapsed().as_secs_f64()).await;
+    let status = match &result {
+        Ok(_) => "ok",
+        Err(e) => classify_llm_error(e),
+    };
+    crate::services::metrics::inc_llm_call("deepseek", status).await;
 
     match &result {
         Ok(_) => record_success("deepseek"),

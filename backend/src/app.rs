@@ -98,6 +98,16 @@ pub fn build_router(
         .route(
             "/api/baisync/voice/live",
             get(handlers::baisync_voice_live::voice_live_ws),
+        )
+        // S2.3 — Internal metrics endpoint. No auth because Prometheus
+        // scrapers don't carry user credentials, and the metrics are
+        // system-wide (not per-user). OPERATORS MUST firewall
+        // `/api/internal/*` from the public internet via reverse-proxy
+        // allowlist, K8s NetworkPolicy, or equivalent. See
+        // `handlers::metrics` module docs for the full contract.
+        .route(
+            "/api/internal/metrics",
+            get(handlers::metrics::get_metrics),
         );
 
     // Protected routes (require auth)

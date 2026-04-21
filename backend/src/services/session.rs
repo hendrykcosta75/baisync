@@ -318,6 +318,11 @@ pub async fn apply_session_mutation(
             )
             .await
             .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+            // S2.3 — bump session_events_total{type} after the write lands.
+            // We increment AFTER the INSERT so a Cassandra failure never
+            // inflates the counter above the number of events actually
+            // persisted.
+            crate::services::metrics::inc_session_event(&event_type).await;
             Ok(())
         }
         SessionMutation::UpdateStatus {

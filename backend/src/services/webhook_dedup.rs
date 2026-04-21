@@ -77,6 +77,10 @@ pub async fn check_and_mark(
                 mode = "observe",
                 "duplicate webhook detected (shadow mode — continuing)"
             );
+            // S2.3 — count all duplicates, regardless of mode. Scrapers use
+            // this to alert on elevated duplicate rates before we flip to
+            // Block mode in T1.4.
+            crate::services::metrics::inc_webhook_deduped(provider).await;
             Ok(DedupResult::Applied)
         }
         (false, Mode::Block) => {
@@ -86,6 +90,7 @@ pub async fn check_and_mark(
                 event_id = %event_id,
                 "duplicate webhook rejected"
             );
+            crate::services::metrics::inc_webhook_deduped(provider).await;
             Ok(DedupResult::Duplicate)
         }
     }

@@ -16,6 +16,7 @@ pub mod llm;
 pub mod meeting;
 pub mod messaging;
 pub mod messaging_recovery;
+pub mod metrics;
 pub mod notification;
 pub mod okr;
 pub mod session;

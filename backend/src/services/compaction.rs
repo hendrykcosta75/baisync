@@ -380,6 +380,10 @@ agradecimentos ou análise de qualidade — apenas o resumo factual.";
         );
     }
 
+    // S2.3 — bump compaction_total{assistant_id}. We stringify the id once
+    // here (metrics module intentionally has no Uuid dependency).
+    crate::services::metrics::inc_compaction(&assistant.id.to_string()).await;
+
     Ok(CompactionResult {
         summary_message,
         replaced_count: split,
