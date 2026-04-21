@@ -367,6 +367,13 @@ mod tests {
             compaction_min_messages: min_messages,
             compaction_keep_recent: keep_recent,
             compaction_rate_limit_secs: 3600,
+            // W2.1 — evaluator fields are irrelevant to compaction tests;
+            // supply cheap defaults so the struct is complete.
+            evaluator_api_key: None,
+            evaluator_provider: "openai".into(),
+            evaluator_model_default: "gpt-4o-mini".into(),
+            evaluator_max_concurrent: 20,
+            evaluator_timeout_secs: 15,
         }
     }
 
@@ -402,6 +409,9 @@ mod tests {
             config_max_tool_rounds: None,
             config_max_duration_ms: None,
             config_auto_compact: auto_compact,
+            // W2.1 — evaluator opt-in not exercised by compaction tests.
+            config_enable_evaluator: None,
+            config_evaluator_model: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         }

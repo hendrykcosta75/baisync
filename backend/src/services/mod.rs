@@ -8,6 +8,7 @@ pub mod connection_state;
 pub mod elevenlabs;
 pub mod email;
 pub mod encryption;
+pub mod evaluator;
 pub mod events;
 pub mod health_check;
 pub mod livekit;

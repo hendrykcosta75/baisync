@@ -1790,6 +1790,32 @@ pub async fn process_incoming_message(
         .await;
     }
 
+    // W2.1 — post-turn evaluator (fire-and-forget). Runs ONLY when both:
+    //   (1) the assistant opted in via `config_enable_evaluator = true`, AND
+    //   (2) the platform has a usable evaluator API key (EVALUATOR_API_KEY
+    //       or COMPACTION_API_KEY fallback).
+    // The spawn returns immediately; the user's reply has already been sent
+    // above via `send_message_via_provider`. Evaluators are NEVER on the
+    // user-response critical path.
+    if assistant.config_enable_evaluator == Some(true) && config.is_evaluator_enabled() {
+        let evaluator_model = assistant
+            .config_evaluator_model
+            .clone()
+            .unwrap_or_else(|| config.evaluator_model_default.clone());
+        crate::services::evaluator::spawn_evaluation(
+            db.clone(),
+            config.clone(),
+            assistant_id,
+            user_id,
+            conversation.id,
+            session_id_opt,
+            evaluator_model,
+            effective_message.clone(),
+            llm_response.content.clone(),
+            assistant.system_prompt.clone().unwrap_or_default(),
+        );
+    }
+
     Ok(WebhookResponse {
         status: "ok".into(),
         message_id: Some(conversation.id.to_string()),

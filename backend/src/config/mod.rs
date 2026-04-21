@@ -63,6 +63,43 @@ pub struct Config {
     /// per-assistant rate-limit would consume it directly.
     #[allow(dead_code)]
     pub compaction_rate_limit_secs: u64,
+
+    // ──────────────────────────────────────────────────────────────────────
+    // W2.1 — Evaluator (opt-in per assistant via `config_enable_evaluator`).
+    //
+    // A cheap system-funded LLM reviews every primary user-turn reply
+    // post-hoc (fire-and-forget, semaphore-limited) for PII leaks,
+    // impossible promises, and contradictions to the assistant's system
+    // prompt. The evaluator uses its own key / model / prompt — it NEVER
+    // shares the user's API key or conversation session (Principle 10:
+    // evaluators have their own session/prompt independent of the
+    // assistant being evaluated).
+    //
+    // Fallback: when `evaluator_api_key` is None we reuse
+    // `compaction_api_key` (same cheap model family), so operators who
+    // already paid for COMPACTION_API_KEY don't need to set both. When
+    // BOTH are None the evaluator is globally disabled (`is_evaluator_enabled`
+    // returns false) — a WARN is logged at startup so this isn't silent.
+    // ──────────────────────────────────────────────────────────────────────
+    /// System-wide API key dedicated to evaluator LLM calls. `None` means
+    /// the evaluator falls back to `compaction_api_key`; when both are
+    /// None the feature is globally disabled.
+    pub evaluator_api_key: Option<String>,
+    /// Provider for the evaluator model. Default: `openai`. Must match a
+    /// provider supported by `services::llm::call_llm_with_tools_ctx`.
+    pub evaluator_provider: String,
+    /// Default cheap model used when the assistant does not override
+    /// `config_evaluator_model`. Default: `gpt-4o-mini`.
+    pub evaluator_model_default: String,
+    /// Maximum number of evaluator tasks running concurrently across the
+    /// process. When saturated, new evaluations are DROPPED (logged at
+    /// WARN) — we never queue, because a stale verdict helps no one and
+    /// the user response is long gone. Default: 20.
+    pub evaluator_max_concurrent: usize,
+    /// Hard wall-clock timeout (in seconds) applied to the single
+    /// evaluator LLM call. Default: 15. Shorter than the primary-turn
+    /// timeout on purpose — evaluator must be fast or give up.
+    pub evaluator_timeout_secs: u64,
 }
 
 impl Config {
@@ -74,6 +111,32 @@ impl Config {
             .as_deref()
             .map(|k| !k.is_empty())
             .unwrap_or(false)
+    }
+
+    /// W2.1 — resolve the evaluator's API key. Returns the first non-empty
+    /// value in the fallback chain:
+    ///   1. `EVALUATOR_API_KEY`
+    ///   2. `COMPACTION_API_KEY` (documented reuse — same cheap model)
+    ///   3. `None` ⇒ evaluator disabled.
+    ///
+    /// Callers spawning an evaluation MUST check `is_evaluator_enabled()` or
+    /// pattern-match this `Option` and skip the spawn on `None`.
+    pub fn effective_evaluator_api_key(&self) -> Option<&str> {
+        self.evaluator_api_key
+            .as_deref()
+            .filter(|k| !k.is_empty())
+            .or_else(|| {
+                self.compaction_api_key
+                    .as_deref()
+                    .filter(|k| !k.is_empty())
+            })
+    }
+
+    /// W2.1 helper — true when the evaluator has a usable API key (direct or
+    /// via the compaction-key fallback). Assistants must additionally set
+    /// `config_enable_evaluator=true` for an evaluation to actually spawn.
+    pub fn is_evaluator_enabled(&self) -> bool {
+        self.effective_evaluator_api_key().is_some()
     }
 }
 
@@ -143,6 +206,59 @@ impl Config {
                 .ok()
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(3600_u64),
+
+            // W2.1 — Evaluator config. Empty string ⇒ None so the fallback to
+            // COMPACTION_API_KEY (and then "disabled") is evaluated cleanly.
+            evaluator_api_key: env::var("EVALUATOR_API_KEY")
+                .ok()
+                .filter(|s| !s.is_empty()),
+            evaluator_provider: env::var("EVALUATOR_PROVIDER")
+                .unwrap_or_else(|_| "openai".into()),
+            evaluator_model_default: env::var("EVALUATOR_MODEL")
+                .unwrap_or_else(|_| "gpt-4o-mini".into()),
+            evaluator_max_concurrent: env::var("EVALUATOR_MAX_CONCURRENT")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(20_usize),
+            evaluator_timeout_secs: env::var("EVALUATOR_TIMEOUT_SECS")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(15_u64),
+        }
+    }
+
+    /// W2.1 — emit a WARN at startup when the evaluator has no usable API
+    /// key (neither `EVALUATOR_API_KEY` nor `COMPACTION_API_KEY`), so
+    /// operators notice that assistants with `config_enable_evaluator=true`
+    /// will silently no-op. Mirrors `log_compaction_status`.
+    pub fn log_evaluator_status(&self) {
+        if !self.is_evaluator_enabled() {
+            tracing::warn!(
+                event = "evaluator.disabled",
+                "EVALUATOR_API_KEY / COMPACTION_API_KEY not set: post-turn evaluator is \
+                 disabled globally. Assistants with config_enable_evaluator=true will be \
+                 a no-op."
+            );
+        } else {
+            let source = if self
+                .evaluator_api_key
+                .as_deref()
+                .map(|k| !k.is_empty())
+                .unwrap_or(false)
+            {
+                "EVALUATOR_API_KEY"
+            } else {
+                "COMPACTION_API_KEY (fallback)"
+            };
+            tracing::info!(
+                event = "evaluator.enabled",
+                source = source,
+                provider = %self.evaluator_provider,
+                model_default = %self.evaluator_model_default,
+                max_concurrent = self.evaluator_max_concurrent,
+                timeout_secs = self.evaluator_timeout_secs,
+                "post-turn evaluator enabled",
+            );
         }
     }
 

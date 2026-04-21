@@ -38,6 +38,13 @@ pub struct Assistant {
     // Requires `COMPACTION_API_KEY` set at the platform level; see
     // `Config::is_compaction_enabled`.
     pub config_auto_compact: Option<bool>,
+    // W2.1 — opt-in post-turn evaluator. Default in code: false.
+    // Requires `EVALUATOR_API_KEY` (or the `COMPACTION_API_KEY` fallback)
+    // set at the platform level; see `Config::is_evaluator_enabled`.
+    pub config_enable_evaluator: Option<bool>,
+    // W2.1 — optional override for the evaluator model. `None` falls back
+    // to `Config::evaluator_model_default`.
+    pub config_evaluator_model: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -102,6 +109,14 @@ pub struct UpdateAssistantRequest {
     // T2.3 — opt-in auto-compaction.
     #[serde(alias = "configAutoCompact")]
     pub config_auto_compact: Option<bool>,
+    // W2.1 — opt-in post-turn evaluator (PII / impossible promise / system-prompt
+    // contradictions). Requires the platform-wide `EVALUATOR_API_KEY` (or
+    // `COMPACTION_API_KEY` fallback). A partial PATCH that omits these fields
+    // keeps the stored value — only explicit `null`/`false` turns the feature off.
+    #[serde(alias = "configEnableEvaluator")]
+    pub config_enable_evaluator: Option<bool>,
+    #[serde(alias = "configEvaluatorModel")]
+    pub config_evaluator_model: Option<String>,
 }
 
 #[allow(dead_code)]

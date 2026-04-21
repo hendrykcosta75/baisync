@@ -52,6 +52,8 @@ struct AssistantRow {
     config_max_tool_rounds: Option<i32>,
     config_max_duration_ms: Option<i32>,
     config_auto_compact: Option<bool>,
+    config_enable_evaluator: Option<bool>,
+    config_evaluator_model: Option<String>,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
 }
@@ -88,12 +90,14 @@ fn row_to_assistant(r: AssistantRow) -> Assistant {
         config_max_tool_rounds: r.config_max_tool_rounds,
         config_max_duration_ms: r.config_max_duration_ms,
         config_auto_compact: r.config_auto_compact,
+        config_enable_evaluator: r.config_enable_evaluator,
+        config_evaluator_model: r.config_evaluator_model,
         created_at: r.created_at,
         updated_at: r.updated_at,
     }
 }
 
-const ASSISTANT_COLS: &str = "user_id, id, name, description, llm_provider, model, temperature, max_tokens, system_prompt, is_team_lead, parent_assistant_id, share_token, share_permissions, config_split_messages, config_typing_indicator, config_rate_limit_per_day, config_max_message_length, config_rate_limit_message, config_max_length_message, config_interpret_documents, config_unsupported_media_message, config_audio_provider, config_audio_mode, config_audio_transcribe, config_audio_fallback_to_text, config_audio_transcription_failure_message, config_audio_voice_id, config_max_tool_rounds, config_max_duration_ms, config_auto_compact, created_at, updated_at";
+const ASSISTANT_COLS: &str = "user_id, id, name, description, llm_provider, model, temperature, max_tokens, system_prompt, is_team_lead, parent_assistant_id, share_token, share_permissions, config_split_messages, config_typing_indicator, config_rate_limit_per_day, config_max_message_length, config_rate_limit_message, config_max_length_message, config_interpret_documents, config_unsupported_media_message, config_audio_provider, config_audio_mode, config_audio_transcribe, config_audio_fallback_to_text, config_audio_transcription_failure_message, config_audio_voice_id, config_max_tool_rounds, config_max_duration_ms, config_auto_compact, config_enable_evaluator, config_evaluator_model, created_at, updated_at";
 
 pub async fn list_assistants(db: &DbSession, user_id: &Uuid) -> Result<Vec<Assistant>, AppError> {
     let query =
@@ -255,6 +259,15 @@ pub async fn update_assistant(
     // T2.3 — auto-compaction opt-in. Only overwrite when explicitly provided
     // so a partial PATCH never flips the flag by omission.
     let config_auto_compact = req.config_auto_compact.or(existing.config_auto_compact);
+    // W2.1 — evaluator opt-in + model override. Same partial-PATCH semantics:
+    // omitted fields keep the prior value.
+    let config_enable_evaluator = req
+        .config_enable_evaluator
+        .or(existing.config_enable_evaluator);
+    let config_evaluator_model = req
+        .config_evaluator_model
+        .clone()
+        .or(existing.config_evaluator_model.clone());
 
     db.query_unpaged(
         "UPDATE inertial_eclipse.assistants SET name = ?, description = ?, llm_provider = ?, model = ?, temperature = ?, max_tokens = ?, system_prompt = ?, is_team_lead = ?, parent_assistant_id = ?, config_split_messages = ?, config_typing_indicator = ?, updated_at = ? WHERE user_id = ? AND id = ?",
@@ -298,6 +311,15 @@ pub async fn update_assistant(
     db.query_unpaged(
         "UPDATE inertial_eclipse.assistants SET config_auto_compact = ? WHERE user_id = ? AND id = ?",
         (&config_auto_compact, user_id, assistant_id),
+    )
+    .await
+    .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+
+    // W2.1 — evaluator opt-in + model override. Separate UPDATE (same reason
+    // as T2.3 above). Writing NULL is valid — falls back to the env default.
+    db.query_unpaged(
+        "UPDATE inertial_eclipse.assistants SET config_enable_evaluator = ?, config_evaluator_model = ? WHERE user_id = ? AND id = ?",
+        (&config_enable_evaluator, &config_evaluator_model, user_id, assistant_id),
     )
     .await
     .map_err(|e| AppError::DatabaseError(e.to_string()))?;

@@ -35,6 +35,10 @@ async fn main() {
     // disabled (COMPACTION_API_KEY unset), so operators notice inert
     // assistants. Does not fail startup.
     config.log_compaction_status();
+    // W2.1 — same treatment for the post-turn evaluator: WARN when
+    // both EVALUATOR_API_KEY and COMPACTION_API_KEY are unset so
+    // assistants with config_enable_evaluator=true silently no-op.
+    config.log_evaluator_status();
     let db = db::connect(&config.database_url).await;
     let encryption = EncryptionService::new(&config.encryption_key)
         .expect("ENCRYPTION_KEY must be 64 hex chars (32 bytes)");
