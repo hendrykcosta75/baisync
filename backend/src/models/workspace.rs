@@ -61,6 +61,12 @@ pub struct WorkspaceApiKeys {
     pub stripe_secret_key: Option<String>,
     pub stripe_public_key: Option<String>,
     pub updated_at: Option<DateTime<Utc>>,
+    /// T3.2 F1 — version of the AES key used to encrypt the encrypted
+    /// columns on THIS row. `None` maps to V1 for backward compatibility
+    /// with rows written before migration 101 (legacy single-key era).
+    /// Serialized as a hint for callers; not user-editable via API.
+    #[serde(default)]
+    pub key_version: Option<i32>,
 }
 
 // Request types

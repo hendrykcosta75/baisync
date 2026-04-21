@@ -9,6 +9,12 @@ use crate::models::workspace::{
 };
 use crate::services::encryption::EncryptionService;
 
+/// T3.2 F1 — default `key_version` when `workspace_api_keys.key_version`
+/// is NULL. Migration 101 added the column; rows inserted before the
+/// migration have NULL here and were encrypted under V1 (the legacy
+/// single `ENCRYPTION_KEY` which KeyResolver maps to V1 on fallback).
+const DEFAULT_KEY_VERSION: i32 = 1;
+
 fn ts_now() -> CqlTimestamp {
     CqlTimestamp(Utc::now().timestamp_millis())
 }
@@ -583,7 +589,7 @@ pub async fn get_api_keys(
 ) -> Result<WorkspaceApiKeys, AppError> {
     let result = db
         .query_unpaged(
-            "SELECT workspace_id, openai_api_key, claude_api_key, gemini_api_key, elevenlabs_api_key, grok_api_key, deepseek_api_key, mercadopago_access_token, mercadopago_public_key, stripe_secret_key, stripe_public_key, updated_at FROM inertial_eclipse.workspace_api_keys WHERE workspace_id = ?",
+            "SELECT workspace_id, openai_api_key, claude_api_key, gemini_api_key, elevenlabs_api_key, grok_api_key, deepseek_api_key, mercadopago_access_token, mercadopago_public_key, stripe_secret_key, stripe_public_key, updated_at, key_version FROM inertial_eclipse.workspace_api_keys WHERE workspace_id = ?",
             (workspace_id,),
         )
         .await
@@ -602,6 +608,7 @@ pub async fn get_api_keys(
         Option<String>,
         Option<String>,
         Option<DateTime<Utc>>,
+        Option<i32>,
     )>() {
         Ok(Some(row)) => Ok(WorkspaceApiKeys {
             workspace_id: row.0,
@@ -616,6 +623,7 @@ pub async fn get_api_keys(
             stripe_secret_key: row.9,
             stripe_public_key: row.10,
             updated_at: row.11,
+            key_version: row.12,
         }),
         _ => Ok(WorkspaceApiKeys {
             workspace_id: *workspace_id,
@@ -630,6 +638,7 @@ pub async fn get_api_keys(
             stripe_secret_key: None,
             stripe_public_key: None,
             updated_at: None,
+            key_version: None,
         }),
     }
 }
@@ -643,26 +652,70 @@ pub async fn update_api_keys(
     let current = get_api_keys(db, workspace_id).await?;
     let now = ts_now();
 
-    let encrypt_opt =
-        |raw: Option<&str>, current: Option<String>| -> Result<Option<String>, AppError> {
-            match raw {
-                Some(key) if !key.is_empty() => Ok(Some(encryption.encrypt(key)?)),
-                Some(_) => Ok(None), // empty string = clear
-                None => Ok(current),
-            }
-        };
+    // T3.2 F1 — whole-row version model: every encrypted column in a
+    // single row is stored under one `key_version`. On upsert we always
+    // write with the resolver's CURRENT version. For columns being
+    // carried over from a prior write at an older version, we decrypt
+    // with the old version and re-encrypt with the new one — this
+    // self-heals the row toward the current version over time, which is
+    // what enables safe online rotation (add V2, old rows re-encrypt
+    // naturally as users edit their keys; V1 env var can be retired
+    // after all rows have `key_version=2`).
+    let current_row_version =
+        current.key_version.unwrap_or(DEFAULT_KEY_VERSION) as u32;
+    let (_, target_version) = encryption.resolver().encrypt_key();
 
-    let openai = encrypt_opt(updates["openai"].as_str(), current.openai_api_key)?;
-    let claude = encrypt_opt(updates["claude"].as_str(), current.claude_api_key)?;
-    let gemini = encrypt_opt(updates["gemini"].as_str(), current.gemini_api_key)?;
-    let elevenlabs = encrypt_opt(updates["elevenlabs"].as_str(), current.elevenlabs_api_key)?;
-    let grok = encrypt_opt(updates["grok"].as_str(), current.grok_api_key)?;
-    let deepseek = encrypt_opt(updates["deepseek"].as_str(), current.deepseek_api_key)?;
-    let mercadopago = encrypt_opt(
+    // Re-encrypt carry-over ciphertext only when row version differs
+    // from target. Same-version carry-over is a no-op (copy ciphertext
+    // verbatim). If decrypt fails (wrong key loaded), bubble the error
+    // instead of silently writing garbage.
+    let carry_over = |existing: Option<String>| -> Result<Option<String>, AppError> {
+        match existing {
+            None => Ok(None),
+            Some(ct) if ct.is_empty() => Ok(Some(ct)),
+            Some(ct) if current_row_version == target_version => Ok(Some(ct)),
+            Some(ct) => {
+                let plaintext = encryption
+                    .decrypt_versioned(&ct, current_row_version)
+                    .map_err(|e| {
+                        AppError::EncryptionError(format!(
+                            "re-encryption failed decrypting workspace_api_keys under v{current_row_version}: {e}"
+                        ))
+                    })?;
+                let (re_ct, _) = encryption.encrypt_versioned(&plaintext)?;
+                Ok(Some(re_ct))
+            }
+        }
+    };
+
+    // Encrypt a new plaintext (or carry over / clear). The encryption
+    // always targets the current version — the returned ciphertext is
+    // intentionally ignored because it goes into the row alongside
+    // `target_version` which we write once.
+    let encrypt_or_carry = |raw: Option<&str>,
+                            existing: Option<String>|
+     -> Result<Option<String>, AppError> {
+        match raw {
+            Some(key) if !key.is_empty() => {
+                let (ct, _v) = encryption.encrypt_versioned(key)?;
+                Ok(Some(ct))
+            }
+            Some(_) => Ok(None), // empty string = clear
+            None => carry_over(existing),
+        }
+    };
+
+    let openai = encrypt_or_carry(updates["openai"].as_str(), current.openai_api_key)?;
+    let claude = encrypt_or_carry(updates["claude"].as_str(), current.claude_api_key)?;
+    let gemini = encrypt_or_carry(updates["gemini"].as_str(), current.gemini_api_key)?;
+    let elevenlabs = encrypt_or_carry(updates["elevenlabs"].as_str(), current.elevenlabs_api_key)?;
+    let grok = encrypt_or_carry(updates["grok"].as_str(), current.grok_api_key)?;
+    let deepseek = encrypt_or_carry(updates["deepseek"].as_str(), current.deepseek_api_key)?;
+    let mercadopago = encrypt_or_carry(
         updates["mercadopago"].as_str(),
         current.mercadopago_access_token,
     )?;
-    let stripe = encrypt_opt(updates["stripe"].as_str(), current.stripe_secret_key)?;
+    let stripe = encrypt_or_carry(updates["stripe"].as_str(), current.stripe_secret_key)?;
 
     // Public keys (not encrypted)
     let mp_pk = match updates["mp_public_key"].as_str() {
@@ -676,9 +729,12 @@ pub async fn update_api_keys(
         None => current.stripe_public_key,
     };
 
+    // Persist the row under the target key version. All encrypted
+    // columns in this row now share `target_version`.
+    let key_version_i32 = target_version as i32;
     db.query_unpaged(
-        "INSERT INTO inertial_eclipse.workspace_api_keys (workspace_id, openai_api_key, claude_api_key, gemini_api_key, elevenlabs_api_key, grok_api_key, deepseek_api_key, mercadopago_access_token, mercadopago_public_key, stripe_secret_key, stripe_public_key, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (workspace_id, &openai, &claude, &gemini, &elevenlabs, &grok, &deepseek, &mercadopago, &mp_pk, &stripe, &stripe_pk, now),
+        "INSERT INTO inertial_eclipse.workspace_api_keys (workspace_id, openai_api_key, claude_api_key, gemini_api_key, elevenlabs_api_key, grok_api_key, deepseek_api_key, mercadopago_access_token, mercadopago_public_key, stripe_secret_key, stripe_public_key, updated_at, key_version) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (workspace_id, &openai, &claude, &gemini, &elevenlabs, &grok, &deepseek, &mercadopago, &mp_pk, &stripe, &stripe_pk, now, key_version_i32),
     )
     .await
     .map_err(|e| AppError::DatabaseError(e.to_string()))?;
@@ -696,6 +752,7 @@ pub async fn update_api_keys(
         stripe_secret_key: stripe,
         stripe_public_key: stripe_pk,
         updated_at: Some(Utc::now()),
+        key_version: Some(key_version_i32),
     })
 }
 
@@ -730,9 +787,14 @@ pub async fn get_decrypted_api_key(
         _ => None,
     };
 
-    // workspace_api_keys is always encrypted, use strict decrypt.
+    // workspace_api_keys is always encrypted and versioned (T3.2 F1).
+    // NULL key_version → DEFAULT_KEY_VERSION (1): pre-migration-101 rows
+    // were written by the legacy single-key EncryptionService, which
+    // KeyResolver maps to V1 on env fallback — so decrypting with
+    // version=1 must still work for those rows.
     if let Some(enc) = encrypted {
-        return encryption.decrypt(&enc);
+        let version = keys.key_version.unwrap_or(DEFAULT_KEY_VERSION) as u32;
+        return encryption.decrypt_versioned(&enc, version);
     }
 
     // Fallback: try the user table (for users who haven't migrated keys yet)
@@ -875,9 +937,16 @@ pub async fn migrate_user_api_keys(
         let (stripe_pk, mp_pk) = pks.unwrap_or((None, None));
 
         let now = ts_now();
+        // T3.2 F1 — migration path inherits the legacy (V1) ciphertext
+        // from the users.* columns unchanged. They were encrypted with
+        // the single global ENCRYPTION_KEY which KeyResolver treats as
+        // V1, so we tag the inserted row with key_version=1 to match.
+        // No re-encryption happens here; S0b / online rotation will
+        // move these rows to a newer version if/when the user edits
+        // their keys via `update_api_keys`.
         db.query_unpaged(
-            "INSERT INTO inertial_eclipse.workspace_api_keys (workspace_id, openai_api_key, claude_api_key, gemini_api_key, elevenlabs_api_key, mercadopago_access_token, mercadopago_public_key, stripe_secret_key, stripe_public_key, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) IF NOT EXISTS",
-            (workspace_id, &openai, &claude, &gemini, &elevenlabs, &mercadopago, &mp_pk, &stripe, &stripe_pk, now),
+            "INSERT INTO inertial_eclipse.workspace_api_keys (workspace_id, openai_api_key, claude_api_key, gemini_api_key, elevenlabs_api_key, mercadopago_access_token, mercadopago_public_key, stripe_secret_key, stripe_public_key, updated_at, key_version) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) IF NOT EXISTS",
+            (workspace_id, &openai, &claude, &gemini, &elevenlabs, &mercadopago, &mp_pk, &stripe, &stripe_pk, now, DEFAULT_KEY_VERSION),
         )
         .await
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
