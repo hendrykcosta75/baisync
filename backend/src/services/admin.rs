@@ -121,6 +121,7 @@ pub async fn get_dashboard_stats(db: &DbSession) -> Result<AdminDashboardStats, 
     providers.sort_by(|a, b| b.count.cmp(&a.count));
 
     // Count conversations
+    // allow-filter: admin global stats — intentionally cross-tenant aggregate.
     let convs_result = db
         .query_unpaged(
             "SELECT assistant_id, user_id, id FROM inertial_eclipse.conversations",
@@ -138,6 +139,7 @@ pub async fn get_dashboard_stats(db: &DbSession) -> Result<AdminDashboardStats, 
     };
 
     // Count messages
+    // allow-filter: admin global stats — intentionally cross-tenant aggregate.
     let msgs_result = db
         .query_unpaged(
             "SELECT conversation_id, id FROM inertial_eclipse.messages",
@@ -1072,6 +1074,8 @@ pub async fn delete_user(db: &DbSession, user_id: &Uuid) -> Result<(), AppError>
             if let Ok(conv_result) = convs {
                 if let Ok(conv_rows) = conv_result.into_rows_result() {
                     for conv in conv_rows.rows::<(Uuid,)>().into_iter().flatten().flatten() {
+                        // allow-filter: admin cascade delete — tenant enforced
+                        // by outer list scoped to (assistant_id, user_id).
                         if let Err(e) = db
                             .query_unpaged(
                                 "DELETE FROM inertial_eclipse.messages WHERE conversation_id = ?",

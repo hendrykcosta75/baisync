@@ -335,7 +335,9 @@ pub async fn delete_assistant(
     for row in convs.rows::<(Uuid,)>()?.flatten() {
         let (conv_id,) = row;
         {
-            // Delete messages for this conversation (PK: conversation_id, id)
+            // allow-filter: messages PK is (conversation_id, id); tenant
+            // enforced by the caller (cascade delete) iterating only the
+            // current user's conversations.
             let _ = db
                 .query_unpaged(
                     "DELETE FROM inertial_eclipse.messages WHERE conversation_id = ?",

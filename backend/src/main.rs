@@ -17,6 +17,9 @@ use crate::services::llm::{
     apply_llm_call_log_event, init_llm_call_log_sender, LlmCallLogEvent,
 };
 use crate::services::messaging_recovery;
+use crate::services::session::{
+    apply_session_mutation, init_session_sender, SessionMutation,
+};
 
 #[tokio::main]
 async fn main() {
@@ -48,6 +51,24 @@ async fn main() {
                 }
             }
             tracing::info!("llm_call_log drain task exiting (sender dropped)");
+        });
+    }
+
+    // T2.1 — session service drain. Mirrors the T1.2 mpsc pattern: handlers
+    // enqueue `SessionMutation`s fire-and-forget; this background task owns
+    // all Cassandra writes to `sessions` / `session_events` so user-facing
+    // responses stay independent of database latency.
+    {
+        let (session_tx, mut session_rx) = mpsc::unbounded_channel::<SessionMutation>();
+        init_session_sender(session_tx);
+        let db_for_sessions = db.clone();
+        tokio::spawn(async move {
+            while let Some(m) = session_rx.recv().await {
+                if let Err(e) = apply_session_mutation(&db_for_sessions, m).await {
+                    tracing::error!(error = %e, "session mutation failed");
+                }
+            }
+            tracing::info!("session mutation drain task exiting (sender dropped)");
         });
     }
 

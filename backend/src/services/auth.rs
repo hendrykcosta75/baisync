@@ -465,6 +465,9 @@ pub async fn delete_account(
                     (&assistant_id,),
                 )
                 .await;
+            // allow-filter: user-cascade delete — missing user_id here is
+            // acceptable because we iterate all of THIS user's assistants above
+            // and the assistant_id is already tenant-scoped.
             let _ = db
                 .query_unpaged(
                     "DELETE FROM inertial_eclipse.conversations WHERE assistant_id = ?",

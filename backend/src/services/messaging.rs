@@ -707,6 +707,36 @@ pub async fn process_incoming_message(
         max_tool_rounds: assistant.config_max_tool_rounds,
         max_duration_ms: assistant.config_max_duration_ms,
     };
+
+    // T2.1 — open a session BEFORE invoking the LLM. `create_session` is the
+    // only synchronous write in this path; if it fails we log and carry
+    // `None`, so a Cassandra hiccup never breaks the user reply. Every
+    // subsequent append_event / update_status enqueues on the mpsc drain and
+    // returns instantly.
+    let session_id_opt: Option<crate::services::session::SessionId> =
+        match crate::services::session::create_session(
+            db,
+            user_id,
+            conversation.id,
+            assistant_id,
+        )
+        .await
+        {
+            Ok(id) => {
+                crate::services::session::append_event(
+                    user_id,
+                    id,
+                    crate::services::session::SessionEventType::UserMsg,
+                    serde_json::json!({ "content": effective_message }).to_string(),
+                );
+                Some(id)
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "session::create_session failed; continuing without session tracking");
+                None
+            }
+        };
+
     let llm_response = llm::call_llm_with_tools_ctx(
         &assistant.llm_provider,
         &assistant.model,
@@ -718,6 +748,48 @@ pub async fn process_incoming_message(
         &tool_ctx,
     )
     .await?;
+
+    // T2.1 — log each tool call + result onto the session event log. Mirrors
+    // the order the LLM invoked them; response bodies are capped at 2KB to
+    // avoid ballooning payloads (full payload stays in `tool_call_logs`).
+    if let Some(sid) = session_id_opt {
+        for r in &llm_response.tool_call_records {
+            crate::services::session::append_event(
+                user_id,
+                sid,
+                crate::services::session::SessionEventType::ToolCall,
+                serde_json::json!({
+                    "tool_name": r.tool_name,
+                    "arguments": r.arguments,
+                })
+                .to_string(),
+            );
+            let truncated_body: Option<String> = r.response_body.as_deref().map(|b| {
+                if b.len() > 2048 {
+                    // Cut on a char boundary.
+                    let mut cut = 2048;
+                    while cut > 0 && !b.is_char_boundary(cut) {
+                        cut -= 1;
+                    }
+                    format!("{}…[truncated {} bytes]", &b[..cut], b.len() - cut)
+                } else {
+                    b.to_string()
+                }
+            });
+            crate::services::session::append_event(
+                user_id,
+                sid,
+                crate::services::session::SessionEventType::ToolResult,
+                serde_json::json!({
+                    "tool_name": r.tool_name,
+                    "status_code": r.status_code,
+                    "error": r.error,
+                    "response_body": truncated_body,
+                })
+                .to_string(),
+            );
+        }
+    }
 
     // Save tool call logs (fire-and-forget, don't block the response)
     for record in &llm_response.tool_call_records {
@@ -1581,6 +1653,24 @@ pub async fn process_incoming_message(
         }).to_string(),
     }).await;
 
+    // T2.1 — close out the session: record the final LLM message and flip
+    // status to "completed". Both writes are fire-and-forget.
+    if let Some(sid) = session_id_opt {
+        crate::services::session::append_event(
+            user_id,
+            sid,
+            crate::services::session::SessionEventType::LlmMsg,
+            serde_json::json!({ "content": llm_response.content }).to_string(),
+        );
+        crate::services::session::update_status(
+            user_id,
+            sid,
+            "completed".to_string(),
+            None,
+        )
+        .await;
+    }
+
     Ok(WebhookResponse {
         status: "ok".into(),
         message_id: Some(conversation.id.to_string()),
@@ -1977,6 +2067,8 @@ async fn save_message_with_media(
 ) -> Result<(), AppError> {
     let now = ts_now();
 
+    // allow-filter: messages PK is (conversation_id, id) — tenant isolation
+    // is enforced by the caller scoping via the conversation's owner.
     db.query_unpaged(
         "INSERT INTO inertial_eclipse.messages (conversation_id, id, role, content, media_url, media_type, media_base64, media_extracted_text, tokens_used, created_at) VALUES (?, now(), ?, ?, ?, ?, ?, ?, ?, ?)",
         (
@@ -2048,6 +2140,8 @@ pub async fn get_message(
     message_id: &Uuid,
 ) -> Result<Option<Message>, AppError> {
     let timeuuid = CqlTimeuuid::from(*message_id);
+    // allow-filter: messages PK is (conversation_id, id) — tenant scope is
+    // enforced transitively via the conversation's owner.
     let result = db
         .query_unpaged(
             "SELECT conversation_id, id, role, content, media_url, media_type, media_base64, media_extracted_text, tokens_used, sub_agent_id, created_at FROM inertial_eclipse.messages WHERE conversation_id = ? AND id = ?",
@@ -2093,6 +2187,8 @@ pub async fn get_recent_messages(
     conversation_id: &Uuid,
     limit: i32,
 ) -> Result<Vec<Message>, AppError> {
+    // allow-filter: messages PK is (conversation_id, id) — tenant scope is
+    // enforced transitively via the conversation's owner.
     let result = db
         .query_unpaged(
             "SELECT conversation_id, id, role, content, media_url, media_type, media_base64, media_extracted_text, tokens_used, sub_agent_id, created_at FROM inertial_eclipse.messages WHERE conversation_id = ? ORDER BY id DESC LIMIT ?",
@@ -2142,6 +2238,8 @@ pub async fn get_messages_paged(
     limit: i32,
     cursor: Option<&str>,
 ) -> Result<crate::models::pagination::PaginatedResponse<Message>, AppError> {
+    // allow-filter: messages PK is (conversation_id, id) — tenant scope is
+    // enforced transitively via the conversation's owner.
     let (result, next_cursor) = crate::db::query_paged(
         db,
         "SELECT conversation_id, id, role, content, media_url, media_type, media_base64, media_extracted_text, tokens_used, sub_agent_id, created_at FROM inertial_eclipse.messages WHERE conversation_id = ? ORDER BY id DESC",
@@ -2246,6 +2344,8 @@ pub async fn list_conversations(
 }
 
 pub async fn count_messages(db: &DbSession, conversation_id: &Uuid) -> Result<i64, AppError> {
+    // allow-filter: messages PK is (conversation_id, id) — tenant scope
+    // resolved via the conversation's owner.
     let result = db
         .query_unpaged(
             "SELECT count(*) FROM inertial_eclipse.messages WHERE conversation_id = ?",
@@ -2264,6 +2364,8 @@ pub async fn count_messages(db: &DbSession, conversation_id: &Uuid) -> Result<i6
 }
 
 pub async fn sum_tokens(db: &DbSession, conversation_id: &Uuid) -> Result<i64, AppError> {
+    // allow-filter: messages PK is (conversation_id, id) — tenant scope
+    // resolved via the conversation's owner.
     let result = db
         .query_unpaged(
             "SELECT tokens_used FROM inertial_eclipse.messages WHERE conversation_id = ?",
@@ -3284,6 +3386,8 @@ pub async fn delete_conversation(
     get_conversation(db, assistant_id, user_id, conversation_id).await?;
 
     // Delete all messages for this conversation
+    // allow-filter: messages PK is (conversation_id, id); tenant enforced
+    // by get_conversation ownership check above.
     db.query_unpaged(
         "DELETE FROM inertial_eclipse.messages WHERE conversation_id = ?",
         (conversation_id,),

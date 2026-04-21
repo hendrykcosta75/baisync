@@ -391,11 +391,58 @@ pub async fn chat(
     // O loop de frames SSE fica fora do escopo — streaming pode levar dezenas de segundos.
     let llm_timeout_secs = config.llm_global_timeout_secs;
 
+    // T2.1 — open a session per Sophie chat call.
+    //
+    // Limitation (documented): today we create a brand-new session on every
+    // Sophie call even when the request carries `req.history`. Sophie does
+    // not yet have server-side session continuity — that's S2.1. Until then,
+    // each call produces an independent session id; resuming a thread would
+    // require the UI to send the previous session id along with the history,
+    // which it does not.
+    //
+    // `assistant_id` is set to `Uuid::nil()` because Sophie is the platform
+    // agent (not a user-created assistant); the nil uuid is the established
+    // "no entity" sentinel used elsewhere in the codebase.
+    // `conversation_id` also uses the nil uuid for the same reason — Sophie
+    // chats do not flow through `conversations`/`messages` (those are for
+    // WhatsApp/Telegram), so there is no conversation to tie to.
+    let session_id_opt: Option<crate::services::session::SessionId> =
+        match crate::services::session::create_session(
+            &db,
+            user_id,
+            Uuid::nil(),
+            Uuid::nil(),
+        )
+        .await
+        {
+            Ok(id) => Some(id),
+            Err(e) => {
+                tracing::warn!(error = %e, "sophie session create failed; continuing without session tracking");
+                None
+            }
+        };
+
+    // Capture the user message for the session log — `req` itself is
+    // consumed later when building the Gemini body.
+    let session_user_msg = req.message.clone();
+
     // Create channel for SSE events
     let (tx, rx) = mpsc::channel::<Result<Event, Infallible>>(128);
 
     // Spawn streaming task
     tokio::spawn(async move {
+        // T2.1 — log the user message as early as possible in the spawned
+        // task so a downstream panic / early-return still leaves us a record
+        // of the turn the user kicked off.
+        if let Some(sid) = session_id_opt {
+            crate::services::session::append_event(
+                user_id,
+                sid,
+                crate::services::session::SessionEventType::UserMsg,
+                serde_json::json!({ "content": session_user_msg }).to_string(),
+            );
+        }
+
         // Send thinking status
         let _ = tx
             .send(Ok(Event::default().event("status").data(
@@ -517,6 +564,25 @@ pub async fn chat(
                 // payloads. Foundation for W2.1 evaluator. Must not touch
                 // `full_content`, SSE events, or rate-limit state.
                 validate_baisync_actions(&full_content);
+
+                // T2.1 — record the final LLM message and close the session.
+                // Both writes are fire-and-forget; if the drain isn't
+                // installed (tests), they're silently dropped.
+                if let Some(sid) = session_id_opt {
+                    crate::services::session::append_event(
+                        user_id,
+                        sid,
+                        crate::services::session::SessionEventType::LlmMsg,
+                        serde_json::json!({ "content": full_content }).to_string(),
+                    );
+                    crate::services::session::update_status(
+                        user_id,
+                        sid,
+                        "completed".to_string(),
+                        None,
+                    )
+                    .await;
+                }
 
                 // Send rate limit warning if approaching limit
                 if pct >= 60.0 {

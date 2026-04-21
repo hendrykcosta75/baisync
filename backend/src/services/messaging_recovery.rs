@@ -460,6 +460,8 @@ async fn scan_stale_in_progress(
     threshold_ms: i64,
 ) -> Result<Vec<StaleCall>, AppError> {
     let threshold = CqlTimestamp(threshold_ms);
+    // allow-filter: W1.3 recovery sweep — scans ALL tenants' in_progress rows
+    // to find crashed LLM calls; can't be scoped by user_id by design.
     let result = db
         .query_unpaged(
             "SELECT user_id, assistant_id, id, conversation_id, started_at \
@@ -533,6 +535,8 @@ async fn fetch_last_message(
     db: &DbSession,
     conversation_id: &Uuid,
 ) -> Result<Option<LastMessageSnapshot>, AppError> {
+    // allow-filter: messages PK is (conversation_id, id) — scope is via the
+    // conversation's tenant, validated upstream in process_incoming_message.
     let result = db
         .query_unpaged(
             "SELECT role, created_at FROM inertial_eclipse.messages \
@@ -598,6 +602,7 @@ async fn save_recovery_message(
     conversation_id: &Uuid,
 ) -> Result<(), AppError> {
     let now = CqlTimestamp(Utc::now().timestamp_millis());
+    // allow-filter: messages PK is (conversation_id, id) — no user_id column.
     db.query_unpaged(
         "INSERT INTO inertial_eclipse.messages \
          (conversation_id, id, role, content, created_at) \
