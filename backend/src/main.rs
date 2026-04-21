@@ -18,7 +18,7 @@ use crate::services::llm::{
 };
 use crate::services::messaging_recovery;
 use crate::services::session::{
-    apply_session_mutation, init_session_sender, SessionMutation,
+    apply_session_mutation, init_session_sender, SessionMutation, SESSION_SENDER_CAPACITY,
 };
 
 #[tokio::main]
@@ -66,12 +66,18 @@ async fn main() {
         });
     }
 
-    // T2.1 — session service drain. Mirrors the T1.2 mpsc pattern: handlers
-    // enqueue `SessionMutation`s fire-and-forget; this background task owns
-    // all Cassandra writes to `sessions` / `session_events` so user-facing
-    // responses stay independent of database latency.
+    // T2.1 / S3.2 — session service drain. Mirrors the T1.2 mpsc pattern:
+    // handlers enqueue `SessionMutation`s fire-and-forget; this background
+    // task owns all Cassandra writes to `sessions` / `session_events` so
+    // user-facing responses stay independent of database latency.
+    //
+    // S3.2: the channel is bounded at `SESSION_SENDER_CAPACITY` so voice
+    // sessions (many events/s) cannot balloon heap if Cassandra stalls.
+    // On `Full`, `services::session::enqueue` drops the event and bumps
+    // `session_events_dropped_total{type=...}` — see metrics endpoint.
     {
-        let (session_tx, mut session_rx) = mpsc::unbounded_channel::<SessionMutation>();
+        let (session_tx, mut session_rx) =
+            mpsc::channel::<SessionMutation>(SESSION_SENDER_CAPACITY);
         init_session_sender(session_tx);
         let db_for_sessions = db.clone();
         tokio::spawn(async move {

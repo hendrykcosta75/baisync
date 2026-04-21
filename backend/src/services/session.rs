@@ -15,7 +15,7 @@
 use chrono::Utc;
 use scylla::frame::value::{CqlTimestamp, CqlTimeuuid};
 use std::sync::OnceLock;
-use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::mpsc::Sender;
 use uuid::Uuid;
 
 use crate::db::DbSession;
@@ -23,13 +23,26 @@ use crate::errors::AppError;
 
 pub type SessionId = Uuid;
 
+/// Bounded capacity of `SESSION_SENDER`. Sized so a whole-system peak of
+/// ~150 events/s (voice sessions running across all tenants plus Sophie
+/// text plus WhatsApp) can stall the Cassandra drain for ~60s before any
+/// event is dropped. At 10k slots @ 48 bytes/slot ≈ 480KB of heap —
+/// cheap compared to the cost of losing an event. Chosen per S3.2 plan.
+pub const SESSION_SENDER_CAPACITY: usize = 10_000;
+
 /// Logical event kinds emitted within a session.
 ///
-/// Only `UserMsg`, `LlmMsg`, `ToolCall`, `ToolResult` are produced today.
-/// `Compaction`, `EvaluatorVerdict`, `Plan`, `Wake` are reserved for
-/// Onda 2 / Onda 3 (evaluator, compaction, wake/planner) and will begin
-/// producing real events then. The variants are kept now so the table
-/// schema and event_type column set are stable from day one.
+/// Produced today:
+///   - `UserMsg`, `LlmMsg`, `ToolCall`, `ToolResult` (text/WhatsApp/Sophie).
+///   - S3.2: `UserTurnStarted`, `UserTurnCompleted`, `ModelTurnStarted`,
+///     `ModelTurnCompleted` for Sophie voice lifecycle. Voice tool calls
+///     reuse the existing `ToolCall` variant (shape is identical).
+///
+/// Reserved for Onda 2 / Onda 3 (not yet emitted):
+///   - `Compaction`, `EvaluatorVerdict`, `Plan`, `Wake`.
+///
+/// The variants are kept stable so the table schema and event_type column
+/// set do not need to change as producers come online.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum SessionEventType {
     UserMsg,
@@ -40,6 +53,10 @@ pub enum SessionEventType {
     EvaluatorVerdict,
     Plan,
     Wake,
+    UserTurnStarted,
+    UserTurnCompleted,
+    ModelTurnStarted,
+    ModelTurnCompleted,
 }
 
 impl SessionEventType {
@@ -53,6 +70,10 @@ impl SessionEventType {
             Self::EvaluatorVerdict => "evaluator_verdict",
             Self::Plan => "plan",
             Self::Wake => "wake",
+            Self::UserTurnStarted => "user_turn_started",
+            Self::UserTurnCompleted => "user_turn_completed",
+            Self::ModelTurnStarted => "model_turn_started",
+            Self::ModelTurnCompleted => "model_turn_completed",
         }
     }
 }
@@ -86,14 +107,20 @@ pub enum SessionMutation {
 
 /// Global sender for `SessionMutation`s. Set once at startup from `main.rs`.
 ///
+/// Bounded (capacity = `SESSION_SENDER_CAPACITY`) as of S3.2 so a slow
+/// Cassandra drain cannot balloon heap usage — voice sessions emit many
+/// events per minute and an unbounded channel would be a silent OOM vector.
+///
 /// When unset (unit tests, ad-hoc callers), `append_event` / `update_status`
 /// silently drop the mutation — they never panic and never fail the caller.
+/// When full (drain stalled), `append_event` drops the event and increments
+/// `session_events_dropped_total{type=...}` so operators can alert on it.
 /// `create_session` has a synchronous fallback so it can still return a
 /// usable id even without the drain task.
-static SESSION_SENDER: OnceLock<UnboundedSender<SessionMutation>> = OnceLock::new();
+static SESSION_SENDER: OnceLock<Sender<SessionMutation>> = OnceLock::new();
 
 /// Install the global sender. Call once from `main.rs` after `db::connect`.
-pub fn init_session_sender(sender: UnboundedSender<SessionMutation>) {
+pub fn init_session_sender(sender: Sender<SessionMutation>) {
     let _ = SESSION_SENDER.set(sender);
 }
 
@@ -109,9 +136,37 @@ pub fn session_sender_is_initialized() -> bool {
     SESSION_SENDER.get().is_some()
 }
 
+/// Sync, fire-and-forget enqueue. Uses `try_send` so a stalled drain can
+/// never block the caller (voice hot path). On `Full`, we extract the
+/// event_type if the mutation carries one and bump the drop counter;
+/// `Closed` only happens after shutdown and is logged at debug.
 fn enqueue(mutation: SessionMutation) {
-    if let Some(sender) = SESSION_SENDER.get() {
-        if sender.send(mutation).is_err() {
+    let Some(sender) = SESSION_SENDER.get() else {
+        return;
+    };
+    match sender.try_send(mutation) {
+        Ok(()) => {}
+        Err(tokio::sync::mpsc::error::TrySendError::Full(m)) => {
+            let event_type = match &m {
+                SessionMutation::Create { .. } => "create",
+                SessionMutation::AppendEvent { event_type, .. } => event_type.as_str(),
+                SessionMutation::UpdateStatus { .. } => "update_status",
+            }
+            .to_string();
+            tracing::warn!(
+                event = "session.event_dropped",
+                event_type = %event_type,
+                "session mutation dropped — sender queue full (drain stalled)"
+            );
+            // Fire-and-forget the metric bump — we're on a hot path and
+            // can't await. `tokio::spawn` is cheap relative to the lost
+            // event's cost, and the increment itself is a single RwLock
+            // acquire + HashMap mutation.
+            tokio::spawn(async move {
+                crate::services::metrics::inc_session_event_dropped(&event_type).await;
+            });
+        }
+        Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
             tracing::debug!("session_mutation drain receiver dropped; mutation discarded");
         }
     }
@@ -369,6 +424,29 @@ mod tests {
         assert_eq!(SessionEventType::Wake.as_str(), "wake");
     }
 
+    /// S3.2 — the four voice-lifecycle variants stringify to the exact
+    /// names defined in the plan. Any rename here is a breaking change
+    /// for scrapers/dashboards keyed on `session_events_total{type=...}`.
+    #[test]
+    fn test_session_event_type_as_str_voice_variants() {
+        assert_eq!(
+            SessionEventType::UserTurnStarted.as_str(),
+            "user_turn_started"
+        );
+        assert_eq!(
+            SessionEventType::UserTurnCompleted.as_str(),
+            "user_turn_completed"
+        );
+        assert_eq!(
+            SessionEventType::ModelTurnStarted.as_str(),
+            "model_turn_started"
+        );
+        assert_eq!(
+            SessionEventType::ModelTurnCompleted.as_str(),
+            "model_turn_completed"
+        );
+    }
+
     #[test]
     fn test_append_event_drops_if_no_sender() {
         // In the default unit-test environment the sender is never initialized.
@@ -389,6 +467,67 @@ mod tests {
             session_id,
             SessionEventType::UserMsg,
             "{\"content\":\"hello\"}".to_string(),
+        );
+    }
+
+    /// S3.2 — a full bounded sender must drop without panicking and must
+    /// bump the `session_events_dropped_total` metric for the event_type
+    /// we tried to enqueue. We cannot clobber the global `SESSION_SENDER`
+    /// (`OnceLock`), so we exercise the same `try_send` semantics on a
+    /// locally-constructed bounded channel and separately verify the
+    /// metric increment with `inc_session_event_dropped`.
+    #[tokio::test]
+    async fn test_append_event_try_send_drop_when_full() {
+        // Construct a tiny bounded channel (cap=1) and fill it so the
+        // next `try_send` returns `Full`. This mirrors what `enqueue`
+        // does against `SESSION_SENDER` when the drain stalls.
+        let (tx, _rx) = tokio::sync::mpsc::channel::<SessionMutation>(1);
+        let m1 = SessionMutation::AppendEvent {
+            user_id: Uuid::new_v4(),
+            session_id: Uuid::new_v4(),
+            event_id: Uuid::new_v4(),
+            event_type: SessionEventType::UserTurnStarted.as_str().to_string(),
+            payload: "{}".to_string(),
+        };
+        tx.try_send(m1).expect("first send must succeed");
+
+        // The second send must fail with `Full` (not `Closed`), proving
+        // the bounded semantics we rely on in production `enqueue`.
+        let m2 = SessionMutation::AppendEvent {
+            user_id: Uuid::new_v4(),
+            session_id: Uuid::new_v4(),
+            event_id: Uuid::new_v4(),
+            event_type: SessionEventType::UserTurnStarted.as_str().to_string(),
+            payload: "{}".to_string(),
+        };
+        match tx.try_send(m2) {
+            Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {}
+            other => panic!("expected Full, got {:?}", other.map(|_| "Ok").map_err(|e| e)),
+        }
+
+        // Now exercise the drop-metric path directly — the same call
+        // `enqueue` makes. Using a unique label keeps the assertion
+        // immune to parallel-test contamination.
+        let unique = "test_s3_2_try_send_drop_when_full";
+        crate::services::metrics::inc_session_event_dropped(unique).await;
+        let snap = crate::services::metrics::format_prometheus().await;
+        let expected = format!(
+            "session_events_dropped_total{{type=\"{unique}\"}} 1"
+        );
+        assert!(
+            snap.contains(&expected),
+            "expected metric increment {expected:?} in snapshot:\n{snap}"
+        );
+
+        // And the public `append_event` entry point must not panic when
+        // the global sender is unset — already covered by
+        // `test_append_event_drops_if_no_sender` but we assert the voice
+        // variant here too so the new enum arms are exercised end-to-end.
+        append_event(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            SessionEventType::UserTurnStarted,
+            "{}".to_string(),
         );
     }
 

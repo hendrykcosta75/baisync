@@ -39,6 +39,12 @@ pub struct Metrics {
     pub llm_duration_seconds: RwLock<LlmDurationHistogram>,
     pub tool_calls_total: RwLock<HashMap<(String, String), u64>>,
     pub session_events_total: RwLock<HashMap<String, u64>>,
+    /// S3.2 — session mutations dropped because the mpsc sender was full
+    /// (drain stalled). Labeled by event_type (`user_turn_started`,
+    /// `model_turn_completed`, `create`, `update_status`, etc). An
+    /// operator alert on `rate(session_events_dropped_total[5m]) > 0`
+    /// catches Cassandra stalls that would otherwise silently lose data.
+    pub session_events_dropped_total: RwLock<HashMap<String, u64>>,
     pub webhook_deduped_total: RwLock<HashMap<String, u64>>,
     pub compaction_total: RwLock<HashMap<String, u64>>,
 }
@@ -93,6 +99,7 @@ pub fn metrics() -> &'static Metrics {
         llm_duration_seconds: RwLock::new(LlmDurationHistogram::new()),
         tool_calls_total: RwLock::new(HashMap::new()),
         session_events_total: RwLock::new(HashMap::new()),
+        session_events_dropped_total: RwLock::new(HashMap::new()),
         webhook_deduped_total: RwLock::new(HashMap::new()),
         compaction_total: RwLock::new(HashMap::new()),
     })
@@ -127,6 +134,15 @@ pub async fn inc_tool_call(tool: &str, status: &str) {
 /// Increment `session_events_total{type}` for a given session event type.
 pub async fn inc_session_event(event_type: &str) {
     let mut map = metrics().session_events_total.write().await;
+    *map.entry(event_type.to_string()).or_insert(0) += 1;
+}
+
+/// S3.2 — increment `session_events_dropped_total{type}` when the
+/// session-mutation mpsc sender is full and a mutation had to be
+/// discarded. Called from `services::session::enqueue` (spawned so
+/// the hot path never awaits the metric lock).
+pub async fn inc_session_event_dropped(event_type: &str) {
+    let mut map = metrics().session_events_dropped_total.write().await;
     *map.entry(event_type.to_string()).or_insert(0) += 1;
 }
 
@@ -254,6 +270,26 @@ pub async fn format_prometheus() -> String {
             for (ty, count) in entries {
                 out.push_str(&format!(
                     "session_events_total{{type=\"{}\"}} {}\n",
+                    escape_label_value(ty),
+                    count
+                ));
+            }
+        }
+    }
+
+    // --- session_events_dropped_total (S3.2) ---
+    out.push_str("# HELP session_events_dropped_total Total session mutations dropped because the mpsc sender was full (drain stalled), labeled by event type.\n");
+    out.push_str("# TYPE session_events_dropped_total counter\n");
+    {
+        let map = m.session_events_dropped_total.read().await;
+        let mut entries: Vec<(&String, &u64)> = map.iter().collect();
+        entries.sort_by(|a, b| a.0.cmp(b.0));
+        if entries.is_empty() {
+            out.push_str("session_events_dropped_total 0\n");
+        } else {
+            for (ty, count) in entries {
+                out.push_str(&format!(
+                    "session_events_dropped_total{{type=\"{}\"}} {}\n",
                     escape_label_value(ty),
                     count
                 ));
@@ -446,6 +482,7 @@ mod tests {
             "llm_duration_seconds",
             "tool_calls_total",
             "session_events_total",
+            "session_events_dropped_total",
             "webhook_deduped_total",
             "compaction_total",
         ];
@@ -480,14 +517,14 @@ mod tests {
         let out = format_prometheus().await;
         let help_count = out.matches("# HELP ").count();
         assert_eq!(
-            help_count, 6,
-            "expected 6 HELP lines (one per family), got {help_count}:\n{out}"
+            help_count, 7,
+            "expected 7 HELP lines (one per family), got {help_count}:\n{out}"
         );
         // Every family still emits a TYPE line on a cold registry.
         let type_count = out.matches("# TYPE ").count();
         assert_eq!(
-            type_count, 6,
-            "expected 6 TYPE lines, got {type_count}:\n{out}"
+            type_count, 7,
+            "expected 7 TYPE lines, got {type_count}:\n{out}"
         );
     }
 

@@ -18,10 +18,15 @@ use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation}
 use serde::{Deserialize, Serialize};
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::protocol::Message as TMessage;
+use uuid::Uuid;
 
 use crate::config::Config;
+use crate::db::DbSession;
 use crate::errors::AppError;
 use crate::middleware::auth::AuthUser;
+use crate::services::session::{
+    append_event, create_session, SessionEventType, SessionId,
+};
 
 // ─── Ticket ────────────────────────────────────────────────────────────────
 
@@ -72,6 +77,7 @@ pub struct VoiceQuery {
 
 /// GET /api/baisync/voice/live?ticket=...
 pub async fn voice_live_ws(
+    Extension(db): Extension<DbSession>,
     Extension(config): Extension<Config>,
     Query(q): Query<VoiceQuery>,
     ws: WebSocketUpgrade,
@@ -89,6 +95,19 @@ pub async fn voice_live_ws(
         return Err(AppError::Unauthorized("Wrong ticket kind".into()));
     }
 
+    // S3.2 — recover the voice caller's `user_id` from the ticket's `sub`
+    // claim so session_events can be tenant-scoped. If the claim is
+    // malformed (older ticket), fall back to a nil uuid so voice still
+    // works but events are not persisted (the session create below will
+    // error harmlessly and we drop session tracking for this call).
+    let user_id = Uuid::parse_str(&token_data.claims.sub).unwrap_or_else(|_| {
+        tracing::warn!(
+            sub = %token_data.claims.sub,
+            "baisync voice ticket has non-UUID sub; session tracking disabled for this call"
+        );
+        Uuid::nil()
+    });
+
     let api_key = config.baisync_api_key.clone();
     if api_key.is_empty() {
         return Err(AppError::InternalError(
@@ -96,8 +115,30 @@ pub async fn voice_live_ws(
         ));
     }
 
+    // S3.2 — open a session before the WS upgrade so subsequent events
+    // have a target partition. Sophie is platform-level: both
+    // `conversation_id` and `assistant_id` use `Uuid::nil()`, matching
+    // the convention already established by `handlers::baisync::chat`.
+    //
+    // Failure is non-fatal: we fall back to `None` and the bridge emits
+    // no events. Voice always works; only the audit log is skipped.
+    let session_id: Option<SessionId> = if user_id.is_nil() {
+        None
+    } else {
+        match create_session(&db, user_id, Uuid::nil(), Uuid::nil()).await {
+            Ok(id) => Some(id),
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "baisync voice session create failed; continuing without session tracking"
+                );
+                None
+            }
+        }
+    };
+
     Ok(ws.on_upgrade(move |socket| async move {
-        if let Err(e) = run_bridge(socket, api_key).await {
+        if let Err(e) = run_bridge(socket, api_key, user_id, session_id).await {
             tracing::warn!("Baisync voice bridge ended with error: {e}");
         }
     }))
@@ -230,7 +271,31 @@ async fn open_google_session(api_key: &str) -> Result<(GoogleTx, GoogleRx), Stri
 
 const MAX_SETUP_RETRIES: u32 = 3;
 
-async fn run_bridge(browser_ws: WebSocket, api_key: String) -> Result<(), String> {
+/// S3.2 — truncate transcript/reply previews before logging. Voice
+/// transcripts can run long, and `session_events.payload` is TEXT; 500
+/// chars is enough to triage a session in Sophie's audit UI without
+/// bloating the partition.
+const PREVIEW_MAX_CHARS: usize = 500;
+
+fn truncate_preview(s: &str) -> String {
+    if s.chars().count() <= PREVIEW_MAX_CHARS {
+        s.to_string()
+    } else {
+        let truncated: String = s.chars().take(PREVIEW_MAX_CHARS).collect();
+        format!("{truncated}…")
+    }
+}
+
+fn now_ms() -> i64 {
+    Utc::now().timestamp_millis()
+}
+
+async fn run_bridge(
+    browser_ws: WebSocket,
+    api_key: String,
+    user_id: Uuid,
+    session_id: Option<SessionId>,
+) -> Result<(), String> {
     let mut last_err = String::from("unknown");
     let mut pair: Option<(GoogleTx, GoogleRx)> = None;
     for attempt in 1..=MAX_SETUP_RETRIES {
@@ -272,6 +337,29 @@ async fn run_bridge(browser_ws: WebSocket, api_key: String) -> Result<(), String
         ))
         .await;
 
+    // S3.2 — per-session lifecycle tracking.
+    //
+    // Turn-boundary semantics for Gemini Live (no explicit user-end frame):
+    //   * `user_turn_started` — on the first browser→backend audio (or text)
+    //     frame of the current turn.
+    //   * `user_turn_completed` — emitted LAZILY when we detect the server
+    //     has moved on (first model audio chunk, or `turnComplete`,
+    //     whichever arrives first). Google's VAD owns the hard end-of-speech
+    //     boundary; we don't have a cleaner signal from the client side.
+    //   * `model_turn_started` — on the first `modelTurn.parts` with audio
+    //     from Google for the current turn.
+    //   * `model_turn_completed` — on `serverContent.turnComplete`.
+    //
+    // All `append_event` calls are sync (mpsc `try_send`); they never
+    // `.await` and never hold the proxy loop. `session_id` is `None` when
+    // session creation failed — in that case every emission is a no-op.
+    let mut user_turn_active = false;
+    let mut user_turn_start_ms: i64 = 0;
+    let mut user_transcript_buf = String::new();
+    let mut model_turn_active = false;
+    let mut model_turn_start_ms: i64 = 0;
+    let mut model_transcript_buf = String::new();
+
     loop {
         tokio::select! {
             // Browser → Google
@@ -287,6 +375,24 @@ async fn run_bridge(browser_ws: WebSocket, api_key: String) -> Result<(), String
                         match kind {
                             "audio" => {
                                 let Some(b64) = parsed.get("data").and_then(|v| v.as_str()) else { continue };
+                                // S3.2 — first user audio frame starts a
+                                // new user turn. Subsequent frames are
+                                // silent until the boundary flips.
+                                if !user_turn_active {
+                                    if let Some(sid) = session_id {
+                                        append_event(
+                                            user_id,
+                                            sid,
+                                            SessionEventType::UserTurnStarted,
+                                            serde_json::json!({
+                                                "timestamp_ms": now_ms()
+                                            }).to_string(),
+                                        );
+                                    }
+                                    user_turn_active = true;
+                                    user_turn_start_ms = now_ms();
+                                    user_transcript_buf.clear();
+                                }
                                 let frame = serde_json::json!({
                                     "realtimeInput": {
                                         "audio": {
@@ -301,6 +407,24 @@ async fn run_bridge(browser_ws: WebSocket, api_key: String) -> Result<(), String
                             }
                             "text" => {
                                 let Some(text) = parsed.get("text").and_then(|v| v.as_str()) else { continue };
+                                // S3.2 — typed user input also opens a
+                                // user turn if one isn't already open.
+                                if !user_turn_active {
+                                    if let Some(sid) = session_id {
+                                        append_event(
+                                            user_id,
+                                            sid,
+                                            SessionEventType::UserTurnStarted,
+                                            serde_json::json!({
+                                                "timestamp_ms": now_ms()
+                                            }).to_string(),
+                                        );
+                                    }
+                                    user_turn_active = true;
+                                    user_turn_start_ms = now_ms();
+                                    user_transcript_buf.clear();
+                                }
+                                user_transcript_buf.push_str(text);
                                 let frame = serde_json::json!({
                                     "realtimeInput": { "text": text }
                                 });
@@ -373,6 +497,48 @@ async fn run_bridge(browser_ws: WebSocket, api_key: String) -> Result<(), String
                         .pointer("/modelTurn/parts")
                         .and_then(|p| p.as_array())
                     {
+                        // S3.2 — first model audio of a turn. If a user
+                        // turn is still "active", Google has just taken
+                        // over the mic: close the user turn FIRST, then
+                        // open the model turn.
+                        let has_audio = parts.iter().any(|p| {
+                            p.get("inlineData")
+                                .and_then(|i| i.get("mimeType"))
+                                .and_then(|m| m.as_str())
+                                .map(|m| m.starts_with("audio/"))
+                                .unwrap_or(false)
+                        });
+                        if has_audio {
+                            if user_turn_active {
+                                if let Some(sid) = session_id {
+                                    append_event(
+                                        user_id,
+                                        sid,
+                                        SessionEventType::UserTurnCompleted,
+                                        serde_json::json!({
+                                            "duration_ms": now_ms() - user_turn_start_ms,
+                                            "transcript_preview": truncate_preview(&user_transcript_buf),
+                                        }).to_string(),
+                                    );
+                                }
+                                user_turn_active = false;
+                            }
+                            if !model_turn_active {
+                                if let Some(sid) = session_id {
+                                    append_event(
+                                        user_id,
+                                        sid,
+                                        SessionEventType::ModelTurnStarted,
+                                        serde_json::json!({
+                                            "timestamp_ms": now_ms()
+                                        }).to_string(),
+                                    );
+                                }
+                                model_turn_active = true;
+                                model_turn_start_ms = now_ms();
+                                model_transcript_buf.clear();
+                            }
+                        }
                         for part in parts {
                             if let Some(inline) = part.get("inlineData") {
                                 let mime = inline.get("mimeType").and_then(|v| v.as_str()).unwrap_or("");
@@ -397,6 +563,9 @@ async fn run_bridge(browser_ws: WebSocket, api_key: String) -> Result<(), String
                         .and_then(|v| v.as_str())
                     {
                         if !t.is_empty() {
+                            // S3.2 — accumulate so the UserTurnCompleted
+                            // event carries a useful transcript preview.
+                            user_transcript_buf.push_str(t);
                             let _ = browser_tx.send(Message::Text(
                                 serde_json::json!({
                                     "type": "transcript",
@@ -413,6 +582,9 @@ async fn run_bridge(browser_ws: WebSocket, api_key: String) -> Result<(), String
                         .and_then(|v| v.as_str())
                     {
                         if !t.is_empty() {
+                            // S3.2 — accumulate model-side transcript for
+                            // the ModelTurnCompleted reply_preview.
+                            model_transcript_buf.push_str(t);
                             let _ = browser_tx.send(Message::Text(
                                 serde_json::json!({
                                     "type": "transcript",
@@ -428,6 +600,39 @@ async fn run_bridge(browser_ws: WebSocket, api_key: String) -> Result<(), String
                         .and_then(|v| v.as_bool())
                         .unwrap_or(false)
                     {
+                        // S3.2 — `turnComplete` unambiguously closes the
+                        // model turn. We also close a still-open user
+                        // turn here as a safety net (tiny utterances
+                        // where Gemini returns turnComplete without a
+                        // modelTurn audio frame yet).
+                        if user_turn_active {
+                            if let Some(sid) = session_id {
+                                append_event(
+                                    user_id,
+                                    sid,
+                                    SessionEventType::UserTurnCompleted,
+                                    serde_json::json!({
+                                        "duration_ms": now_ms() - user_turn_start_ms,
+                                        "transcript_preview": truncate_preview(&user_transcript_buf),
+                                    }).to_string(),
+                                );
+                            }
+                            user_turn_active = false;
+                        }
+                        if model_turn_active {
+                            if let Some(sid) = session_id {
+                                append_event(
+                                    user_id,
+                                    sid,
+                                    SessionEventType::ModelTurnCompleted,
+                                    serde_json::json!({
+                                        "duration_ms": now_ms() - model_turn_start_ms,
+                                        "reply_preview": truncate_preview(&model_transcript_buf),
+                                    }).to_string(),
+                                );
+                            }
+                            model_turn_active = false;
+                        }
                         let _ = browser_tx.send(Message::Text(
                             serde_json::json!({ "type": "turn_complete" }).to_string().into()
                         )).await;
@@ -438,12 +643,96 @@ async fn run_bridge(browser_ws: WebSocket, api_key: String) -> Result<(), String
                         .and_then(|v| v.as_bool())
                         .unwrap_or(false)
                     {
+                        // S3.2 — treat interruption as an early end of
+                        // the model turn (user spoke over Sophie).
+                        if model_turn_active {
+                            if let Some(sid) = session_id {
+                                append_event(
+                                    user_id,
+                                    sid,
+                                    SessionEventType::ModelTurnCompleted,
+                                    serde_json::json!({
+                                        "duration_ms": now_ms() - model_turn_start_ms,
+                                        "reply_preview": truncate_preview(&model_transcript_buf),
+                                        "interrupted": true,
+                                    }).to_string(),
+                                );
+                            }
+                            model_turn_active = false;
+                        }
                         let _ = browser_tx.send(Message::Text(
                             serde_json::json!({ "type": "interrupted" }).to_string().into()
                         )).await;
                     }
                 }
+
+                // S3.2 — Gemini Live tool-call dispatch. Live API sends
+                // tool calls as a top-level `toolCall.functionCalls` array
+                // (distinct from the `serverContent` block). Sophie voice
+                // does NOT currently register any tools in `setup`, so this
+                // path is effectively unreachable today — we still log it
+                // so that the moment voice tools land the audit trail is
+                // already producing events without a code change.
+                if let Some(calls) = value
+                    .pointer("/toolCall/functionCalls")
+                    .and_then(|v| v.as_array())
+                {
+                    for call in calls {
+                        let tool_name = call
+                            .get("name")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let args = call
+                            .get("args")
+                            .cloned()
+                            .unwrap_or(serde_json::Value::Null);
+                        if let Some(sid) = session_id {
+                            append_event(
+                                user_id,
+                                sid,
+                                SessionEventType::ToolCall,
+                                serde_json::json!({
+                                    "tool_name": tool_name,
+                                    "args": args,
+                                    "source": "voice",
+                                }).to_string(),
+                            );
+                        }
+                    }
+                }
             }
+        }
+    }
+
+    // S3.2 — flush any still-open turns on disconnect so the audit log
+    // doesn't have dangling Started events without a matching Completed.
+    if user_turn_active {
+        if let Some(sid) = session_id {
+            append_event(
+                user_id,
+                sid,
+                SessionEventType::UserTurnCompleted,
+                serde_json::json!({
+                    "duration_ms": now_ms() - user_turn_start_ms,
+                    "transcript_preview": truncate_preview(&user_transcript_buf),
+                    "closed_by": "disconnect",
+                }).to_string(),
+            );
+        }
+    }
+    if model_turn_active {
+        if let Some(sid) = session_id {
+            append_event(
+                user_id,
+                sid,
+                SessionEventType::ModelTurnCompleted,
+                serde_json::json!({
+                    "duration_ms": now_ms() - model_turn_start_ms,
+                    "reply_preview": truncate_preview(&model_transcript_buf),
+                    "closed_by": "disconnect",
+                }).to_string(),
+            );
         }
     }
 
