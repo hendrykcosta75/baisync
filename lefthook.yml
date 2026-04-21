@@ -40,9 +40,10 @@ pre-push:
         else
           echo "[lefthook] cargo-audit not installed — skipping. Install: cargo install cargo-audit --locked"
         fi
-    # npm advisory check for prod deps only. `|| true` because yarn 1 exits
+    # npm advisory check for prod deps only. Threshold lowered to `moderate`
+    # (CVSS ≥ 4.0) to match CI policy. `|| true` because yarn 1 exits
     # non-zero on any finding at or above the threshold — CI is the blocker;
     # local is informational.
     yarn-audit:
       root: frontend/
-      run: yarn audit --level high --groups dependencies || true
+      run: yarn audit --level moderate --groups dependencies || true

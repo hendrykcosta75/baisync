@@ -73,9 +73,8 @@ jobs:
         working-directory: backend
         run: cargo audit --deny warnings
 
-  # Frontend dep advisory check. yarn 1 exits with a bitmask on findings —
-  # we care about high/critical only; moderate tends to be noisy in the
-  # JS ecosystem. Prod deps only (no dev/test tooling).
+  # Frontend dep advisory check. Blocks on any advisory at CVSS ≥ 4.0
+  # (moderate). Prod deps only — dev/test tooling vulns don't ship to users.
   yarn-audit:
     name: yarn audit (npm deps)
     runs-on: ubuntu-latest
@@ -89,7 +88,7 @@ jobs:
         run: yarn install --frozen-lockfile --ignore-scripts
       - name: Run yarn audit
         working-directory: frontend
-        run: yarn audit --level high --groups dependencies
+        run: yarn audit --level moderate --groups dependencies
 
   # Lint the workflow files themselves. Catches shell-quoting bugs in `run:`
   # blocks and invalid action references before they silently fail in CI.
