@@ -1,8 +1,13 @@
-//! I2 — Webhook dedup (shadow mode).
+//! T1.4 — Webhook dedup (Block mode).
 //!
-//! Em Mode::Observe: INSERT ... IF NOT EXISTS via LWT. Se applied=false,
-//! LOGA warn `webhook.duplicate_detected` mas NÃO bloqueia processamento.
-//! T1.4 no futuro flipa para Mode::Block (retorna 200 OK imediato).
+//! INSERT ... IF NOT EXISTS via LWT em `processed_webhooks`. Se applied=false
+//! (evento já visto), retorna DedupResult::Duplicate e o caller responde 200
+//! OK imediato sem reprocessar. Evita loops de resposta quando Baileys/Meta/
+//! Telegram/Stripe/MP retransmitem o mesmo evento.
+//!
+//! Mode::Observe existe como feature-flag reversível caso a flipagem precise
+//! ser desfeita rapidamente em produção — continua logando duplicata mas
+//! deixa passar.
 //!
 //! Multi-tenancy: `processed_webhooks` não tem user_id — webhook chega
 //! antes de resolver user. Exceção documentada em backend/AGENTS.md.
@@ -14,21 +19,20 @@ use crate::errors::AppError;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
-    /// Log duplicates, continue processing (shadow).
-    Observe,
-    /// Reject duplicates with 200 OK (futuro T1.4).
+    /// Log duplicates, continue processing (shadow / rollback switch).
     #[allow(dead_code)]
+    Observe,
+    /// Reject duplicates with 200 OK (production default — T1.4).
     Block,
 }
 
-/// Current mode. Shadow hoje; flip em T1.4.
-pub const CURRENT_MODE: Mode = Mode::Observe;
+/// Current mode. T1.4 ativo: duplicatas são bloqueadas com 200 OK.
+pub const CURRENT_MODE: Mode = Mode::Block;
 
 pub enum DedupResult {
     /// First time seeing this event (or Observe mode forcing continuation).
     Applied,
-    /// Seen before — only returned in Block mode; caller short-circuits with 200.
-    #[allow(dead_code)]
+    /// Seen before — caller short-circuits with 200.
     Duplicate,
 }
 
@@ -93,5 +97,23 @@ pub async fn check_and_mark(
             crate::services::metrics::inc_webhook_deduped(provider).await;
             Ok(DedupResult::Duplicate)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Guard: production must stay in Block mode. T1.4 was flipped in auditoria
+    /// Harness to fix the "IA manda várias mensagens seguidas" bug caused by
+    /// Baileys/Meta/Telegram retransmitting webhooks. If this test fails,
+    /// someone is about to reintroduce the loop.
+    #[test]
+    fn current_mode_must_be_block() {
+        assert_eq!(
+            CURRENT_MODE,
+            Mode::Block,
+            "webhook dedup must stay in Block mode — reverting to Observe reintroduces the duplicate-response loop"
+        );
     }
 }

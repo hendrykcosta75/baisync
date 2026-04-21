@@ -176,6 +176,15 @@ export interface Assistant {
   /** W1.2 — cap on total wall-clock duration of the tool-calling loop,
    * in milliseconds. Defaults to 30000 when unset (enforced in backend). */
   configMaxDurationMs?: number | null
+  /** T2.3 — when true, backend compacta conversas longas antes do turn LLM
+   * (usa a própria key do workspace). Default false. */
+  configAutoCompact?: boolean | null
+  /** W2.1 — when true, backend dispara evaluator fire-and-forget após a
+   * resposta (usa a própria key do workspace). Default false. */
+  configEnableEvaluator?: boolean | null
+  /** W2.1 — override opcional para o modelo barato do evaluator. Quando
+   * null, backend escolhe um default por provider. */
+  configEvaluatorModel?: string | null
 }
 
 export interface PixChargeSummary {

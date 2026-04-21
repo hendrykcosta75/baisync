@@ -1,17 +1,20 @@
 // W2.1 — Post-turn evaluator.
 //
-// An opt-in, system-funded quality gate. After the primary LLM turn
-// completes and the user has ALREADY received the reply, we spawn a
-// fire-and-forget task that asks a cheap LLM:
+// An opt-in quality gate paid for by the USER (not the platform). After the
+// primary LLM turn completes and the user has ALREADY received the reply, we
+// spawn a fire-and-forget task that asks a cheap LLM:
 //
 //   "Is this response OK? Any PII leak, impossible promise, or
 //    contradiction to the system prompt?"
 //
-// Principle 10 (Harness): evaluators run with their OWN session /
-// prompt / API key, independent of the assistant being evaluated.
-// The user's decrypted API key is never borrowed — evaluators use
-// `Config::effective_evaluator_api_key` (EVALUATOR_API_KEY with a
-// COMPACTION_API_KEY fallback) and a hard-coded system prompt.
+// Economic model: platform-subsidized evaluator calls per user turn are
+// infeasible at scale, so the evaluator re-uses the USER's decrypted
+// workspace API key for the primary assistant's provider. A cheap model is
+// selected per-provider via `cheap_eval_model_for`. The user opted in via
+// `config_enable_evaluator=true`; the user pays for the quality gate they
+// turned on. Principle 10 (Harness) still applies: the evaluator has its
+// OWN system prompt and its own one-shot messages array — it NEVER shares
+// the assistant's conversation history or system prompt role.
 //
 // Key design points:
 //
@@ -38,8 +41,12 @@
 //       - SSE `evaluator_alert` event published to the global event
 //         bus when the verdict has ≥1 issue.
 //
-//   * NEVER hooked in the Sophie path: evaluators are for user-facing
-//     assistants. Evaluating Sophie's meta-output is out of scope.
+//   * Sophie evaluator — `spawn_sophie_evaluation` is a sibling spawner for
+//     the Sophie chat path. Sophie uses the platform `BAISYNC_API_KEY`
+//     (Gemini) since there is no per-user workspace key involved; the
+//     evaluator re-uses that same Gemini key and a cheap Gemini model.
+//     No compaction equivalent for Sophie — its history is ephemeral and
+//     managed by the frontend.
 
 use std::sync::Arc;
 use std::sync::OnceLock;
@@ -54,6 +61,26 @@ use crate::config::Config;
 use crate::db::DbSession;
 use crate::services::llm::{self, LlmMessage, ToolContext};
 use crate::services::session::{append_event, SessionEventType, SessionId};
+
+/// Map an LLM provider name to its cheap evaluator/compaction model id.
+/// Used whenever we spawn an evaluator (or run compaction) for a user-facing
+/// assistant — we reuse the user's workspace key but swap the primary model
+/// for a cheap one to keep the cost of the quality gate bounded.
+///
+/// Falls back to `gpt-4o-mini` for unknown providers so a misconfigured
+/// provider name doesn't silently disable the evaluator. In practice
+/// `llm::call_llm_with_tools_ctx` will surface "unknown provider" upstream
+/// before the fallback matters — this is belt-and-suspenders only.
+pub fn cheap_eval_model_for(provider: &str) -> &'static str {
+    match provider {
+        "openai" => "gpt-4o-mini",
+        "claude" => "claude-3-5-haiku-latest",
+        "gemini" => "gemini-2.0-flash",
+        "grok" => "grok-2-mini",
+        "deepseek" => "deepseek-chat",
+        _ => "gpt-4o-mini",
+    }
+}
 
 /// Structured verdict returned by the evaluator LLM. `ok` is a
 /// redundant field kept in the JSON schema so the model has a clear
@@ -85,7 +112,14 @@ fn semaphore(max_concurrent: usize) -> Arc<Semaphore> {
         .clone()
 }
 
-/// Spawn a non-blocking evaluation task.
+/// Spawn a non-blocking evaluation task for a USER-FACING assistant turn.
+///
+/// Takes the already-decrypted user workspace API key (`user_api_key`) and
+/// the primary assistant's provider (`user_provider`). The `user_model`
+/// argument is what the evaluator will invoke — callers should resolve
+/// this via [`cheap_eval_model_for`] (or honour an assistant-level
+/// override via `config_evaluator_model`). The semaphore + timeout +
+/// fire-and-forget pattern stays unchanged.
 ///
 /// The caller (messaging hot path) passes owned values — `tokio::spawn`
 /// needs `'static` futures. Everything captured here is cheap to clone:
@@ -95,6 +129,7 @@ fn semaphore(max_concurrent: usize) -> Arc<Semaphore> {
 /// This function must NOT do I/O on the caller's thread — the only
 /// potential blocking is `semaphore.try_acquire_owned`, which is
 /// non-blocking by construction.
+#[allow(clippy::too_many_arguments)]
 pub fn spawn_evaluation(
     db: DbSession,
     config: Config,
@@ -102,7 +137,9 @@ pub fn spawn_evaluation(
     user_id: Uuid,
     conversation_id: Uuid,
     session_id: Option<SessionId>,
-    evaluator_model: String,
+    user_api_key: String,
+    user_provider: String,
+    user_model: String,
     user_message: String,
     llm_reply: String,
     system_prompt: String,
@@ -128,20 +165,21 @@ pub fn spawn_evaluation(
             }
         };
 
-        let api_key = match config.effective_evaluator_api_key() {
-            Some(k) => k.to_string(),
-            None => {
-                // Shouldn't happen — `spawn_evaluation` callers check
-                // `is_evaluator_enabled()`. Defence in depth.
-                tracing::warn!(
-                    event = "evaluator.no_api_key",
-                    "evaluator spawned without a usable API key; giving up"
-                );
-                return;
-            }
-        };
+        if user_api_key.is_empty() {
+            // Defence in depth — the messaging call site already refuses to
+            // spawn an evaluation without a usable user key, but if the
+            // contract is ever violated we log and drop rather than emit a
+            // broken upstream request.
+            tracing::warn!(
+                event = "evaluator.no_api_key",
+                assistant_id = %assistant_id,
+                user_id = %user_id,
+                conversation_id = %conversation_id,
+                "evaluator spawned without a usable user API key; giving up"
+            );
+            return;
+        }
 
-        let provider = config.evaluator_provider.clone();
         let prompt = build_evaluator_prompt(&system_prompt, &user_message, &llm_reply);
 
         // Evaluator runs with its OWN messages array — NOT the
@@ -170,9 +208,9 @@ pub fn spawn_evaluation(
         };
 
         let llm_future = llm::call_llm_with_tools_ctx(
-            &provider,
-            &evaluator_model,
-            &api_key,
+            &user_provider,
+            &user_model,
+            &user_api_key,
             messages,
             0.0,  // deterministic — we want the same issues for the same inputs.
             512,  // evaluator replies are short JSON.
@@ -291,6 +329,230 @@ pub fn spawn_evaluation(
         })
         .to_string();
 
+        crate::services::events::publish_global(
+            &user_id,
+            crate::services::events::SseEvent {
+                event_type: "evaluator_alert".into(),
+                data: sse_payload,
+            },
+        )
+        .await;
+    });
+}
+
+/// Sophie-specific evaluator spawner. Mirrors [`spawn_evaluation`] but is
+/// specialized for the platform Sophie chat path:
+///
+///   * No per-user API key is involved — Sophie itself runs on the platform
+///     `BAISYNC_API_KEY` (Gemini). The evaluator re-uses that same key and a
+///     cheap Gemini model.
+///   * `assistant_id` and `conversation_id` are `Uuid::nil()` (matches
+///     Sophie's session convention — see `handlers/baisync.rs`).
+///   * `call_kind = "sophie_evaluator"` so `llm_call_logs` rows from Sophie's
+///     quality gate can be distinguished from user-facing evaluator rows in
+///     analytics dashboards.
+///   * The Sophie system prompt is large — the caller is expected to truncate
+///     it to a bounded size before calling here so the evaluator LLM doesn't
+///     choke on a 16k-byte preamble.
+///
+/// NO compaction counterpart exists for Sophie: Sophie's conversation history
+/// is ephemeral frontend state, not a Cassandra-backed conversation. The
+/// economic / architectural argument for compaction simply does not apply.
+pub fn spawn_sophie_evaluation(
+    db: DbSession,
+    api_key: String,
+    user_id: Uuid,
+    session_id: Option<SessionId>,
+    user_message: String,
+    llm_reply: String,
+    system_prompt: &str,
+) {
+    // Sophie uses Gemini (BAISYNC_API_KEY). Reuse the cheap model table so
+    // provider-specific pricing stays consistent with the user-facing path.
+    let provider = "gemini".to_string();
+    let model = cheap_eval_model_for(&provider).to_string();
+
+    // Budget the system prompt. Sophie's prompt renders to ~16 KB (see
+    // `handlers::baisync::tests::test_system_prompt_render_stable`) — more
+    // than we want to ship to the evaluator on every turn. Char-boundary
+    // truncation so we never split a multibyte Portuguese character.
+    const SOPHIE_SYSTEM_PROMPT_CAP: usize = 4_000;
+    let truncated_system_prompt: String = if system_prompt.len() > SOPHIE_SYSTEM_PROMPT_CAP {
+        let mut cut = SOPHIE_SYSTEM_PROMPT_CAP;
+        while cut > 0 && !system_prompt.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        format!("{}…", &system_prompt[..cut])
+    } else {
+        system_prompt.to_string()
+    };
+
+    // Global concurrency cap: reuse the process-wide semaphore so Sophie
+    // evaluations share the same budget as user-facing evaluations. This
+    // prevents a burst of Sophie chats from starving real-assistant quality
+    // gates (or vice versa).
+    //
+    // `semaphore()` caches its permit count on first call — if spawn_evaluation
+    // has already initialized it with `config.evaluator_max_concurrent`, we
+    // reuse that value. If not (Sophie-only deployments), default to 20.
+    const SOPHIE_DEFAULT_CONCURRENCY: usize = 20;
+    let sem = semaphore(SOPHIE_DEFAULT_CONCURRENCY);
+
+    // Match the primary evaluator's 15s wall-clock timeout. A slower Gemini
+    // response isn't worth blocking a permit slot for.
+    const SOPHIE_EVAL_TIMEOUT_SECS: u64 = 15;
+    let timeout = Duration::from_secs(SOPHIE_EVAL_TIMEOUT_SECS);
+
+    tokio::spawn(async move {
+        let _permit = match sem.try_acquire_owned() {
+            Ok(p) => p,
+            Err(_) => {
+                tracing::warn!(
+                    event = "sophie_evaluator.semaphore_full",
+                    user_id = %user_id,
+                    "evaluator semaphore saturated; dropping Sophie evaluation"
+                );
+                return;
+            }
+        };
+
+        if api_key.is_empty() {
+            tracing::warn!(
+                event = "sophie_evaluator.no_api_key",
+                user_id = %user_id,
+                "BAISYNC_API_KEY missing; skipping Sophie evaluation"
+            );
+            return;
+        }
+
+        let prompt = build_evaluator_prompt(&truncated_system_prompt, &user_message, &llm_reply);
+        let messages = vec![LlmMessage {
+            role: "user".into(),
+            content: prompt,
+            media_base64: None,
+            media_mime_type: None,
+        }];
+
+        // Sophie rows use the nil-uuid sentinel for (assistant_id, conversation_id).
+        let ctx = ToolContext {
+            db: None,
+            assistant_id: Some(Uuid::nil()),
+            user_id: Some(user_id),
+            conversation_id: Some(Uuid::nil()),
+            config: None,
+            encryption: None,
+            max_tool_rounds: None,
+            max_duration_ms: None,
+            call_kind: Some("sophie_evaluator"),
+        };
+
+        let llm_future = llm::call_llm_with_tools_ctx(
+            &provider,
+            &model,
+            &api_key,
+            messages,
+            0.0,
+            512,
+            &[],
+            &ctx,
+        );
+
+        let response = match tokio::time::timeout(timeout, llm_future).await {
+            Ok(Ok(r)) => r,
+            Ok(Err(e)) => {
+                tracing::warn!(
+                    event = "sophie_evaluator.llm_error",
+                    user_id = %user_id,
+                    error = %e,
+                    "Sophie evaluator LLM call failed; dropping verdict"
+                );
+                return;
+            }
+            Err(_) => {
+                tracing::warn!(
+                    event = "sophie_evaluator.timeout",
+                    user_id = %user_id,
+                    timeout_secs = SOPHIE_EVAL_TIMEOUT_SECS,
+                    "Sophie evaluator LLM call timed out; dropping verdict"
+                );
+                return;
+            }
+        };
+
+        let verdict = match parse_verdict(&response.content) {
+            Some(v) => v,
+            None => {
+                tracing::warn!(
+                    event = "sophie_evaluator.parse_error",
+                    user_id = %user_id,
+                    raw = %response.content.chars().take(400).collect::<String>(),
+                    "Sophie evaluator response was not valid JSON; treating as no-issues"
+                );
+                return;
+            }
+        };
+
+        if verdict.issues.is_empty() && verdict.ok {
+            tracing::debug!(
+                event = "sophie_evaluator.ok",
+                user_id = %user_id,
+                "Sophie evaluator verdict ok"
+            );
+            if let Some(sid) = session_id {
+                let payload =
+                    serde_json::json!({ "ok": true, "issues": [] }).to_string();
+                append_event(user_id, sid, SessionEventType::EvaluatorVerdict, payload);
+            }
+            let _ = db; // acknowledge capture; the OK branch does not write to DB.
+            return;
+        }
+
+        let issues_joined = verdict.issues.join("; ");
+        tracing::warn!(
+            event = "sophie_evaluator.alert",
+            user_id = %user_id,
+            issues = %issues_joined,
+            issue_count = verdict.issues.len(),
+            "Sophie evaluator detected issues"
+        );
+
+        if let Some(sid) = session_id {
+            let payload = serde_json::json!({
+                "ok": false,
+                "issues": verdict.issues,
+            })
+            .to_string();
+            append_event(user_id, sid, SessionEventType::EvaluatorVerdict, payload);
+        }
+
+        // Tag the `llm_call_logs` row. Uses the same UPDATE path as the
+        // user-facing evaluator so the S1.3 `my_recent_errors` endpoint
+        // surfaces Sophie quality-gate hits alongside assistant ones.
+        if let Err(e) = mark_evaluator_row_with_issues(
+            &db,
+            Uuid::nil(),
+            user_id,
+            Uuid::nil(),
+            &issues_joined,
+        )
+        .await
+        {
+            tracing::warn!(
+                event = "sophie_evaluator.log_write_failed",
+                error = %e,
+                "failed to mark Sophie evaluator llm_call_logs row with issues"
+            );
+        }
+
+        // Dashboard SSE so the Sophie UI can render the verdict inline if
+        // the frontend ever decides to.
+        let sse_payload = serde_json::json!({
+            "scope": "sophie",
+            "assistantId": Uuid::nil().to_string(),
+            "conversationId": Uuid::nil().to_string(),
+            "issues": verdict.issues,
+        })
+        .to_string();
         crate::services::events::publish_global(
             &user_id,
             crate::services::events::SseEvent {
@@ -530,6 +792,31 @@ mod tests {
 
         // Garbage returns None.
         assert!(parse_verdict("not json at all").is_none());
+    }
+
+    #[test]
+    fn test_cheap_eval_model_for_known_providers() {
+        // Sanity lock on the cheap-model table: each of the five canonical
+        // providers maps to its documented cheap model. If any of these
+        // change we want the test to flag it — the pricing model for the
+        // evaluator depends on this map staying current.
+        assert_eq!(cheap_eval_model_for("openai"), "gpt-4o-mini");
+        assert_eq!(cheap_eval_model_for("claude"), "claude-3-5-haiku-latest");
+        assert_eq!(cheap_eval_model_for("gemini"), "gemini-2.0-flash");
+        assert_eq!(cheap_eval_model_for("grok"), "grok-2-mini");
+        assert_eq!(cheap_eval_model_for("deepseek"), "deepseek-chat");
+    }
+
+    #[test]
+    fn test_cheap_eval_model_for_unknown_fallback() {
+        // Unknown providers fall through to the OpenAI cheap model. This is
+        // intentional belt-and-suspenders: `llm::call_llm_with_tools_ctx`
+        // will reject an unknown provider upstream before we ever reach the
+        // LLM, but if a future refactor ever pipes a custom provider name
+        // through, we still emit a sane default instead of panicking.
+        assert_eq!(cheap_eval_model_for(""), "gpt-4o-mini");
+        assert_eq!(cheap_eval_model_for("unknown"), "gpt-4o-mini");
+        assert_eq!(cheap_eval_model_for("OPENAI"), "gpt-4o-mini"); // case-sensitive
     }
 
     #[test]

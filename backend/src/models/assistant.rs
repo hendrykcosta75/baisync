@@ -35,15 +35,16 @@ pub struct Assistant {
     pub config_max_tool_rounds: Option<i32>,
     pub config_max_duration_ms: Option<i32>,
     // T2.3 — opt-in auto-compaction. Default in code: false.
-    // Requires `COMPACTION_API_KEY` set at the platform level; see
-    // `Config::is_compaction_enabled`.
+    // Paid for by the user: the compaction LLM call uses the user's
+    // decrypted `workspace_api_keys` entry for the assistant's provider.
     pub config_auto_compact: Option<bool>,
     // W2.1 — opt-in post-turn evaluator. Default in code: false.
-    // Requires `EVALUATOR_API_KEY` (or the `COMPACTION_API_KEY` fallback)
-    // set at the platform level; see `Config::is_evaluator_enabled`.
+    // Paid for by the user: the evaluator LLM call uses the user's
+    // decrypted `workspace_api_keys` entry for the assistant's provider.
     pub config_enable_evaluator: Option<bool>,
     // W2.1 — optional override for the evaluator model. `None` falls back
-    // to `Config::evaluator_model_default`.
+    // to the cheap model for the assistant's provider (see
+    // `services::evaluator::cheap_eval_model_for`).
     pub config_evaluator_model: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,

@@ -57,5 +57,9 @@ path = "src/bin/setup_test_keyspace.rs"
 name = "encrypt_legacy"
 path = "src/bin/encrypt_legacy.rs"
 
+[[bin]]
+name = "decrypt_legacy"
+path = "src/bin/decrypt_legacy.rs"
+
 [profile.dev]
 debug = "line-tables-only"

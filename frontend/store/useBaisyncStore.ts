@@ -53,6 +53,15 @@ interface BaisyncState {
    * to try the server once.
    */
   hydrated: boolean
+  /**
+   * Epoch ms set by `clearMessages()`. Persisted in localStorage so a page
+   * reload doesn't re-populate the cleared chat from `session_events` on
+   * Cassandra. `hydrate()` filters out any event whose `created_at` is at or
+   * before this timestamp, so older turns stay cleared while anything sent
+   * AFTER the user cleared (e.g. a new question in a different tab) still
+   * shows up.
+   */
+  clearedAt: number | null
 
   toggle: () => void
   open: () => void
@@ -229,13 +238,25 @@ export const useBaisyncStore = create<BaisyncState>()(
   activeSkill: null,
   rateLimit: null,
   hydrated: false,
+  clearedAt: null,
 
   toggle: () => set((s) => ({ isOpen: !s.isOpen })),
   open: () => set({ isOpen: true }),
   close: () => set({ isOpen: false }),
   setActiveSkill: (skill) => set({ activeSkill: skill }),
 
-  clearMessages: () => set({ messages: [], streamingContent: '', activeSkill: null }),
+  clearMessages: () =>
+    // `hydrated: true` stops any in-flight `hydrate()` call from the same tab
+    // from clobbering the cleared state when its awaited `set(...)` resolves.
+    // `clearedAt` persists so a reload (which resets `hydrated`) doesn't
+    // re-populate from `session_events`.
+    set({
+      messages: [],
+      streamingContent: '',
+      activeSkill: null,
+      hydrated: true,
+      clearedAt: Date.now(),
+    }),
 
   pushLocalMessage: (msg) => set((s) => ({
     messages: [...s.messages, { ...msg, id: generateId(), timestamp: Date.now() }],
@@ -312,10 +333,16 @@ export const useBaisyncStore = create<BaisyncState>()(
       // Only merge when local chat is empty. A non-empty `messages` array
       // means the user is mid-conversation (or localStorage already holds
       // the persisted copy of this same session) — clobbering would be
-      // visibly wrong.
+      // visibly wrong. `clearedAt` is re-read inside the setter so a clear
+      // that races with this fetch wins (the awaited set() runs last).
       set((s) => {
         if (s.messages.length > 0) return s
-        return { messages: hydratedMessages }
+        const cutoff = s.clearedAt
+        const eligible = cutoff
+          ? hydratedMessages.filter((m) => m.timestamp > cutoff)
+          : hydratedMessages
+        if (eligible.length === 0) return s
+        return { messages: eligible }
       })
     } catch (err) {
       // Silent fallback: localStorage cache is already loaded via persist().
@@ -493,45 +520,13 @@ export const useBaisyncStore = create<BaisyncState>()(
         messages: s.messages.filter((m) => m.role !== 'status'),
       }))
 
-      // Split text on double newlines into separate message bubbles
-      const paragraphs = finalContent
-        ? finalContent.split(/\n\n+/).map((p) => p.trim()).filter(Boolean)
-        : []
-
-      // Typing animation: reveal each paragraph as a separate message
-      for (let pi = 0; pi < paragraphs.length; pi++) {
-        const para = paragraphs[pi]
-        const words = para.split(/(\s+)/)
-        let revealed = ''
-        for (let i = 0; i < words.length; i++) {
-          revealed += words[i]
-          set({ streamingContent: revealed })
-          await new Promise((r) => setTimeout(r, 18))
-        }
-
-        // Commit this paragraph as a message (attach blocks/actions only to last paragraph)
-        const isLast = pi === paragraphs.length - 1
-        set((s) => ({
-          messages: [
-            ...s.messages,
-            {
-              id: generateId(),
-              role: 'assistant',
-              content: para,
-              timestamp: Date.now() + pi,
-              uiBlocks: isLast && uiBlocks.length > 0 ? uiBlocks : undefined,
-              actions: isLast && actions.length > 0 ? actions : undefined,
-            },
-          ],
-          streamingContent: '',
-        }))
-
-        // Small pause between bubbles
-        if (!isLast) await new Promise((r) => setTimeout(r, 300))
-      }
-
-      // If no text paragraphs but there are blocks/actions, add an empty message for them
-      if (paragraphs.length === 0 && (uiBlocks.length > 0 || actions.length > 0)) {
+      // Mirrors `call_llm_with_tools_ctx` in backend/src/services/llm.rs:
+      // intermediate tool-round prose is dropped, only the terminal turn's
+      // text reaches the user. Without this, Sophie pre-writes a hallucinated
+      // summary before each tool call, then re-emits an "updated" version
+      // after the action returns — the user sees 3–5 near-duplicate bubbles
+      // per question.
+      if (actions.length > 0) {
         set((s) => ({
           messages: [
             ...s.messages,
@@ -541,10 +536,58 @@ export const useBaisyncStore = create<BaisyncState>()(
               content: '',
               timestamp: Date.now(),
               uiBlocks: uiBlocks.length > 0 ? uiBlocks : undefined,
-              actions: actions.length > 0 ? actions : undefined,
+              actions,
             },
           ],
+          streamingContent: '',
         }))
+      } else {
+        const paragraphs = finalContent
+          ? finalContent.split(/\n\n+/).map((p) => p.trim()).filter(Boolean)
+          : []
+
+        for (let pi = 0; pi < paragraphs.length; pi++) {
+          const para = paragraphs[pi]
+          const words = para.split(/(\s+)/)
+          let revealed = ''
+          for (let i = 0; i < words.length; i++) {
+            revealed += words[i]
+            set({ streamingContent: revealed })
+            await new Promise((r) => setTimeout(r, 18))
+          }
+
+          const isLast = pi === paragraphs.length - 1
+          set((s) => ({
+            messages: [
+              ...s.messages,
+              {
+                id: generateId(),
+                role: 'assistant',
+                content: para,
+                timestamp: Date.now() + pi,
+                uiBlocks: isLast && uiBlocks.length > 0 ? uiBlocks : undefined,
+              },
+            ],
+            streamingContent: '',
+          }))
+
+          if (!isLast) await new Promise((r) => setTimeout(r, 300))
+        }
+
+        if (paragraphs.length === 0 && uiBlocks.length > 0) {
+          set((s) => ({
+            messages: [
+              ...s.messages,
+              {
+                id: generateId(),
+                role: 'assistant',
+                content: '',
+                timestamp: Date.now(),
+                uiBlocks,
+              },
+            ],
+          }))
+        }
       }
 
       set({ isStreaming: false, streamingContent: '' })
@@ -643,38 +686,11 @@ export const useBaisyncStore = create<BaisyncState>()(
       const { cleanContent: c1, uiBlocks } = parseUIBlocks(fullContent)
       const { cleanContent: finalContent, actions } = parseActions(c1)
 
-      const paragraphs = finalContent
-        ? finalContent.split(/\n\n+/).map((p) => p.trim()).filter(Boolean)
-        : []
-
-      for (let pi = 0; pi < paragraphs.length; pi++) {
-        const para = paragraphs[pi]
-        const words = para.split(/(\s+)/)
-        let revealed = ''
-        for (let i = 0; i < words.length; i++) {
-          revealed += words[i]
-          set({ streamingContent: revealed })
-          await new Promise((r) => setTimeout(r, 18))
-        }
-        const isLast = pi === paragraphs.length - 1
-        set((s) => ({
-          messages: [
-            ...s.messages,
-            {
-              id: generateId(),
-              role: 'assistant',
-              content: para,
-              timestamp: Date.now() + pi,
-              uiBlocks: isLast && uiBlocks.length > 0 ? uiBlocks : undefined,
-              actions: isLast && actions.length > 0 ? actions : undefined,
-            },
-          ],
-          streamingContent: '',
-        }))
-        if (!isLast) await new Promise((r) => setTimeout(r, 300))
-      }
-
-      if (paragraphs.length === 0 && (uiBlocks.length > 0 || actions.length > 0)) {
+      // Same rule as `sendMessage` above — a turn that emits another action
+      // is intermediate, so its prose is dropped. Otherwise Sophie chains
+      // "Aqui estão os detalhes..." → action → "As informações foram
+      // atualizadas..." → action → ... and the user sees every draft.
+      if (actions.length > 0) {
         set((s) => ({
           messages: [
             ...s.messages,
@@ -684,10 +700,56 @@ export const useBaisyncStore = create<BaisyncState>()(
               content: '',
               timestamp: Date.now(),
               uiBlocks: uiBlocks.length > 0 ? uiBlocks : undefined,
-              actions: actions.length > 0 ? actions : undefined,
+              actions,
             },
           ],
+          streamingContent: '',
         }))
+      } else {
+        const paragraphs = finalContent
+          ? finalContent.split(/\n\n+/).map((p) => p.trim()).filter(Boolean)
+          : []
+
+        for (let pi = 0; pi < paragraphs.length; pi++) {
+          const para = paragraphs[pi]
+          const words = para.split(/(\s+)/)
+          let revealed = ''
+          for (let i = 0; i < words.length; i++) {
+            revealed += words[i]
+            set({ streamingContent: revealed })
+            await new Promise((r) => setTimeout(r, 18))
+          }
+          const isLast = pi === paragraphs.length - 1
+          set((s) => ({
+            messages: [
+              ...s.messages,
+              {
+                id: generateId(),
+                role: 'assistant',
+                content: para,
+                timestamp: Date.now() + pi,
+                uiBlocks: isLast && uiBlocks.length > 0 ? uiBlocks : undefined,
+              },
+            ],
+            streamingContent: '',
+          }))
+          if (!isLast) await new Promise((r) => setTimeout(r, 300))
+        }
+
+        if (paragraphs.length === 0 && uiBlocks.length > 0) {
+          set((s) => ({
+            messages: [
+              ...s.messages,
+              {
+                id: generateId(),
+                role: 'assistant',
+                content: '',
+                timestamp: Date.now(),
+                uiBlocks,
+              },
+            ],
+          }))
+        }
       }
 
       set({ isStreaming: false, streamingContent: '' })
@@ -708,6 +770,7 @@ export const useBaisyncStore = create<BaisyncState>()(
           attachments: attachments?.map(({ name, mime_type }) => ({ name, mime_type, data_base64: '' })),
         })),
       activeSkill: state.activeSkill,
+      clearedAt: state.clearedAt,
     }),
   }
 ))

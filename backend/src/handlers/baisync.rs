@@ -457,14 +457,30 @@ pub async fn chat(
     };
 
     // Owned copy of the config for the spawn — the planner call needs it
-    // (effective_evaluator_api_key + evaluator_provider/model). Only
-    // cloned when the planner flag is on; otherwise the default flow
-    // uses the existing captured values without paying for the clone.
+    // for `ToolContext` wiring. Only cloned when the planner flag is on;
+    // otherwise the default flow uses the existing captured values without
+    // paying for the clone. (The planner re-uses `api_key` = BAISYNC_API_KEY
+    // rather than a separate evaluator/compaction key.)
     let planner_config: Option<Config> = if planner_enabled {
         Some(config.clone())
     } else {
         None
     };
+
+    // Clone the system prompt now so we can hand it to the Sophie evaluator
+    // inside the spawn. `system_prompt` itself is mutated by the planner
+    // (prepends a plan preamble) before it is sent to Gemini — we want the
+    // base prompt, not the mutated one, so we capture a snapshot here.
+    let evaluator_system_prompt = system_prompt.clone();
+    // The user's message is also needed inside the evaluator spawn. `req`
+    // is moved into the streaming closure below; capture a copy first.
+    let evaluator_user_msg = req.message.clone();
+    // Platform Gemini key — same key Sophie itself uses. Captured here so
+    // the spawn closure can move it.
+    let evaluator_api_key = api_key.clone();
+    // Session id is Copy-safe (it's a TimeUuid wrapper); capture it so the
+    // evaluator spawn can attach its verdict event to the same session.
+    let evaluator_session_id = session_id_opt;
 
     // Create channel for SSE events
     let (tx, rx) = mpsc::channel::<Result<Event, Infallible>>(128);
@@ -498,12 +514,13 @@ pub async fn chat(
         //   * The plan is recorded in `session_events` as a `plan` event
         //     via the T2.1 mpsc, inspectable through
         //     `GET /api/baisync/session/:id`.
-        //   * The planner uses the `EVALUATOR_API_KEY` (or COMPACTION_API_KEY
-        //     fallback) — NEVER the user's decrypted key.
+        //   * The planner runs on the platform `BAISYNC_API_KEY` (Gemini) —
+        //     NEVER a user workspace key.
         if planner_enabled {
             if let Some(ref p_config) = planner_config {
                 match crate::services::sophie_pipeline::run_planner(
                     p_config,
+                    &api_key,
                     user_id,
                     &system_prompt,
                     &planner_history,
@@ -717,6 +734,23 @@ pub async fn chat(
                     )
                     .await;
                 }
+
+                // W2.1 (Sophie) — post-turn evaluator, fire-and-forget.
+                // Runs on the same BAISYNC_API_KEY that Sophie itself used,
+                // with a cheap Gemini model. The spawn is completely
+                // independent of the SSE stream above: the user has already
+                // seen the full response by the time we enqueue this. No
+                // compaction counterpart — Sophie history is ephemeral
+                // frontend state.
+                crate::services::evaluator::spawn_sophie_evaluation(
+                    db.clone(),
+                    evaluator_api_key.clone(),
+                    user_id,
+                    evaluator_session_id,
+                    evaluator_user_msg.clone(),
+                    full_content.clone(),
+                    &evaluator_system_prompt,
+                );
 
                 // Send rate limit warning if approaching limit
                 if pct >= 60.0 {

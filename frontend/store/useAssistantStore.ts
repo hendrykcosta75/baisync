@@ -42,6 +42,9 @@ function mapAssistantFromApi(a: Record<string, unknown>): Assistant {
     subAgents: (a.sub_agents ?? a.subAgents ?? []) as SubAgent[],
     configMaxToolRounds: (a.config_max_tool_rounds ?? null) as number | null,
     configMaxDurationMs: (a.config_max_duration_ms ?? null) as number | null,
+    configAutoCompact: (a.config_auto_compact ?? null) as boolean | null,
+    configEnableEvaluator: (a.config_enable_evaluator ?? null) as boolean | null,
+    configEvaluatorModel: (a.config_evaluator_model ?? null) as string | null,
   }
 }
 
@@ -113,6 +116,10 @@ function assistantToApiPayload(a: Partial<Assistant>): Record<string, unknown> {
   // W1.2 thresholds
   if (a.configMaxToolRounds !== undefined) payload.config_max_tool_rounds = a.configMaxToolRounds
   if (a.configMaxDurationMs !== undefined) payload.config_max_duration_ms = a.configMaxDurationMs
+  // T2.3 / W2.1 toggles
+  if (a.configAutoCompact !== undefined) payload.config_auto_compact = a.configAutoCompact
+  if (a.configEnableEvaluator !== undefined) payload.config_enable_evaluator = a.configEnableEvaluator
+  if (a.configEvaluatorModel !== undefined) payload.config_evaluator_model = a.configEvaluatorModel
   return payload
 }
 

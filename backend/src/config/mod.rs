@@ -8,6 +8,13 @@ pub struct Config {
     pub smtp_port: u16,
     pub smtp_user: String,
     pub smtp_pass: String,
+    /// DEPRECATED: legacy single-key path. `main.rs` now loads keys via
+    /// `EncryptionService::from_env`, which reads `ENCRYPTION_KEY_V*` and
+    /// falls back to `ENCRYPTION_KEY`. This field remains so the env-vars
+    /// consistency test still sees `ENCRYPTION_KEY` consumed in `from_env`,
+    /// and so old test helpers that read `config.encryption_key` don't
+    /// regress.
+    #[allow(dead_code)]
     pub encryption_key: String,
     pub baileys_url: String,
     pub baileys_api_key: String,
@@ -29,20 +36,13 @@ pub struct Config {
     // ──────────────────────────────────────────────────────────────────────
     // T2.3 — Auto-compaction (opt-in per assistant via `config_auto_compact`).
     //
-    // Uses a system-provided cheap LLM key (COMPACTION_API_KEY) — NEVER the
-    // user's own key. When `compaction_api_key` is None, compaction is
-    // globally disabled (a WARN is logged at startup) even for assistants
-    // that have `config_auto_compact=true`.
+    // The compaction LLM call is paid for by the USER using their workspace
+    // API key for the assistant's own provider (decrypted via
+    // `workspace::get_decrypted_api_key`). Platform-subsidized LLM calls per
+    // user turn are economically infeasible at scale — user opts in, user
+    // pays. The only platform-level knobs that remain are the heuristic
+    // thresholds (threshold_pct, min_messages, keep_recent).
     // ──────────────────────────────────────────────────────────────────────
-    /// System-wide API key used to pay for compaction LLM calls. `None`
-    /// disables the feature globally; `is_compaction_enabled()` returns false.
-    pub compaction_api_key: Option<String>,
-    /// Cheap model used to summarize the conversation prefix. Default:
-    /// `gpt-4o-mini`. Ignored when `compaction_api_key` is None.
-    pub compaction_model: String,
-    /// Provider for the compaction model. Default: `openai`. Must match a
-    /// provider supported by `services::llm::call_llm`.
-    pub compaction_provider: String,
     /// Fraction of `assistant.max_tokens` that must be exceeded before
     /// compaction fires. Default: 0.80.
     pub compaction_threshold_pct: f32,
@@ -67,30 +67,15 @@ pub struct Config {
     // ──────────────────────────────────────────────────────────────────────
     // W2.1 — Evaluator (opt-in per assistant via `config_enable_evaluator`).
     //
-    // A cheap system-funded LLM reviews every primary user-turn reply
-    // post-hoc (fire-and-forget, semaphore-limited) for PII leaks,
-    // impossible promises, and contradictions to the assistant's system
-    // prompt. The evaluator uses its own key / model / prompt — it NEVER
-    // shares the user's API key or conversation session (Principle 10:
-    // evaluators have their own session/prompt independent of the
-    // assistant being evaluated).
-    //
-    // Fallback: when `evaluator_api_key` is None we reuse
-    // `compaction_api_key` (same cheap model family), so operators who
-    // already paid for COMPACTION_API_KEY don't need to set both. When
-    // BOTH are None the evaluator is globally disabled (`is_evaluator_enabled`
-    // returns false) — a WARN is logged at startup so this isn't silent.
+    // Like compaction above, the evaluator LLM call is paid for by the USER
+    // using their workspace API key for the assistant's own provider. The
+    // evaluator still has its OWN session / prompt / independent message
+    // array (Principle 10: evaluators run independently of the assistant
+    // being evaluated) — it simply borrows the user's credential rather
+    // than a platform credential. Cheap model per-provider is resolved at
+    // call time via `services::evaluator::cheap_eval_model_for`; an
+    // assistant-level override is honoured via `config_evaluator_model`.
     // ──────────────────────────────────────────────────────────────────────
-    /// System-wide API key dedicated to evaluator LLM calls. `None` means
-    /// the evaluator falls back to `compaction_api_key`; when both are
-    /// None the feature is globally disabled.
-    pub evaluator_api_key: Option<String>,
-    /// Provider for the evaluator model. Default: `openai`. Must match a
-    /// provider supported by `services::llm::call_llm_with_tools_ctx`.
-    pub evaluator_provider: String,
-    /// Default cheap model used when the assistant does not override
-    /// `config_evaluator_model`. Default: `gpt-4o-mini`.
-    pub evaluator_model_default: String,
     /// Maximum number of evaluator tasks running concurrently across the
     /// process. When saturated, new evaluations are DROPPED (logged at
     /// WARN) — we never queue, because a stale verdict helps no one and
@@ -118,44 +103,6 @@ pub struct Config {
     /// startup so operators notice the feature is inert). When `true`, the
     /// poller runs a pass once every 24h.
     pub curation_enabled: bool,
-}
-
-impl Config {
-    /// T2.3 helper — true when compaction is globally enabled (`COMPACTION_API_KEY`
-    /// present and non-empty). Assistants must additionally set
-    /// `config_auto_compact=true` for compaction to actually run.
-    pub fn is_compaction_enabled(&self) -> bool {
-        self.compaction_api_key
-            .as_deref()
-            .map(|k| !k.is_empty())
-            .unwrap_or(false)
-    }
-
-    /// W2.1 — resolve the evaluator's API key. Returns the first non-empty
-    /// value in the fallback chain:
-    ///   1. `EVALUATOR_API_KEY`
-    ///   2. `COMPACTION_API_KEY` (documented reuse — same cheap model)
-    ///   3. `None` ⇒ evaluator disabled.
-    ///
-    /// Callers spawning an evaluation MUST check `is_evaluator_enabled()` or
-    /// pattern-match this `Option` and skip the spawn on `None`.
-    pub fn effective_evaluator_api_key(&self) -> Option<&str> {
-        self.evaluator_api_key
-            .as_deref()
-            .filter(|k| !k.is_empty())
-            .or_else(|| {
-                self.compaction_api_key
-                    .as_deref()
-                    .filter(|k| !k.is_empty())
-            })
-    }
-
-    /// W2.1 helper — true when the evaluator has a usable API key (direct or
-    /// via the compaction-key fallback). Assistants must additionally set
-    /// `config_enable_evaluator=true` for an evaluation to actually spawn.
-    pub fn is_evaluator_enabled(&self) -> bool {
-        self.effective_evaluator_api_key().is_some()
-    }
 }
 
 impl Config {
@@ -199,15 +146,9 @@ impl Config {
                 .parse()
                 .unwrap_or(60),
 
-            // T2.3 — Auto-compaction config. Empty string ⇒ None so
-            // `is_compaction_enabled()` reports false.
-            compaction_api_key: env::var("COMPACTION_API_KEY")
-                .ok()
-                .filter(|s| !s.is_empty()),
-            compaction_model: env::var("COMPACTION_MODEL")
-                .unwrap_or_else(|_| "gpt-4o-mini".into()),
-            compaction_provider: env::var("COMPACTION_PROVIDER")
-                .unwrap_or_else(|_| "openai".into()),
+            // T2.3 — Auto-compaction heuristic thresholds. Compaction itself
+            // is user-funded (opt-in via `config_auto_compact` + the user's
+            // decrypted workspace key) — no platform API key env var exists.
             compaction_threshold_pct: env::var("COMPACTION_THRESHOLD_PCT")
                 .ok()
                 .and_then(|s| s.parse().ok())
@@ -225,15 +166,10 @@ impl Config {
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(3600_u64),
 
-            // W2.1 — Evaluator config. Empty string ⇒ None so the fallback to
-            // COMPACTION_API_KEY (and then "disabled") is evaluated cleanly.
-            evaluator_api_key: env::var("EVALUATOR_API_KEY")
-                .ok()
-                .filter(|s| !s.is_empty()),
-            evaluator_provider: env::var("EVALUATOR_PROVIDER")
-                .unwrap_or_else(|_| "openai".into()),
-            evaluator_model_default: env::var("EVALUATOR_MODEL")
-                .unwrap_or_else(|_| "gpt-4o-mini".into()),
+            // W2.1 — Evaluator runtime knobs. The evaluator is user-funded
+            // (opt-in via `config_enable_evaluator` + the user's decrypted
+            // workspace key) — no platform API key / provider / model env
+            // var exists. Cheap model is resolved per-provider at call time.
             evaluator_max_concurrent: env::var("EVALUATOR_MAX_CONCURRENT")
                 .ok()
                 .and_then(|s| s.parse().ok())
@@ -257,39 +193,20 @@ impl Config {
         }
     }
 
-    /// W2.1 — emit a WARN at startup when the evaluator has no usable API
-    /// key (neither `EVALUATOR_API_KEY` nor `COMPACTION_API_KEY`), so
-    /// operators notice that assistants with `config_enable_evaluator=true`
-    /// will silently no-op. Mirrors `log_compaction_status`.
+    /// W2.1 — log that the post-turn evaluator is wired to USER workspace
+    /// credentials (the economically viable path). There is no platform-wide
+    /// gate any more: an assistant with `config_enable_evaluator=true` will
+    /// fire an evaluation whenever the user has a valid workspace API key
+    /// for the assistant's provider. Missing workspace key → WARN at call
+    /// site (not here), then skip.
     pub fn log_evaluator_status(&self) {
-        if !self.is_evaluator_enabled() {
-            tracing::warn!(
-                event = "evaluator.disabled",
-                "EVALUATOR_API_KEY / COMPACTION_API_KEY not set: post-turn evaluator is \
-                 disabled globally. Assistants with config_enable_evaluator=true will be \
-                 a no-op."
-            );
-        } else {
-            let source = if self
-                .evaluator_api_key
-                .as_deref()
-                .map(|k| !k.is_empty())
-                .unwrap_or(false)
-            {
-                "EVALUATOR_API_KEY"
-            } else {
-                "COMPACTION_API_KEY (fallback)"
-            };
-            tracing::info!(
-                event = "evaluator.enabled",
-                source = source,
-                provider = %self.evaluator_provider,
-                model_default = %self.evaluator_model_default,
-                max_concurrent = self.evaluator_max_concurrent,
-                timeout_secs = self.evaluator_timeout_secs,
-                "post-turn evaluator enabled",
-            );
-        }
+        tracing::info!(
+            event = "evaluator.config",
+            max_concurrent = self.evaluator_max_concurrent,
+            timeout_secs = self.evaluator_timeout_secs,
+            "post-turn evaluator enabled per-assistant via config_enable_evaluator; \
+             uses the user's workspace API key (no platform-wide gate).",
+        );
     }
 
     /// T3.3 — emit a startup log describing whether the background curation
@@ -311,27 +228,20 @@ impl Config {
         }
     }
 
-    /// Emit a WARN when compaction is configured-but-disabled. Call once at
-    /// startup from `main.rs` so operators notice the feature is inert.
+    /// T2.3 — log compaction wiring. There is no platform-wide gate any more;
+    /// assistants opt in per-assistant via `config_auto_compact=true` and the
+    /// user's workspace API key for the assistant's provider pays for the
+    /// compaction LLM call. This log simply surfaces the heuristic thresholds
+    /// for operational visibility.
     pub fn log_compaction_status(&self) {
-        if !self.is_compaction_enabled() {
-            tracing::warn!(
-                event = "compaction.disabled",
-                "COMPACTION_API_KEY not set: auto-compaction is disabled globally. \
-                 Assistants with config_auto_compact=true will fall back to the raw \
-                 recent-history path."
-            );
-        } else {
-            tracing::info!(
-                event = "compaction.enabled",
-                model = %self.compaction_model,
-                provider = %self.compaction_provider,
-                threshold_pct = self.compaction_threshold_pct,
-                min_messages = self.compaction_min_messages,
-                keep_recent = self.compaction_keep_recent,
-                rate_limit_secs = self.compaction_rate_limit_secs,
-                "auto-compaction enabled",
-            );
-        }
+        tracing::info!(
+            event = "compaction.config",
+            threshold_pct = self.compaction_threshold_pct,
+            min_messages = self.compaction_min_messages,
+            keep_recent = self.compaction_keep_recent,
+            rate_limit_secs = self.compaction_rate_limit_secs,
+            "auto-compaction enabled per-assistant via config_auto_compact; \
+             uses the user's workspace API key (no platform-wide gate).",
+        );
     }
 }

@@ -564,6 +564,19 @@ pub async fn process_incoming_message(
         .await?;
     }
 
+    // Decrypt the user workspace API key BEFORE the compaction gate — both the
+    // primary turn and compaction/evaluator LLM calls need it. If decryption
+    // fails we surface the error here (primary turn can't proceed without
+    // the key anyway). Compaction/evaluator are best-effort and branch on
+    // emptiness below rather than returning errors.
+    let api_key = crate::services::workspace::get_decrypted_api_key(
+        db,
+        encryption,
+        &user_id,
+        &assistant.llm_provider,
+    )
+    .await?;
+
     // T2.3 — auto-compaction check. Pull a wider window (up to 100 msgs) so
     // the trigger sees the actual conversation length. If the assistant opts
     // out or thresholds aren't met, `evaluate_trigger` short-circuits to a
@@ -572,8 +585,12 @@ pub async fn process_incoming_message(
     // Compaction is "best-effort": any failure in the evaluator / LWT claim /
     // LLM call falls through to the raw recent-history path. The user never
     // sees a compaction failure and no side-effects are retried.
+    //
+    // Economic gate: no more platform-wide `is_compaction_enabled` — the
+    // user paid for their own workspace key, so compaction fires whenever
+    // the assistant opted in AND the decrypted key is non-empty.
     let history: Vec<Message> = if assistant.config_auto_compact.unwrap_or(false)
-        && config.is_compaction_enabled()
+        && !api_key.is_empty()
     {
         let wide = get_recent_messages(db, &conversation.id, 100).await?;
         let total_tokens: u32 = wide
@@ -604,12 +621,21 @@ pub async fn process_incoming_message(
             .await
             {
                 Ok(true) => {
+                    // Cheap model per the assistant's own provider — the
+                    // user pays for the quality gate they turned on.
+                    let compaction_model = crate::services::evaluator::cheap_eval_model_for(
+                        &assistant.llm_provider,
+                    )
+                    .to_string();
                     match crate::services::compaction::compact_conversation(
                         db,
                         config,
                         &assistant,
                         user_id,
                         conversation.id,
+                        api_key.clone(),
+                        assistant.llm_provider.clone(),
+                        compaction_model,
                         wide.clone(),
                     )
                     .await
@@ -670,14 +696,6 @@ pub async fn process_incoming_message(
     } else {
         get_recent_messages(db, &conversation.id, 20).await?
     };
-
-    let api_key = crate::services::workspace::get_decrypted_api_key(
-        db,
-        encryption,
-        &user_id,
-        &assistant.llm_provider,
-    )
-    .await?;
 
     // RAG: retrieve relevant context from knowledge base
     let rag_contexts = crate::services::rag::retrieve_context(
@@ -1828,18 +1846,25 @@ pub async fn process_incoming_message(
         .await;
     }
 
-    // W2.1 — post-turn evaluator (fire-and-forget). Runs ONLY when both:
-    //   (1) the assistant opted in via `config_enable_evaluator = true`, AND
-    //   (2) the platform has a usable evaluator API key (EVALUATOR_API_KEY
-    //       or COMPACTION_API_KEY fallback).
-    // The spawn returns immediately; the user's reply has already been sent
-    // above via `send_message_via_provider`. Evaluators are NEVER on the
-    // user-response critical path.
-    if assistant.config_enable_evaluator == Some(true) && config.is_evaluator_enabled() {
+    // W2.1 — post-turn evaluator (fire-and-forget). Runs when the assistant
+    // has opted in via `config_enable_evaluator = true` AND the user has a
+    // usable workspace API key for the assistant's provider (already proven
+    // usable above — we just decrypted it for the primary turn). The spawn
+    // returns immediately; the user's reply has already been sent above via
+    // `send_message_via_provider`. Evaluators are NEVER on the user-response
+    // critical path.
+    //
+    // Economic gate: the evaluator LLM call is paid for by the user (same
+    // workspace key as the primary turn). There is no platform-wide gate.
+    if assistant.config_enable_evaluator == Some(true) && !api_key.is_empty() {
+        // Cheap model per provider unless the assistant overrides it.
         let evaluator_model = assistant
             .config_evaluator_model
             .clone()
-            .unwrap_or_else(|| config.evaluator_model_default.clone());
+            .unwrap_or_else(|| {
+                crate::services::evaluator::cheap_eval_model_for(&assistant.llm_provider)
+                    .to_string()
+            });
         crate::services::evaluator::spawn_evaluation(
             db.clone(),
             config.clone(),
@@ -1847,6 +1872,8 @@ pub async fn process_incoming_message(
             user_id,
             conversation.id,
             session_id_opt,
+            api_key.clone(),
+            assistant.llm_provider.clone(),
             evaluator_model,
             effective_message.clone(),
             llm_response.content.clone(),

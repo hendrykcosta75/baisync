@@ -15,11 +15,10 @@
 //     at WARN and the handler silently falls through to the single-call
 //     flow. Users never see a degraded response because of planner issues.
 //
-//   * **Separate cheap key**: reuses `Config::effective_evaluator_api_key`
-//     (EVALUATOR_API_KEY with a COMPACTION_API_KEY fallback). This matches
-//     the evaluator convention (same cheap model family, no extra
-//     system-wide secret to configure) and, crucially, NEVER touches the
-//     user's decrypted key — Principle 10 of the Harness doc.
+//   * **Shared platform key**: Sophie itself runs on the platform
+//     `BAISYNC_API_KEY` (Gemini); the planner reuses that same key and a
+//     cheap Gemini model. Sophie never touches a user workspace key — the
+//     whole Sophie path is platform-funded (see `handlers::baisync::chat`).
 //
 //   * **Audit trail**: when a plan is produced it is appended to
 //     `session_events` with `event_type='plan'` via the T2.1 mpsc. The
@@ -178,37 +177,37 @@ pub fn format_history_snippet(history: &[(String, String)]) -> String {
 }
 
 /// Run the planner LLM call. Returns `Ok(None)` (never `Err`) whenever
-/// anything prevents a usable plan from being produced — no API key,
+/// anything prevents a usable plan from being produced — empty API key,
 /// LLM error, timeout, unparseable output, or an empty steps array
 /// combined with an empty strategy (nothing to prepend).
 ///
 /// The caller — `handlers::baisync::chat` — treats `Ok(None)` as "plan
-/// unavailable, proceed with the single-call flow".
+/// unavailable, proceed with the single-call flow". `api_key` is the
+/// platform `BAISYNC_API_KEY` (same key Sophie's generator call uses);
+/// the planner reuses it and a cheap Gemini model.
 ///
 /// Multi-tenancy: the planner is a stateless LLM call. `user_id` is
 /// threaded through for `ToolContext` so the `llm_call_logs` row scopes
 /// correctly by the existing `((user_id, assistant_id), id)` partition key
 /// (assistant_id = Uuid::nil() as Sophie uses the platform sentinel).
 pub async fn run_planner(
-    config: &Config,
+    _config: &Config,
+    api_key: &str,
     user_id: Uuid,
     system_prompt: &str,
     history: &[(String, String)],
     user_message: &str,
 ) -> Result<Option<Plan>, crate::errors::AppError> {
-    // 1. Key resolution — fall through cleanly if the platform operator
-    //    hasn't configured EVALUATOR_API_KEY / COMPACTION_API_KEY.
-    let api_key = match config.effective_evaluator_api_key() {
-        Some(k) => k.to_string(),
-        None => {
-            tracing::warn!(
-                event = "sophie.planner.no_api_key",
-                "planner requested but no evaluator/compaction API key is \
-                 configured; returning None (falling back to single-call flow)"
-            );
-            return Ok(None);
-        }
-    };
+    // 1. Key check — fall through cleanly if BAISYNC_API_KEY is unset.
+    if api_key.is_empty() {
+        tracing::warn!(
+            event = "sophie.planner.no_api_key",
+            "planner requested but BAISYNC_API_KEY is empty; returning None \
+             (falling back to single-call flow)"
+        );
+        return Ok(None);
+    }
+    let api_key = api_key.to_string();
 
     // 2. Build the prompt. The planner receives a SINGLE user-role message
     //    that embeds its own "system" instructions — this matches the
@@ -241,8 +240,10 @@ pub async fn run_planner(
     };
 
     // 4. Execute — deterministic temperature, small token cap, no tools.
-    let provider = config.evaluator_provider.clone();
-    let model = config.evaluator_model_default.clone();
+    //    Sophie's planner runs on the same Gemini key as the generator
+    //    (BAISYNC_API_KEY). Use the cheap Gemini model.
+    let provider = "gemini".to_string();
+    let model = crate::services::evaluator::cheap_eval_model_for(&provider).to_string();
 
     let response = match llm::call_llm_with_tools_ctx(
         &provider,

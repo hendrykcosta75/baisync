@@ -119,18 +119,17 @@ async fn main() -> ExitCode {
 
     let host =
         std::env::var("CASSANDRA_HOST").unwrap_or_else(|_| "127.0.0.1:9042".into());
-    let encryption_key = match std::env::var("ENCRYPTION_KEY") {
-        Ok(k) => k,
-        Err(_) => {
-            eprintln!("[encrypt_legacy] ERROR: ENCRYPTION_KEY env var is required.");
-            return ExitCode::from(2);
-        }
-    };
 
-    let encryption = match EncryptionService::new(&encryption_key) {
+    // Use `from_env` so this backfill binary picks up the same versioned keys
+    // (`ENCRYPTION_KEY_V1/V2/...`) the running backend does, with fallback to
+    // the legacy `ENCRYPTION_KEY` when no versioned vars are set. Mirrors the
+    // wiring in `main.rs` — if they diverged, the backfill would encrypt rows
+    // with a key the live backend can't read.
+    let encryption = match EncryptionService::from_env() {
         Ok(e) => e,
         Err(e) => {
-            eprintln!("[encrypt_legacy] ERROR: invalid ENCRYPTION_KEY: {e}");
+            eprintln!("[encrypt_legacy] ERROR: failed to initialize encryption service: {e}");
+            eprintln!("[encrypt_legacy]        ensure ENCRYPTION_KEY or ENCRYPTION_KEY_V1/V2/... is set.");
             return ExitCode::from(2);
         }
     };

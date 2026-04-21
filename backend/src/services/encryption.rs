@@ -101,9 +101,12 @@ impl KeyResolver {
     }
 
     /// Legacy entry point: build a resolver from a single hex key.
-    /// Used by `EncryptionService::new` for the existing call sites
-    /// (`main.rs`, `bin/encrypt_legacy.rs`, tests). All single-key
+    /// Used by `EncryptionService::new` for the existing test call sites.
+    /// `main.rs` and `bin/encrypt_legacy.rs` have moved to `from_env` so
+    /// versioned keys load correctly — but tests still construct services
+    /// directly from a fixed hex key to avoid env-var hazards. All single-key
     /// deployments map to V1.
+    #[allow(dead_code)]
     pub fn from_single_hex(hex_str: &str) -> Result<Self, AppError> {
         if hex_str.len() != 64 {
             return Err(AppError::ConfigError(
@@ -144,13 +147,11 @@ impl KeyResolver {
     }
 
     /// Exposed for tracing / startup logs and tests.
-    #[allow(dead_code)]
     pub fn current_version(&self) -> u32 {
         self.current_version
     }
 
     /// Exposed for tracing / startup logs and tests.
-    #[allow(dead_code)]
     pub fn known_versions(&self) -> Vec<u32> {
         let mut versions: Vec<u32> = self.keys.keys().copied().collect();
         versions.sort_unstable();
@@ -184,8 +185,10 @@ pub struct EncryptionService {
 
 impl EncryptionService {
     /// Build a service from a single hex key (legacy path).
-    /// Used by `main.rs` and `bin/encrypt_legacy.rs`. For deployments
-    /// that want versioned keys, call `from_env` instead.
+    /// Today this is used by the integration-test helper (`tests/helpers/mod.rs`)
+    /// and the encryption test module. Production paths (`main.rs`,
+    /// `bin/encrypt_legacy.rs`) use `from_env` to pick up versioned keys.
+    #[allow(dead_code)]
     pub fn new(hex_key: &str) -> Result<Self, AppError> {
         Ok(Self {
             resolver: KeyResolver::from_single_hex(hex_key)?,
@@ -194,7 +197,6 @@ impl EncryptionService {
 
     /// Build a service from the environment.
     /// Reads `ENCRYPTION_KEY_V*` or falls back to `ENCRYPTION_KEY`.
-    #[allow(dead_code)]
     pub fn from_env() -> Result<Self, AppError> {
         Ok(Self {
             resolver: KeyResolver::from_env()?,
@@ -205,6 +207,19 @@ impl EncryptionService {
     #[allow(dead_code)]
     pub fn resolver(&self) -> &KeyResolver {
         &self.resolver
+    }
+
+    /// List every encryption key version currently loaded (sorted ascending).
+    /// Used at startup to log which versioned keys are available for
+    /// decryption of historical ciphertext.
+    pub fn loaded_versions(&self) -> Vec<u32> {
+        self.resolver.known_versions()
+    }
+
+    /// Return the key version used for NEW encryption operations.
+    /// Equals the highest version present in `loaded_versions()`.
+    pub fn current_version(&self) -> u32 {
+        self.resolver.current_version()
     }
 
     /// Low-level AES-256-GCM encrypt with a specific key. Returns the

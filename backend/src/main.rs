@@ -44,8 +44,19 @@ async fn main() {
     // `curation_suggestion` notifications will be created.
     config.log_curation_status();
     let db = db::connect(&config.database_url).await;
-    let encryption = EncryptionService::new(&config.encryption_key)
-        .expect("ENCRYPTION_KEY must be 64 hex chars (32 bytes)");
+    // Load encryption keys from the environment: prefer `ENCRYPTION_KEY_V1/V2/...`
+    // versioned keys (T3.2 F1) and fall back to the legacy `ENCRYPTION_KEY` when
+    // no versioned env var is present. Using `from_env` is how the process
+    // actually picks up rotation-ready keys — the legacy single-key
+    // `EncryptionService::new` ignored the versioned vars entirely.
+    let encryption = EncryptionService::from_env()
+        .expect("Failed to initialize encryption service");
+    tracing::info!(
+        event = "encryption.initialized",
+        versions = ?encryption.loaded_versions(),
+        current = encryption.current_version(),
+        "encryption service initialized"
+    );
     let conn_store = ConnectionStateStore::new();
 
     // T1.2 — spawn the llm_call_logs drain task. The hot LLM path only `send`s

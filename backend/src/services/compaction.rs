@@ -3,11 +3,19 @@
 // When an assistant has `config_auto_compact=true` AND the conversation has
 // accumulated ≥`COMPACTION_THRESHOLD_PCT * assistant.max_tokens` tokens across
 // its recent history AND has ≥`COMPACTION_MIN_MESSAGES` messages, the backend
-// calls a cheap platform-funded LLM (`COMPACTION_API_KEY`) to summarize the
-// older prefix. The oldest `N - keep_recent` messages are replaced with a
-// single synthetic system message:
+// calls a cheap LLM to summarize the older prefix. The oldest `N - keep_recent`
+// messages are replaced with a single synthetic system message:
 //
 //   "[Resumo das primeiras N mensagens: …]"
+//
+// PAYMENT MODEL (changed):
+//   The LLM call is paid for by the USER using their already-decrypted
+//   workspace API key for the assistant's own provider. Platform-subsidized
+//   compaction calls per user turn are economically infeasible at scale. The
+//   caller passes `user_api_key`, `user_provider`, and `user_model` (cheap
+//   model resolved via `evaluator::cheap_eval_model_for`). No platform-wide
+//   gate — an assistant with `config_auto_compact=true` and a valid workspace
+//   key for its provider will compact.
 //
 // Rate limit: at most once per `(user_id, conversation_id)` per
 // `COMPACTION_RATE_LIMIT_SECS` (defaults to 3600s / 1 hour). The limit is
@@ -38,9 +46,11 @@
 // prepended as an initial system message so the next call has immediate
 // context on what's still pending. The structured extraction is logged
 // with `kind='handoff'` in `llm_call_logs` for audit/budget parity with
-// compaction. Any failure in the handoff path (LLM error, JSON parse
-// failure, missing API key) is logged as a warning and does NOT fail
-// the compaction — the textual summary is always the durable fallback.
+// compaction. The same user workspace API key + cheap-model pair that
+// the textual summary uses is re-used here. Any failure in the handoff
+// path (LLM error, JSON parse failure, empty key) is logged as a warning
+// and does NOT fail the compaction — the textual summary is always the
+// durable fallback.
 //
 // Rationale for a new `conversation_handoffs` table instead of reusing
 // `sessions.handoff_summary` (which exists in migration 096): T2.1's
@@ -185,30 +195,39 @@ pub struct CompactionResult {
 /// cheap LLM, and synthesize a single `role="system"` message that will
 /// replace them. Caller concatenates `summary_message` + recent suffix.
 ///
-/// Error handling: any step (no API key, LLM failure, empty older set) that
-/// prevents real compaction is surfaced as `AppError`. The caller (messaging
-/// hot path) catches it and falls back to the raw history — compaction
-/// failure is NEVER user-visible.
+/// Payment model: the compaction LLM call is paid for by the user via the
+/// decrypted workspace API key passed in as `user_api_key`. `user_provider`
+/// must match the primary assistant's provider (so the same workspace key
+/// authenticates); `user_model` is the cheap model for that provider
+/// (resolve via `evaluator::cheap_eval_model_for`).
+///
+/// Error handling: any step (empty API key, LLM failure, empty older set)
+/// that prevents real compaction is surfaced as `AppError`. The caller
+/// (messaging hot path) catches it and falls back to the raw history —
+/// compaction failure is NEVER user-visible.
 ///
 /// Multi-tenancy: receives `user_id` and `conversation_id` only for
-/// logging / session-event correlation. The LLM call itself uses the
-/// platform `COMPACTION_API_KEY`, NOT the user's decrypted key, so no
-/// `workspace::get_decrypted_api_key` is involved here.
+/// logging / session-event correlation. The user workspace key decryption
+/// happens at the call site via `workspace::get_decrypted_api_key` so the
+/// partition-key scoping is enforced there; by the time we arrive, the
+/// caller already proved ownership.
+#[allow(clippy::too_many_arguments)]
 pub async fn compact_conversation(
     db: &DbSession,
     config: &Config,
     assistant: &Assistant,
     user_id: Uuid,
     _conversation_id: Uuid,
+    user_api_key: String,
+    user_provider: String,
+    user_model: String,
     all_messages: Vec<Message>,
 ) -> Result<CompactionResult, AppError> {
-    let api_key = config
-        .compaction_api_key
-        .as_deref()
-        .filter(|k| !k.is_empty())
-        .ok_or_else(|| {
-            AppError::ConfigError("COMPACTION_API_KEY not configured".into())
-        })?;
+    if user_api_key.is_empty() {
+        return Err(AppError::ConfigError(
+            "compaction requires a decrypted user workspace API key".into(),
+        ));
+    }
 
     let total = all_messages.len();
     let keep = config.compaction_keep_recent.min(total);
@@ -304,9 +323,9 @@ agradecimentos ou análise de qualidade — apenas o resumo factual.";
     };
 
     let response = llm::call_llm_with_tools_ctx(
-        &config.compaction_provider,
-        &config.compaction_model,
-        api_key,
+        &user_provider,
+        &user_model,
+        &user_api_key,
         llm_messages,
         0.2,   // low temperature — deterministic factual summary
         1_024, // cap summary tokens; typical output is ≪ 512.
@@ -346,12 +365,18 @@ agradecimentos ou análise de qualidade — apenas o resumo factual.";
     // W2.2 — structured handoff extraction. Best-effort: a failure here
     // (LLM error, parse failure, DB write error) is logged and swallowed so
     // the textual summary above remains the durable compaction result. The
-    // older-segment slice is the same input the textual summarizer saw.
+    // older-segment slice is the same input the textual summarizer saw. The
+    // handoff call re-uses the user's workspace API key for the same
+    // provider (primary assistant's provider) — compaction + handoff are a
+    // pair that share one credential + one cheap-model pick.
     if let Some(handoff) = build_handoff(
         config,
         assistant,
         user_id,
         _conversation_id,
+        user_api_key.clone(),
+        user_provider.clone(),
+        user_model.clone(),
         older,
     )
     .await
@@ -424,29 +449,29 @@ pub struct HandoffSummary {
 /// Call a cheap LLM with a structured-output prompt to extract a
 /// [`HandoffSummary`] from the older conversation prefix.
 ///
-/// Returns `Ok(None)` (never `Err`) when any step fails: no API key, empty
-/// older segment, LLM error, or unparseable output. The caller — `compact_conversation` —
-/// logs a warn and continues; the textual summary from step 1 is the durable
-/// fallback.
+/// Returns `Ok(None)` (never `Err`) when any step fails: empty API key,
+/// empty older segment, LLM error, or unparseable output. The caller —
+/// `compact_conversation` — logs a warn and continues; the textual summary
+/// from step 1 is the durable fallback.
 ///
-/// Uses the same `COMPACTION_API_KEY` as the textual summarizer (same budget,
-/// same provider). `llm_call_logs` row is emitted with `kind='handoff'` via
-/// the T1.2 mpsc pipeline.
+/// Uses the SAME user workspace API key + cheap-model pair the textual
+/// summarizer used. `llm_call_logs` row is emitted with `kind='handoff'`
+/// via the T1.2 mpsc pipeline so budget analytics can tell the two
+/// phases apart.
+#[allow(clippy::too_many_arguments)]
 pub async fn build_handoff(
-    config: &Config,
+    _config: &Config,
     assistant: &Assistant,
     user_id: Uuid,
     conversation_id: Uuid,
+    user_api_key: String,
+    user_provider: String,
+    user_model: String,
     older_messages: &[Message],
 ) -> Option<HandoffSummary> {
-    let api_key = match config
-        .compaction_api_key
-        .as_deref()
-        .filter(|k| !k.is_empty())
-    {
-        Some(k) => k,
-        None => return None,
-    };
+    if user_api_key.is_empty() {
+        return None;
+    }
 
     if older_messages.is_empty() {
         return None;
@@ -535,9 +560,9 @@ Sempre inclua as três chaves, mesmo que vazias.";
     };
 
     let response = match llm::call_llm_with_tools_ctx(
-        &config.compaction_provider,
-        &config.compaction_model,
-        api_key,
+        &user_provider,
+        &user_model,
+        &user_api_key,
         llm_messages,
         0.1,   // near-deterministic extraction
         1_024, // JSON is typically small
@@ -788,18 +813,12 @@ mod tests {
             livekit_api_key: "x".into(),
             livekit_api_secret: "x".into(),
             llm_global_timeout_secs: 60,
-            compaction_api_key: Some("sk-test".into()),
-            compaction_model: "gpt-4o-mini".into(),
-            compaction_provider: "openai".into(),
             compaction_threshold_pct: threshold,
             compaction_min_messages: min_messages,
             compaction_keep_recent: keep_recent,
             compaction_rate_limit_secs: 3600,
             // W2.1 — evaluator fields are irrelevant to compaction tests;
             // supply cheap defaults so the struct is complete.
-            evaluator_api_key: None,
-            evaluator_provider: "openai".into(),
-            evaluator_model_default: "gpt-4o-mini".into(),
             evaluator_max_concurrent: 20,
             evaluator_timeout_secs: 15,
             // T3.3 — curation poller is orthogonal to compaction tests;
