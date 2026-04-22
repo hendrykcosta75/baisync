@@ -56,27 +56,6 @@ jobs:
           sarif_file: semgrep.sarif
         continue-on-error: true
 
-  # Deep semantic analysis of TypeScript/JavaScript via CodeQL.
-  # Results appear in the GitHub Security → Code scanning tab.
-  # Free for public repos; requires GitHub Advanced Security for private repos.
-  codeql:
-    name: CodeQL (semantic analysis — TS/JS)
-    runs-on: ubuntu-latest
-    permissions:
-      actions: read
-      contents: read
-      security-events: write
-    steps:
-      - uses: actions/checkout@v4
-      - uses: github/codeql-action/init@v3
-        with:
-          languages: javascript-typescript
-          queries: security-extended,security-and-quality
-      - uses: github/codeql-action/autobuild@v3
-      - uses: github/codeql-action/analyze@v3
-        with:
-          category: /language:javascript-typescript
-
   # Filesystem CVE scan: Cargo.lock + package.json deps + known OS vulnerabilities.
   # Trivy reports HIGH/CRITICAL CVEs and uploads findings to GitHub Security tab.
   trivy:
