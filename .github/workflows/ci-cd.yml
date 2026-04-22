@@ -237,8 +237,8 @@ jobs:
     steps:
       - id: flags
         run: |
-          echo "backend=${{ needs.changes.outputs.backend }}" >> $GITHUB_OUTPUT
-          echo "frontend=${{ needs.changes.outputs.frontend }}" >> $GITHUB_OUTPUT
+          echo "backend=${{ needs.changes.outputs.backend }}" >> "$GITHUB_OUTPUT"
+          echo "frontend=${{ needs.changes.outputs.frontend }}" >> "$GITHUB_OUTPUT"
       - run: echo "Security + tests passed — gate open"
 
   # ── Deploy (backend primeiro, depois frontend) ───────────────────────────────
