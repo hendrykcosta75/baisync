@@ -1,0 +1,5 @@
+[advisories]
+# rand 0.8.5 (RUSTSEC-2026-0097) — unsoundness only reachable via custom
+# log::set_logger, which this codebase does not use. Dep is transitive from
+# scylla 0.15 and tokio-tungstenite 0.24; no patched version available yet.
+ignore = ["RUSTSEC-2026-0097"]
