@@ -1,11 +1,8 @@
 name: Security
 
 on:
-  pull_request:
-    branches: [master, main]
-  push:
-    branches: [master, main]
-  # Catch new CVEs disclosed against existing deps without requiring a push.
+  # Weekly sweep for newly disclosed CVEs against existing deps.
+  # Push/PR security is gated in ci-cd.yml.
   schedule:
     - cron: '0 6 * * 1'
 

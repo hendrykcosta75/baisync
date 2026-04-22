@@ -1,0 +1,306 @@
+name: CI/CD
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/master' }}
+
+permissions:
+  contents: read
+  security-events: write
+  pull-requests: read
+
+jobs:
+  # ── Detecta o que mudou ─────────────────────────────────────────────────────
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.filter.outputs.backend }}
+      frontend: ${{ steps.filter.outputs.frontend }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            backend:
+              - 'backend/**'
+            frontend:
+              - 'frontend/**'
+
+  # ── Segurança (sempre, paralelo) ────────────────────────────────────────────
+  gitleaks:
+    name: Gitleaks (secrets)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  semgrep:
+    name: Semgrep (SAST)
+    runs-on: ubuntu-latest
+    container:
+      image: returntocorp/semgrep
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run semgrep
+        run: |
+          semgrep scan \
+            --config=p/security-audit \
+            --config=p/secrets \
+            --config=p/owasp-top-ten \
+            --config=p/rust \
+            --config=p/typescript \
+            --config=p/react \
+            --config=p/javascript \
+            --sarif --output=semgrep.sarif || true
+      - uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: semgrep.sarif
+        continue-on-error: true
+
+  trivy:
+    name: Trivy (CVE scan)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run Trivy filesystem scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: fs
+          scan-ref: .
+          format: sarif
+          output: trivy.sarif
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          scanners: vuln,secret,misconfig
+      - uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy.sarif
+        continue-on-error: true
+
+  cargo-audit:
+    name: cargo-audit (Rust deps)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: backend
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+      - name: Run cargo audit
+        working-directory: backend
+        run: cargo audit --deny warnings
+
+  yarn-audit:
+    name: yarn audit (npm deps)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install frontend deps
+        working-directory: frontend
+        run: yarn install --frozen-lockfile --ignore-scripts
+      - name: Run yarn audit
+        working-directory: frontend
+        run: yarn audit --level moderate --groups dependencies
+
+  actionlint:
+    name: actionlint (workflow lint)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run actionlint
+        uses: docker://rhysd/actionlint:latest
+        with:
+          args: -color
+
+  # ── Testes (paralelo com segurança) ─────────────────────────────────────────
+  consistency:
+    name: Consistency checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install consistency test dependencies
+        working-directory: tests/consistency
+        run: npm install
+      - name: Run consistency checks
+        run: bash tests/consistency/check.sh
+
+  backend-test:
+    name: Backend tests
+    needs: [changes]
+    if: needs.changes.outputs.backend == 'true'
+    runs-on: ubuntu-latest
+    services:
+      cassandra:
+        image: cassandra:5.0
+        ports:
+          - 9042:9042
+        options: >-
+          --health-cmd "cqlsh -e 'DESCRIBE KEYSPACES'"
+          --health-interval 15s
+          --health-timeout 10s
+          --health-retries 10
+          --health-start-period 60s
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: backend
+      - name: Run unit tests
+        working-directory: backend
+        run: cargo test --lib
+      - name: Run integration tests
+        working-directory: backend
+        env:
+          RUSTFLAGS: "--cfg tokio_allow_from_blocking_fd"
+          DATABASE_URL: "127.0.0.1:9042"
+          JWT_SECRET: "ci-test-secret-key"
+          ENCRYPTION_KEY: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" # gitleaks:allow
+          SMTP_HOST: "localhost"
+          SMTP_PORT: "587"
+          SMTP_USER: "test"
+          SMTP_PASS: "test"
+          SMTP_FROM: "test@test.com"
+          BAILEYS_URL: "http://localhost:3025"
+          BAILEYS_API_KEY: "test-key"
+          BAISYNC_API_KEY: "test-key"
+          ADMIN_USER: "admin"
+          ADMIN_PASSWORD: "admin"
+        run: cargo test --test '*'
+
+  frontend-test:
+    name: Frontend tests
+    needs: [changes]
+    if: needs.changes.outputs.frontend == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'yarn'
+          cache-dependency-path: frontend/yarn.lock
+      - name: Install dependencies
+        working-directory: frontend
+        run: yarn install --frozen-lockfile
+      - name: Lint
+        working-directory: frontend
+        run: yarn lint || true
+      - name: Run tests
+        working-directory: frontend
+        run: yarn test
+      - name: Type check
+        working-directory: frontend
+        run: npx tsc --noEmit
+
+  # ── Gate: barreira antes do deploy ──────────────────────────────────────────
+  gate:
+    name: All checks passed
+    runs-on: ubuntu-latest
+    needs:
+      - changes
+      - gitleaks
+      - semgrep
+      - trivy
+      - cargo-audit
+      - yarn-audit
+      - actionlint
+      - consistency
+      - backend-test
+      - frontend-test
+    outputs:
+      backend: ${{ needs.changes.outputs.backend }}
+      frontend: ${{ needs.changes.outputs.frontend }}
+    steps:
+      - run: echo "Security + tests passed — gate open"
+
+  # ── Deploy (backend primeiro, depois frontend) ───────────────────────────────
+  deploy-backend:
+    name: Deploy Backend
+    needs: [gate]
+    if: |
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/master' &&
+      needs.gate.outputs.backend == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          push: true
+          tags: enki10/intertial-codebase:backend-latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Deploy to production via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          password: ${{ secrets.SSH_PASSWORD }}
+          script: |
+            cd /data/coolify/services/t0koswoc4w8ccosg880ogckg
+            docker compose pull backend baileys
+            docker compose up -d backend baileys --no-deps
+            docker image prune -f
+
+  deploy-frontend:
+    name: Deploy Frontend
+    needs: [gate, deploy-backend]
+    if: |
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/master' &&
+      needs.gate.outputs.frontend == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: ./frontend
+          push: true
+          tags: enki10/intertial-codebase:frontend-latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Deploy to production via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          password: ${{ secrets.SSH_PASSWORD }}
+          script: |
+            cd /data/coolify/services/t0koswoc4w8ccosg880ogckg
+            docker compose pull frontend
+            docker compose up -d frontend --no-deps
+            docker image prune -f
