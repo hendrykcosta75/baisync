@@ -244,8 +244,8 @@ jobs:
   # ── Deploy (backend primeiro, depois frontend) ───────────────────────────────
   deploy-backend:
     name: Deploy Backend
-    needs: [gate]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/master' && needs.gate.outputs.backend == 'true'
+    needs: [gate, changes]
+    if: needs.gate.result == 'success' && github.event_name == 'push' && github.ref == 'refs/heads/master' && needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -275,8 +275,8 @@ jobs:
 
   deploy-frontend:
     name: Deploy Frontend
-    needs: [gate, deploy-backend]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/master' && needs.gate.outputs.frontend == 'true'
+    needs: [gate, changes, deploy-backend]
+    if: needs.gate.result == 'success' && github.event_name == 'push' && github.ref == 'refs/heads/master' && needs.changes.outputs.frontend == 'true' && (needs.deploy-backend.result == 'success' || needs.deploy-backend.result == 'skipped')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
