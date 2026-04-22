@@ -219,6 +219,7 @@ jobs:
   gate:
     name: All checks passed
     runs-on: ubuntu-latest
+    if: ${{ !failure() && !cancelled() }}
     needs:
       - changes
       - gitleaks
