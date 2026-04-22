@@ -863,13 +863,39 @@ pub async fn process_incoming_message(
         }
     }
 
-    // Load enabled tools
+    // Load enabled tools + inject workspace-scoped skills and MCP tools.
+    // `user_id` here is effectively the assistant's workspace_id (legacy
+    // column naming in `assistants` — see multi-tenancy memory).
     let tools = crate::services::assistant::list_tools(db, &assistant_id).await?;
-    let llm_tools: Vec<llm::LlmTool> = tools
+    let mut llm_tools: Vec<llm::LlmTool> = tools
         .iter()
         .filter(|t| t.is_enabled)
         .map(llm::LlmTool::from)
         .collect();
+    // Load skills and MCP server list concurrently — both are independent
+    // Cassandra reads and were previously sequential, adding 2× round-trip
+    // latency to every message turn.
+    let (skills_result, mcp_result) = tokio::join!(
+        crate::services::skill::list_for_assistant(db, &assistant_id, &user_id),
+        crate::services::mcp::server::list_for_assistant(db, &assistant_id, &user_id),
+    );
+    match skills_result {
+        Ok(skills) => {
+            llm_tools.extend(skills.iter().map(crate::services::skill::to_llm_tool));
+        }
+        Err(e) => tracing::warn!(error = %e, assistant_id = %assistant_id, "skills load failed; omitting"),
+    }
+    match mcp_result {
+        Ok(servers) => {
+            for srv in &servers {
+                let mcp_tools = crate::services::mcp::cache::ensure_tools_cached(db, encryption, srv)
+                    .await
+                    .unwrap_or_default();
+                llm_tools.extend(mcp_tools);
+            }
+        }
+        Err(e) => tracing::warn!(error = %e, assistant_id = %assistant_id, "mcp servers load failed; omitting"),
+    }
 
     let tool_ctx = llm::ToolContext {
         db: Some(db),
@@ -912,7 +938,7 @@ pub async fn process_incoming_message(
             }
         };
 
-    let llm_response = llm::call_llm_with_tools_ctx(
+    let llm_response = match llm::call_llm_with_tools_ctx(
         &assistant.llm_provider,
         &assistant.model,
         &api_key,
@@ -922,7 +948,37 @@ pub async fn process_incoming_message(
         &llm_tools,
         &tool_ctx,
     )
-    .await?;
+    .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            // 429 / quota exhaustion should NOT break the user's conversation.
+            // Degrade to a friendly reply; the caller pipeline keeps flowing.
+            let err_text = e.to_string();
+            let rate_limited = err_text.contains("HTTP 429")
+                || err_text.contains("temporariamente instável")
+                || err_text.to_lowercase().contains("quota")
+                || err_text.to_lowercase().contains("rate limit");
+            if rate_limited {
+                tracing::warn!(
+                    error = %err_text,
+                    assistant_id = %assistant_id,
+                    conversation_id = %conversation.id,
+                    "LLM rate-limited; replying with friendly message"
+                );
+                llm::LlmResponse {
+                    content:
+                        "Estou recebendo muitas solicitações no momento. Tente novamente em alguns segundos."
+                            .to_string(),
+                    tokens_used: 0,
+                    tool_call_records: Vec::new(),
+                    retries_attempted: 0,
+                }
+            } else {
+                return Err(e);
+            }
+        }
+    };
 
     // T2.1 — log each tool call + result onto the session event log. Mirrors
     // the order the LLM invoked them; response bodies are capped at 2KB to
@@ -2871,13 +2927,31 @@ pub async fn playground_chat(
         });
     }
 
-    // Load enabled tools
+    // Load enabled tools + inject workspace-scoped skills and MCP tools
+    // (playground path mirrors the webhook path at line ~870).
     let tools = crate::services::assistant::list_tools(db, assistant_id).await?;
-    let llm_tools: Vec<llm::LlmTool> = tools
+    let mut llm_tools: Vec<llm::LlmTool> = tools
         .iter()
         .filter(|t| t.is_enabled)
         .map(llm::LlmTool::from)
         .collect();
+    match crate::services::skill::list_for_assistant(db, assistant_id, &owner_id).await {
+        Ok(skills) => {
+            llm_tools.extend(skills.iter().map(crate::services::skill::to_llm_tool));
+        }
+        Err(e) => tracing::warn!(error = %e, assistant_id = %assistant_id, "skills load failed; omitting"),
+    }
+    match crate::services::mcp::server::list_for_assistant(db, assistant_id, &owner_id).await {
+        Ok(servers) => {
+            for srv in &servers {
+                let mcp_tools = crate::services::mcp::cache::ensure_tools_cached(db, encryption, srv)
+                    .await
+                    .unwrap_or_default();
+                llm_tools.extend(mcp_tools);
+            }
+        }
+        Err(e) => tracing::warn!(error = %e, assistant_id = %assistant_id, "mcp servers load failed; omitting"),
+    }
 
     let tool_ctx = llm::ToolContext {
         db: Some(db),
@@ -2890,7 +2964,7 @@ pub async fn playground_chat(
         max_duration_ms: assistant.config_max_duration_ms,
         call_kind: None, // playground primary call
     };
-    let llm_response = llm::call_llm_with_tools_ctx(
+    let llm_response = match llm::call_llm_with_tools_ctx(
         &assistant.llm_provider,
         &assistant.model,
         &api_key,
@@ -2900,7 +2974,35 @@ pub async fn playground_chat(
         &llm_tools,
         &tool_ctx,
     )
-    .await?;
+    .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            let err_text = e.to_string();
+            let rate_limited = err_text.contains("HTTP 429")
+                || err_text.contains("temporariamente instável")
+                || err_text.to_lowercase().contains("quota")
+                || err_text.to_lowercase().contains("rate limit");
+            if rate_limited {
+                tracing::warn!(
+                    error = %err_text,
+                    assistant_id = %assistant_id,
+                    conversation_id = %conversation.id,
+                    "LLM rate-limited (playground); replying with friendly message"
+                );
+                llm::LlmResponse {
+                    content:
+                        "Estou recebendo muitas solicitações no momento. Tente novamente em alguns segundos."
+                            .to_string(),
+                    tokens_used: 0,
+                    tool_call_records: Vec::new(),
+                    retries_attempted: 0,
+                }
+            } else {
+                return Err(e);
+            }
+        }
+    };
 
     // Save tool call logs
     for record in &llm_response.tool_call_records {

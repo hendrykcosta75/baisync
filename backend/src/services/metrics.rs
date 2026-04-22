@@ -47,6 +47,12 @@ pub struct Metrics {
     pub session_events_dropped_total: RwLock<HashMap<String, u64>>,
     pub webhook_deduped_total: RwLock<HashMap<String, u64>>,
     pub compaction_total: RwLock<HashMap<String, u64>>,
+    /// W2.1 — evaluator spawns grouped by terminal status
+    /// (`ok`, `issues`, `timeout`, `llm_error`, `parse_error`,
+    /// `semaphore_full`, `no_api_key`) and scope (`user` or `sophie`).
+    /// No assistant_id label — evaluator alerts don't need per-assistant
+    /// breakdown and the cardinality cost isn't justified.
+    pub evaluator_total: RwLock<HashMap<(String, String), u64>>,
 }
 
 /// Histogram for LLM request duration. Bucket bounds hard-coded to the
@@ -102,6 +108,7 @@ pub fn metrics() -> &'static Metrics {
         session_events_dropped_total: RwLock::new(HashMap::new()),
         webhook_deduped_total: RwLock::new(HashMap::new()),
         compaction_total: RwLock::new(HashMap::new()),
+        evaluator_total: RwLock::new(HashMap::new()),
     })
 }
 
@@ -160,6 +167,17 @@ pub async fn inc_webhook_deduped(provider: &str) {
 pub async fn inc_compaction(assistant_id: &str) {
     let mut map = metrics().compaction_total.write().await;
     *map.entry(assistant_id.to_string()).or_insert(0) += 1;
+}
+
+/// W2.1 — increment `evaluator_total{scope, status}`. `scope` is one of
+/// `"user"` (primary-assistant evaluator) or `"sophie"`. `status` is one
+/// of `"ok"`, `"issues"`, `"timeout"`, `"llm_error"`, `"parse_error"`,
+/// `"semaphore_full"`, `"no_api_key"`. Callers must not invent new status
+/// values without updating the Grafana dashboard first.
+pub async fn inc_evaluator(scope: &str, status: &str) {
+    let mut map = metrics().evaluator_total.write().await;
+    *map.entry((scope.to_string(), status.to_string()))
+        .or_insert(0) += 1;
 }
 
 /// Escape a label value per Prometheus text format 0.0.4. Only these
@@ -337,6 +355,27 @@ pub async fn format_prometheus() -> String {
         }
     }
 
+    // --- evaluator_total ---
+    out.push_str("# HELP evaluator_total Total evaluator spawns, labeled by scope (user|sophie) and terminal status.\n");
+    out.push_str("# TYPE evaluator_total counter\n");
+    {
+        let map = m.evaluator_total.read().await;
+        let mut entries: Vec<(&(String, String), &u64)> = map.iter().collect();
+        entries.sort_by(|a, b| a.0.cmp(b.0));
+        if entries.is_empty() {
+            out.push_str("evaluator_total 0\n");
+        } else {
+            for ((scope, status), count) in entries {
+                out.push_str(&format!(
+                    "evaluator_total{{scope=\"{}\",status=\"{}\"}} {}\n",
+                    escape_label_value(scope),
+                    escape_label_value(status),
+                    count
+                ));
+            }
+        }
+    }
+
     out
 }
 
@@ -485,6 +524,7 @@ mod tests {
             "session_events_dropped_total",
             "webhook_deduped_total",
             "compaction_total",
+            "evaluator_total",
         ];
         for family in families {
             let help = format!("# HELP {family} ");
@@ -517,14 +557,14 @@ mod tests {
         let out = format_prometheus().await;
         let help_count = out.matches("# HELP ").count();
         assert_eq!(
-            help_count, 7,
-            "expected 7 HELP lines (one per family), got {help_count}:\n{out}"
+            help_count, 8,
+            "expected 8 HELP lines (one per family), got {help_count}:\n{out}"
         );
         // Every family still emits a TYPE line on a cold registry.
         let type_count = out.matches("# TYPE ").count();
         assert_eq!(
-            type_count, 7,
-            "expected 7 TYPE lines, got {type_count}:\n{out}"
+            type_count, 8,
+            "expected 8 TYPE lines, got {type_count}:\n{out}"
         );
     }
 

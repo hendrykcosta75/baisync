@@ -12,6 +12,7 @@ import { ConversationsTab } from '@/components/assistants/tabs/conversations-tab
 import { ChatTab } from '@/components/assistants/tabs/chat-tab'
 import { LogsTab } from '@/components/assistants/tabs/logs-tab'
 import { AdvancedTab } from '@/components/assistants/tabs/advanced-tab'
+import { CapacidadesTab } from '@/components/assistants/tabs/capacidades-tab'
 import { PageTransition } from '@/lib/motion'
 
 export default function AssistantDetailPage() {
@@ -75,6 +76,10 @@ export default function AssistantDetailPage() {
                 Ferramentas
                 <Tabs.Indicator />
               </Tabs.Tab>
+              <Tabs.Tab id="capacidades">
+                Capacidades
+                <Tabs.Indicator />
+              </Tabs.Tab>
               <Tabs.Tab id="applications">
                 Integrações
                 <Tabs.Indicator />
@@ -108,6 +113,10 @@ export default function AssistantDetailPage() {
 
           <Tabs.Panel id="tools">
             <ToolsTab assistant={assistant} />
+          </Tabs.Panel>
+
+          <Tabs.Panel id="capacidades">
+            <CapacidadesTab assistant={assistant} />
           </Tabs.Panel>
 
           <Tabs.Panel id="applications">

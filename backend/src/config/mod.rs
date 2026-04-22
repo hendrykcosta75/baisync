@@ -131,10 +131,12 @@ impl Config {
             app_url,
             allowed_origins,
             baisync_api_key: env::var("BAISYNC_API_KEY").unwrap_or_default(),
+            // Token budget per user per hour (migration 107). Legacy default
+            // was 150 messages/h; the unit is now tokens, default 1000/h.
             baisync_rate_limit: env::var("BAISYNC_RATE_LIMIT_PER_HOUR")
-                .unwrap_or_else(|_| "150".into())
+                .unwrap_or_else(|_| "1000".into())
                 .parse()
-                .unwrap_or(150),
+                .unwrap_or(1000),
             admin_user: env::var("ADMIN_USER").unwrap_or_default(),
             admin_password: env::var("ADMIN_PASSWORD").unwrap_or_default(),
             meta_app_secret: env::var("META_APP_SECRET").unwrap_or_default(),

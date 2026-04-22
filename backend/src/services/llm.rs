@@ -254,7 +254,7 @@ const FAIL_THRESHOLD: usize = 5;
 
 /// Returns `Some(err_msg)` if the circuit is open for `provider` (i.e. at
 /// least `FAIL_THRESHOLD` failures occurred within the last `FAIL_WINDOW`).
-fn check_circuit_open(provider: &str) -> Option<String> {
+pub fn check_circuit_open(provider: &str) -> Option<String> {
     let now = Instant::now();
     let map = health_map().read().ok()?;
     let entry = map.get(provider)?;
@@ -1506,6 +1506,70 @@ async fn execute_tool(
 
     // Built-in tool types return synthetic results — actual side-effects are handled post-LLM
     match tool.tool_type.as_str() {
+        "skill" => {
+            // Skill dispatch: return the skill's instructions prompt as
+            // tool_result. Instructions were embedded in `body_content` by
+            // `services::skill::to_llm_tool` so no DB round-trip needed.
+            let instructions = tool.body_content.clone().unwrap_or_default();
+            let record = ToolCallRecord {
+                tool_id: tool.id,
+                tool_name: tool.name.clone(),
+                arguments: arguments.clone(),
+                status_code: Some(200),
+                response_body: None, // don't log the instructions payload
+                error: None,
+                duration_ms: start.elapsed().as_millis() as i32,
+                tool_type: "skill".to_string(),
+            };
+            return (instructions, record);
+        }
+        "mcp" => {
+            // MCP dispatch: `body_content_type` holds the server UUID,
+            // `body_content` the upstream tool name (pre-prefix). Load the
+            // server within the caller's workspace and forward the call.
+            let server_id_str = tool.body_content_type.as_deref().unwrap_or("");
+            let upstream_tool = tool.body_content.as_deref().unwrap_or("");
+            let mcp_result = dispatch_mcp_tool(
+                tool,
+                server_id_str,
+                upstream_tool,
+                arguments,
+                ctx,
+            )
+            .await;
+            let duration_ms = start.elapsed().as_millis() as i32;
+            match mcp_result {
+                Ok(text) => {
+                    let record = ToolCallRecord {
+                        tool_id: tool.id,
+                        tool_name: tool.name.clone(),
+                        arguments: arguments.clone(),
+                        status_code: Some(200),
+                        response_body: Some(text.clone()),
+                        error: None,
+                        duration_ms,
+                        tool_type: "mcp".to_string(),
+                    };
+                    return (text, record);
+                }
+                Err(err_text) => {
+                    let record = ToolCallRecord {
+                        tool_id: tool.id,
+                        tool_name: tool.name.clone(),
+                        arguments: arguments.clone(),
+                        status_code: Some(500),
+                        response_body: None,
+                        error: Some(err_text.clone()),
+                        duration_ms,
+                        tool_type: "mcp".to_string(),
+                    };
+                    return (
+                        json!({"status": "error", "message": err_text}).to_string(),
+                        record,
+                    );
+                }
+            }
+        }
         "send_document" => {
             let result =
                 r#"{"status":"queued","message":"Documento será enviado ao usuário."}"#.to_string();
@@ -2263,6 +2327,47 @@ async fn execute_tool(
     }
 }
 
+/// Resolve an MCP server (by id encoded in `body_content_type`) within
+/// the caller's workspace and forward `tools/call`. Workspace check is
+/// implicit: the lookup filters by `ctx.user_id` (which, per legacy
+/// convention, is the workspace_id for assistants), so an LLM-hallucinated
+/// `other_workspace_slug__tool` can never resolve cross-tenant.
+async fn dispatch_mcp_tool(
+    _tool: &LlmTool,
+    server_id_str: &str,
+    upstream_tool: &str,
+    arguments: &Value,
+    ctx: &ToolContext<'_>,
+) -> Result<String, String> {
+    let server_id = uuid::Uuid::parse_str(server_id_str)
+        .map_err(|_| "server_id inválido no LlmTool".to_string())?;
+    let db = ctx.db.ok_or_else(|| "db indisponível".to_string())?;
+    let workspace_id = ctx.user_id.ok_or_else(|| "workspace_id indisponível".to_string())?;
+    let encryption = ctx
+        .encryption
+        .ok_or_else(|| "encryption indisponível".to_string())?;
+
+    let server = crate::services::mcp::server::get(db, &workspace_id, &server_id)
+        .await
+        .map_err(|e| format!("resolve MCP server: {e}"))?
+        .ok_or_else(|| "servidor MCP não encontrado neste workspace".to_string())?;
+
+    let result = crate::services::mcp::client::session_tools_call(
+        &server,
+        encryption,
+        upstream_tool,
+        arguments,
+    )
+    .await
+    .map_err(|e| format!("chamada MCP: {e}"))?;
+
+    if result.is_error {
+        Err(result.content_text)
+    } else {
+        Ok(result.content_text)
+    }
+}
+
 // =====================================================================
 // OpenAI
 // =====================================================================
@@ -2968,6 +3073,59 @@ async fn call_claude_raw(
 // Gemini — supports function calling via `tools.functionDeclarations`
 // =====================================================================
 
+/// Recursively strip JSON Schema fields that Gemini's functionDeclarations
+/// API does not accept. Gemini uses a restricted OpenAPI 3.0 subset: it
+/// rejects `additionalProperties`, `$schema`, `$defs`, `$ref`, `oneOf`,
+/// `anyOf`, `allOf`, `not`, `if`/`then`/`else`, `patternProperties`,
+/// `unevaluatedProperties`, `title`, `default`, and `examples`.
+///
+/// Only `type`, `description`, `properties`, `required`, `enum`, `items`,
+/// `format`, and `nullable` are forwarded; everything else is dropped.
+fn sanitize_schema_for_gemini(schema: &Value) -> Value {
+    let Some(obj) = schema.as_object() else {
+        return schema.clone();
+    };
+
+    const BLOCKED: &[&str] = &[
+        "$schema", "$defs", "$ref",
+        "additionalProperties", "unevaluatedProperties", "patternProperties",
+        "oneOf", "anyOf", "allOf", "not",
+        "if", "then", "else",
+        "title", "default", "examples",
+    ];
+    const ALLOWED: &[&str] = &[
+        "type", "description", "properties", "required",
+        "enum", "items", "format", "nullable",
+    ];
+
+    let mut out = serde_json::Map::new();
+    for (k, v) in obj {
+        if BLOCKED.contains(&k.as_str()) {
+            continue;
+        }
+        if !ALLOWED.contains(&k.as_str()) {
+            continue;
+        }
+        let sanitized = match k.as_str() {
+            "properties" => {
+                if let Some(props) = v.as_object() {
+                    let sanitized_props: serde_json::Map<String, Value> = props
+                        .iter()
+                        .map(|(pk, pv)| (pk.clone(), sanitize_schema_for_gemini(pv)))
+                        .collect();
+                    Value::Object(sanitized_props)
+                } else {
+                    v.clone()
+                }
+            }
+            "items" => sanitize_schema_for_gemini(v),
+            _ => v.clone(),
+        };
+        out.insert(k.clone(), sanitized);
+    }
+    Value::Object(out)
+}
+
 /// Gemini tool-call loop. Mirrors the Claude pattern: iterate up to 5 rounds,
 /// echo `functionCall` parts back as a "model" turn, send `functionResponse`
 /// parts as a "function" turn, stop when Gemini returns plain text.
@@ -3190,7 +3348,7 @@ async fn call_gemini_raw(
                     json!({
                         "name": t.name,
                         "description": t.description,
-                        "parameters": t.parameters,
+                        "parameters": sanitize_schema_for_gemini(&t.parameters),
                     })
                 })
                 .collect();

@@ -2,7 +2,7 @@ use axum::extract::{Extension, Path, Query};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::Json;
 use chrono::{DateTime, Utc};
-use scylla::frame::value::CqlTimeuuid;
+use scylla::frame::value::{Counter, CqlTimeuuid};
 
 use futures::stream::Stream;
 use serde::{Deserialize, Serialize};
@@ -96,7 +96,7 @@ fn skills_summary() -> String {
 
 // ─── Rate Limiting ───────────────────────────────────────────────────────────
 
-fn current_hour_bucket() -> String {
+pub(crate) fn current_hour_bucket() -> String {
     chrono::Utc::now().format("%Y-%m-%dT%H").to_string()
 }
 
@@ -106,39 +106,132 @@ fn next_hour_reset() -> String {
     next.format("%Y-%m-%dT%H:00:00Z").to_string()
 }
 
-async fn get_usage_count(db: &DbSession, user_id: &Uuid) -> i64 {
+/// Read total tokens used by this user in the current hour bucket.
+/// Reads the migration-107 `baisync_rate_limits_tokens` table (counter).
+///
+/// Counter columns are nullable at the row level — if the user has no
+/// turns yet this hour, the partition doesn't exist and we return 0.
+/// DB errors are logged (not swallowed) so a broken counter table is
+/// visible in operator logs instead of masquerading as "zero usage".
+pub async fn get_usage_tokens(db: &DbSession, user_id: &Uuid) -> i64 {
     let bucket = current_hour_bucket();
     let result = db
         .query_unpaged(
-            "SELECT count FROM inertial_eclipse.baisync_rate_limits WHERE user_id = ? AND hour_bucket = ?",
+            "SELECT tokens_used FROM inertial_eclipse.baisync_rate_limits_tokens WHERE user_id = ? AND hour_bucket = ?",
             (user_id, &bucket as &str),
         )
         .await;
 
     match result {
-        Ok(res) => {
-            if let Ok(rows) = res.into_rows_result() {
-                if let Ok(Some((count,))) = rows.maybe_first_row::<(i64,)>() {
-                    count
-                } else {
+        Ok(res) => match res.into_rows_result() {
+            Ok(rows) => match rows.maybe_first_row::<(Option<Counter>,)>() {
+                Ok(Some((Some(Counter(t)),))) => t,
+                Ok(Some((None,))) => 0,
+                Ok(None) => 0,
+                Err(e) => {
+                    tracing::warn!(
+                        event = "baisync.usage_read_decode_error",
+                        user_id = %user_id,
+                        hour_bucket = %bucket,
+                        error = %e,
+                        "failed to decode baisync_rate_limits_tokens row — returning 0"
+                    );
                     0
                 }
-            } else {
+            },
+            Err(e) => {
+                tracing::warn!(
+                    event = "baisync.usage_read_rows_error",
+                    user_id = %user_id,
+                    hour_bucket = %bucket,
+                    error = %e,
+                    "baisync_rate_limits_tokens rows-result failed — returning 0"
+                );
                 0
             }
+        },
+        Err(e) => {
+            tracing::warn!(
+                event = "baisync.usage_read_query_error",
+                user_id = %user_id,
+                hour_bucket = %bucket,
+                error = %e,
+                "baisync_rate_limits_tokens SELECT failed — returning 0 (rate-limit may be stale)"
+            );
+            0
         }
-        Err(_) => 0,
     }
 }
 
-async fn increment_usage(db: &DbSession, user_id: &Uuid) {
+/// Increment the user's token counter by `delta` for the current hour.
+/// Counter tables require the SET x = x + ? form. DB errors are logged
+/// (not swallowed) so a broken counter is visible in operator logs — a
+/// silent drop would let the rate limit drift below the real usage.
+pub(crate) async fn increment_usage_tokens(db: &DbSession, user_id: &Uuid, delta: i64) {
+    if delta <= 0 {
+        return;
+    }
     let bucket = current_hour_bucket();
-    let _ = db
+    tracing::info!(
+        event = "baisync.usage_write_attempt",
+        user_id = %user_id,
+        hour_bucket = %bucket,
+        delta = delta,
+        "about to UPDATE baisync_rate_limits_tokens"
+    );
+    // Scylla 0.15's strict type-check rejects plain `i64` for counter
+    // columns on BOTH read and write paths. The increment must be wrapped
+    // in `Counter(delta)` even though CQL semantically takes a bigint
+    // addend — the driver ties the `?` placeholder to the column's
+    // declared type (`counter`), not to the addition's CQL type.
+    // Verified against a probe binary before committing this fix.
+    match db
         .query_unpaged(
-            "UPDATE inertial_eclipse.baisync_rate_limits SET count = count + 1 WHERE user_id = ? AND hour_bucket = ?",
-            (user_id, &bucket as &str),
+            "UPDATE inertial_eclipse.baisync_rate_limits_tokens SET tokens_used = tokens_used + ? WHERE user_id = ? AND hour_bucket = ?",
+            (Counter(delta), user_id, &bucket as &str),
         )
-        .await;
+        .await
+    {
+        Ok(_) => {
+            tracing::info!(
+                event = "baisync.usage_write_ok",
+                user_id = %user_id,
+                hour_bucket = %bucket,
+                delta = delta,
+                "UPDATE succeeded"
+            );
+        }
+        Err(e) => {
+            tracing::warn!(
+                event = "baisync.usage_write_error",
+                user_id = %user_id,
+                hour_bucket = %bucket,
+                delta = delta,
+                error = %e,
+                "baisync_rate_limits_tokens UPDATE failed — token usage NOT recorded for this turn"
+            );
+        }
+    }
+}
+
+/// Rough token estimator used as a fallback when the Gemini SSE stream
+/// does not emit `usageMetadata.totalTokenCount` (model variation,
+/// upstream outage, early abort). Prevents a silent 0-cost billing path
+/// that would cause `/usage` to stay at zero and the rate-limit block to
+/// never trip. The heuristic is 1 token ≈ 4 chars, biased toward
+/// counting more rather than less so users cannot game the counter by
+/// driving Gemini down a frame-format path that omits usage metadata.
+///
+/// Pure function — trivial to unit-test.
+fn estimate_tokens_from_chars(prompt_chars: usize, response_chars: usize) -> i64 {
+    // Round-up division so a 3-char input counts as 1 token (not 0).
+    fn ceil_div4(n: usize) -> usize {
+        n.div_ceil(4)
+    }
+    let total = ceil_div4(prompt_chars).saturating_add(ceil_div4(response_chars));
+    // Cap at i64::MAX defensively; in practice a single turn is well under
+    // 1e6 chars so overflow is unreachable.
+    total.min(i64::MAX as usize) as i64
 }
 
 // ─── Chat endpoint (SSE streaming) ────��─────────────────────────────────────
@@ -169,12 +262,14 @@ pub async fn chat(
 
     let user_id = auth_user.user_id;
 
-    // Rate limit check
-    let used = get_usage_count(&db, &user_id).await;
+    // Rate limit: tokens per hour per user (migration 107). Pre-check: if
+    // already at/over the budget, reject before calling Gemini. Post-stream
+    // increment happens after we read `usageMetadata.totalTokenCount`.
+    let used = get_usage_tokens(&db, &user_id).await;
     let limit = config.baisync_rate_limit;
     if used >= limit as i64 {
         return Err(AppError::BadRequest(format!(
-            "Limite de mensagens atingido ({}/{}). Tente novamente em breve.",
+            "Limite de tokens atingido ({}/{}). Tente novamente na próxima hora.",
             used, limit
         )));
     }
@@ -391,12 +486,10 @@ pub async fn chat(
     // Coalesce consecutive same-role messages (Gemini requirement)
     contents = coalesce_contents(contents);
 
-    // Increment usage counter
-    increment_usage(&db, &user_id).await;
-
-    // Calculate rate limit info for warnings
-    let new_used = used + 1;
-    let pct = (new_used as f64 / limit as f64) * 100.0;
+    // Pre-existing usage from prior turns this hour. Per-turn token count is
+    // extracted from `usageMetadata` during the SSE stream (below) and used
+    // both for the live rate_limit event and the post-stream counter bump.
+    let prior_used = used;
 
     // T1.3 — timeout envolve apenas a resposta inicial do HTTP POST (connect + headers).
     // O loop de frames SSE fica fora do escopo — streaming pode levar dezenas de segundos.
@@ -481,6 +574,11 @@ pub async fn chat(
     // Session id is Copy-safe (it's a TimeUuid wrapper); capture it so the
     // evaluator spawn can attach its verdict event to the same session.
     let evaluator_session_id = session_id_opt;
+    // Concurrency cap for the evaluator semaphore — passed through so Sophie
+    // and user-facing evaluators share the same configured budget
+    // (`EVALUATOR_MAX_CONCURRENT`), regardless of which spawner races to init
+    // the OnceLock semaphore first.
+    let evaluator_max_concurrent = config.evaluator_max_concurrent;
 
     // Create channel for SSE events
     let (tx, rx) = mpsc::channel::<Result<Event, Infallible>>(128);
@@ -670,6 +768,10 @@ pub async fn chat(
                 let mut stream = response.bytes_stream();
                 let mut buffer = String::new();
                 let mut full_content = String::new();
+                // Track the max totalTokenCount seen across SSE frames — Gemini
+                // updates this cumulatively and the last frame carries the
+                // final tally for this turn.
+                let mut total_tokens: i64 = 0;
 
                 use futures::StreamExt;
                 while let Some(chunk_result) = stream.next().await {
@@ -690,6 +792,16 @@ pub async fn chat(
                                     if let Ok(parsed) =
                                         serde_json::from_str::<serde_json::Value>(data)
                                     {
+                                        // Record the running token tally whenever a
+                                        // frame reports it. Some frames omit it; we
+                                        // keep the highest seen.
+                                        if let Some(t) =
+                                            parsed["usageMetadata"]["totalTokenCount"].as_i64()
+                                        {
+                                            if t > total_tokens {
+                                                total_tokens = t;
+                                            }
+                                        }
                                         // Gemini streaming: extract text from candidates
                                         if let Some(text) = parsed["candidates"][0]["content"]["parts"][0]["text"].as_str() {
                                             full_content.push_str(text);
@@ -710,6 +822,57 @@ pub async fn chat(
                         }
                     }
                 }
+
+                // Post-stream: bill the tokens this turn consumed to the
+                // user's hour-bucket counter.
+                //
+                // Primary path: Gemini's SSE frames report
+                // `usageMetadata.totalTokenCount` cumulatively; we keep the
+                // max seen.
+                //
+                // Fallback: when the stream completed with non-empty content
+                // but no metadata (model variation, upstream format change,
+                // or an early frame cutoff), we estimate tokens from the
+                // user message + assistant reply char counts (1 token ≈ 4
+                // chars). Without this fallback, `/usage` would stay at 0
+                // for the whole session and the per-hour block would never
+                // trip — the bug this commit fixes.
+                let billed_tokens: i64 = if total_tokens > 0 {
+                    total_tokens
+                } else if !full_content.is_empty() {
+                    let estimated = estimate_tokens_from_chars(
+                        session_user_msg.chars().count(),
+                        full_content.chars().count(),
+                    );
+                    tracing::warn!(
+                        event = "baisync.usage_metadata_missing",
+                        user_id = %user_id,
+                        response_chars = full_content.chars().count(),
+                        prompt_chars = session_user_msg.chars().count(),
+                        estimated_tokens = estimated,
+                        "Gemini SSE did not report usageMetadata; billing estimated tokens"
+                    );
+                    estimated
+                } else {
+                    0
+                };
+                tracing::info!(
+                    event = "baisync.post_stream_billing",
+                    user_id = %user_id,
+                    total_tokens_reported = total_tokens,
+                    billed_tokens = billed_tokens,
+                    response_chars = full_content.chars().count(),
+                    "post-stream billing decision"
+                );
+                if billed_tokens > 0 {
+                    increment_usage_tokens(&db, &user_id, billed_tokens).await;
+                }
+                let new_used = prior_used + billed_tokens;
+                let pct = if limit > 0 {
+                    (new_used as f64 / limit as f64) * 100.0
+                } else {
+                    0.0
+                };
 
                 // S1.2 — Log-only XML/JSON validation of baisync-action
                 // payloads. Foundation for W2.1 evaluator. Must not touch
@@ -750,31 +913,36 @@ pub async fn chat(
                     evaluator_user_msg.clone(),
                     full_content.clone(),
                     &evaluator_system_prompt,
+                    evaluator_max_concurrent,
                 );
 
-                // Send rate limit warning if approaching limit
-                if pct >= 60.0 {
-                    let warning_msg = if pct >= 100.0 {
-                        "Limite atingido. Tente novamente em breve.".to_string()
-                    } else if pct >= 90.0 {
-                        format!("Quase no limite! {}% usado.", pct as i32)
-                    } else if pct >= 80.0 {
-                        format!("Atenção: {}% do limite usado.", pct as i32)
-                    } else {
-                        format!("{}% do limite de mensagens usado.", pct as i32)
-                    };
-                    let rl_data = serde_json::json!({
-                        "used": new_used,
-                        "limit": limit,
-                        "pct": pct as i32,
-                        "warning": warning_msg,
-                    });
-                    let _ = tx
-                        .send(Ok(Event::default()
-                            .event("rate_limit")
-                            .data(rl_data.to_string())))
-                        .await;
-                }
+                // Always emit the `rate_limit` SSE event so the frontend's
+                // `rateLimit` store stays in sync without a separate
+                // fetchRateLimit round-trip. `warning` is populated only
+                // when we cross a threshold — the UI uses its presence to
+                // decide whether to render the warning banner.
+                let warning_msg = if pct >= 100.0 {
+                    Some("Limite de tokens atingido. Tente novamente em breve.".to_string())
+                } else if pct >= 90.0 {
+                    Some(format!("Quase no limite! {}% dos tokens usados.", pct as i32))
+                } else if pct >= 80.0 {
+                    Some(format!("Atenção: {}% dos tokens usados.", pct as i32))
+                } else if pct >= 60.0 {
+                    Some(format!("{}% do limite de tokens usado.", pct as i32))
+                } else {
+                    None
+                };
+                let rl_data = serde_json::json!({
+                    "used": new_used,
+                    "limit": limit,
+                    "pct": pct as i32,
+                    "warning": warning_msg,
+                });
+                let _ = tx
+                    .send(Ok(Event::default()
+                        .event("rate_limit")
+                        .data(rl_data.to_string())))
+                    .await;
 
                 let _ = tx
                     .send(Ok(Event::default().event("done").data(
@@ -877,7 +1045,7 @@ pub async fn rate_limit(
     Extension(config): Extension<Config>,
     Extension(auth_user): Extension<AuthUser>,
 ) -> Result<Json<RateLimitResponse>, AppError> {
-    let used = get_usage_count(&db, &auth_user.user_id).await;
+    let used = get_usage_tokens(&db, &auth_user.user_id).await;
 
     Ok(Json(RateLimitResponse {
         used,
@@ -1092,8 +1260,8 @@ pub async fn platform_health(
     let raw = llm::snapshot_circuit_breaker_state();
     let circuit_breaker_state = merge_with_canonical_providers(raw);
 
-    // 2. Baisync rate limit — current-hour count vs. configured limit.
-    let used = get_usage_count(&db, &user_id).await;
+    // 2. Baisync rate limit — current-hour token usage vs. configured limit.
+    let used = get_usage_tokens(&db, &user_id).await;
     let baisync_rate_limit_usage = BaisyncRateLimitSnapshot {
         used,
         limit: config.baisync_rate_limit,
@@ -1307,6 +1475,25 @@ pub async fn get_session(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Fallback token estimator: 1 token ≈ 4 chars, round up per side so a
+    /// 3-char input counts as 1 token (not 0). Exercised by the Sophie chat
+    /// handler when Gemini's SSE stream omits `usageMetadata.totalTokenCount`.
+    #[test]
+    fn test_estimate_tokens_from_chars() {
+        // Zero chars → zero tokens.
+        assert_eq!(estimate_tokens_from_chars(0, 0), 0);
+        // 4 chars in each side → exactly 1 + 1 = 2 tokens.
+        assert_eq!(estimate_tokens_from_chars(4, 4), 2);
+        // Partial buckets round up (3 chars is 1 token, not 0).
+        assert_eq!(estimate_tokens_from_chars(3, 0), 1);
+        assert_eq!(estimate_tokens_from_chars(0, 3), 1);
+        // Mixed: 5 chars → ceil(5/4) = 2, 7 chars → ceil(7/4) = 2, total 4.
+        assert_eq!(estimate_tokens_from_chars(5, 7), 4);
+        // Larger realistic values: 200-char question, 800-char reply.
+        // ceil(200/4) + ceil(800/4) = 50 + 200 = 250 tokens.
+        assert_eq!(estimate_tokens_from_chars(200, 800), 250);
+    }
 
     /// Renders the Sophie system prompt with deterministic fixture values and
     /// checks it against a frozen snapshot. This guards the markdown extraction

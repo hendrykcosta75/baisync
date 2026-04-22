@@ -7,7 +7,7 @@ import { useAuthStore } from '@/store/useAuthStore'
 import {
   LayoutDashboard, Bot, Banknote, CalendarDays, KeyRound, LogOut,
   MessageSquare, Users, Target, Map, Crosshair, Video,
-  ChevronDown,
+  ChevronDown, Sparkles, Server,
 } from 'lucide-react'
 import { WorkspaceSwitcher } from '@/components/workspace/workspace-switcher'
 import { useWorkspaceStore } from '@/store/useWorkspaceStore'
@@ -59,6 +59,8 @@ const sections: NavSection[] = [
     links: [
       { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
       { name: 'Assistentes', href: '/dashboard/assistants', icon: Bot },
+      { name: 'Skills', href: '/dashboard/skills', icon: Sparkles },
+      { name: 'Servidores MCP', href: '/dashboard/mcp-servers', icon: Server },
     ],
   },
   {

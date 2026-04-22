@@ -23,6 +23,7 @@ use uuid::Uuid;
 use crate::config::Config;
 use crate::db::DbSession;
 use crate::errors::AppError;
+use crate::handlers::baisync::{get_usage_tokens, increment_usage_tokens};
 use crate::middleware::auth::AuthUser;
 use crate::services::session::{
     append_event, create_session, SessionEventType, SessionId,
@@ -137,8 +138,9 @@ pub async fn voice_live_ws(
         }
     };
 
+    let limit = config.baisync_rate_limit;
     Ok(ws.on_upgrade(move |socket| async move {
-        if let Err(e) = run_bridge(socket, api_key, user_id, session_id).await {
+        if let Err(e) = run_bridge(socket, api_key, db, user_id, limit, session_id).await {
             tracing::warn!("Baisync voice bridge ended with error: {e}");
         }
     }))
@@ -293,7 +295,9 @@ fn now_ms() -> i64 {
 async fn run_bridge(
     browser_ws: WebSocket,
     api_key: String,
+    db: DbSession,
     user_id: Uuid,
+    rate_limit: i32,
     session_id: Option<SessionId>,
 ) -> Result<(), String> {
     let mut last_err = String::from("unknown");
@@ -359,6 +363,10 @@ async fn run_bridge(
     let mut model_turn_active = false;
     let mut model_turn_start_ms: i64 = 0;
     let mut model_transcript_buf = String::new();
+    // Cumulative token total reported by Gemini Live. `usageMetadata` arrives
+    // in a standalone frame (no `serverContent`) so we track the last-seen
+    // total and only bill the delta to avoid double-counting across frames.
+    let mut tokens_billed: i64 = 0;
 
     loop {
         tokio::select! {
@@ -489,6 +497,37 @@ async fn run_bridge(
                         }).to_string().into()
                     )).await;
                     continue;
+                }
+
+                // `usageMetadata` arrives as a standalone top-level frame
+                // (separate from `serverContent`) in Gemini Live. The value
+                // is cumulative for the session, so we only bill the delta
+                // since the last time we saw it to avoid double-counting.
+                if !user_id.is_nil() {
+                    if let Some(total) = value
+                        .pointer("/usageMetadata/totalTokenCount")
+                        .and_then(|v| v.as_i64())
+                    {
+                        let delta = total - tokens_billed;
+                        if delta > 0 {
+                            tokens_billed = total;
+                            increment_usage_tokens(&db, &user_id, delta).await;
+                            let new_used = get_usage_tokens(&db, &user_id).await;
+                            let pct = if rate_limit > 0 {
+                                ((new_used as f64 / rate_limit as f64) * 100.0) as i32
+                            } else {
+                                0_i32
+                            };
+                            let _ = browser_tx.send(Message::Text(
+                                serde_json::json!({
+                                    "type": "rate_limit",
+                                    "used": new_used,
+                                    "limit": rate_limit,
+                                    "pct": pct,
+                                }).to_string().into()
+                            )).await;
+                        }
+                    }
                 }
 
                 if let Some(server_content) = value.get("serverContent") {
@@ -633,6 +672,7 @@ async fn run_bridge(
                             }
                             model_turn_active = false;
                         }
+
                         let _ = browser_tx.send(Message::Text(
                             serde_json::json!({ "type": "turn_complete" }).to_string().into()
                         )).await;

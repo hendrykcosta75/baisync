@@ -161,6 +161,7 @@ pub fn spawn_evaluation(
                     conversation_id = %conversation_id,
                     "evaluator semaphore saturated; dropping evaluation"
                 );
+                crate::services::metrics::inc_evaluator("user", "semaphore_full").await;
                 return;
             }
         };
@@ -177,6 +178,7 @@ pub fn spawn_evaluation(
                 conversation_id = %conversation_id,
                 "evaluator spawned without a usable user API key; giving up"
             );
+            crate::services::metrics::inc_evaluator("user", "no_api_key").await;
             return;
         }
 
@@ -229,6 +231,7 @@ pub fn spawn_evaluation(
                     error = %e,
                     "evaluator LLM call failed; dropping verdict"
                 );
+                crate::services::metrics::inc_evaluator("user", "llm_error").await;
                 return;
             }
             Err(_) => {
@@ -239,6 +242,7 @@ pub fn spawn_evaluation(
                     timeout_secs = config.evaluator_timeout_secs,
                     "evaluator LLM call timed out; dropping verdict"
                 );
+                crate::services::metrics::inc_evaluator("user", "timeout").await;
                 return;
             }
         };
@@ -253,6 +257,7 @@ pub fn spawn_evaluation(
                     raw = %response.content.chars().take(400).collect::<String>(),
                     "evaluator response was not valid JSON; treating as no-issues"
                 );
+                crate::services::metrics::inc_evaluator("user", "parse_error").await;
                 return;
             }
         };
@@ -271,6 +276,7 @@ pub fn spawn_evaluation(
                     serde_json::json!({ "ok": true, "issues": [] }).to_string();
                 append_event(user_id, sid, SessionEventType::EvaluatorVerdict, payload);
             }
+            crate::services::metrics::inc_evaluator("user", "ok").await;
             let _ = db; // acknowledge capture; the OK branch does not write to DB.
             return;
         }
@@ -285,6 +291,7 @@ pub fn spawn_evaluation(
             issue_count = verdict.issues.len(),
             "evaluator detected issues"
         );
+        crate::services::metrics::inc_evaluator("user", "issues").await;
 
         // Persist the verdict on the session log. Fire-and-forget
         // through the T2.1 mpsc — never blocks.
@@ -366,6 +373,7 @@ pub fn spawn_sophie_evaluation(
     user_message: String,
     llm_reply: String,
     system_prompt: &str,
+    max_concurrent: usize,
 ) {
     // Sophie uses Gemini (BAISYNC_API_KEY). Reuse the cheap model table so
     // provider-specific pricing stays consistent with the user-facing path.
@@ -388,15 +396,12 @@ pub fn spawn_sophie_evaluation(
     };
 
     // Global concurrency cap: reuse the process-wide semaphore so Sophie
-    // evaluations share the same budget as user-facing evaluations. This
-    // prevents a burst of Sophie chats from starving real-assistant quality
-    // gates (or vice versa).
-    //
-    // `semaphore()` caches its permit count on first call — if spawn_evaluation
-    // has already initialized it with `config.evaluator_max_concurrent`, we
-    // reuse that value. If not (Sophie-only deployments), default to 20.
-    const SOPHIE_DEFAULT_CONCURRENCY: usize = 20;
-    let sem = semaphore(SOPHIE_DEFAULT_CONCURRENCY);
+    // evaluations share the same budget as user-facing evaluations.
+    // `max_concurrent` is authoritative only on the FIRST caller that reaches
+    // `semaphore()` (OnceLock); subsequent callers get whoever won the init
+    // race. Callers MUST pass `config.evaluator_max_concurrent` so the cap is
+    // consistent regardless of which spawner runs first.
+    let sem = semaphore(max_concurrent);
 
     // Match the primary evaluator's 15s wall-clock timeout. A slower Gemini
     // response isn't worth blocking a permit slot for.
@@ -412,6 +417,7 @@ pub fn spawn_sophie_evaluation(
                     user_id = %user_id,
                     "evaluator semaphore saturated; dropping Sophie evaluation"
                 );
+                crate::services::metrics::inc_evaluator("sophie", "semaphore_full").await;
                 return;
             }
         };
@@ -422,6 +428,7 @@ pub fn spawn_sophie_evaluation(
                 user_id = %user_id,
                 "BAISYNC_API_KEY missing; skipping Sophie evaluation"
             );
+            crate::services::metrics::inc_evaluator("sophie", "no_api_key").await;
             return;
         }
 
@@ -466,6 +473,7 @@ pub fn spawn_sophie_evaluation(
                     error = %e,
                     "Sophie evaluator LLM call failed; dropping verdict"
                 );
+                crate::services::metrics::inc_evaluator("sophie", "llm_error").await;
                 return;
             }
             Err(_) => {
@@ -475,6 +483,7 @@ pub fn spawn_sophie_evaluation(
                     timeout_secs = SOPHIE_EVAL_TIMEOUT_SECS,
                     "Sophie evaluator LLM call timed out; dropping verdict"
                 );
+                crate::services::metrics::inc_evaluator("sophie", "timeout").await;
                 return;
             }
         };
@@ -488,6 +497,7 @@ pub fn spawn_sophie_evaluation(
                     raw = %response.content.chars().take(400).collect::<String>(),
                     "Sophie evaluator response was not valid JSON; treating as no-issues"
                 );
+                crate::services::metrics::inc_evaluator("sophie", "parse_error").await;
                 return;
             }
         };
@@ -503,6 +513,7 @@ pub fn spawn_sophie_evaluation(
                     serde_json::json!({ "ok": true, "issues": [] }).to_string();
                 append_event(user_id, sid, SessionEventType::EvaluatorVerdict, payload);
             }
+            crate::services::metrics::inc_evaluator("sophie", "ok").await;
             let _ = db; // acknowledge capture; the OK branch does not write to DB.
             return;
         }
@@ -515,6 +526,7 @@ pub fn spawn_sophie_evaluation(
             issue_count = verdict.issues.len(),
             "Sophie evaluator detected issues"
         );
+        crate::services::metrics::inc_evaluator("sophie", "issues").await;
 
         if let Some(sid) = session_id {
             let payload = serde_json::json!({
@@ -634,8 +646,11 @@ fn parse_verdict(raw: &str) -> Option<EvaluatorVerdict> {
 
 /// Multi-tenancy: scopes by the full `llm_call_logs` partition key
 /// `((user_id, assistant_id), id)` — no cross-tenant write is possible.
-/// We locate the evaluator row via (kind='evaluator', conversation_id,
-/// freshly-inserted timestamp range) and UPDATE its `error` column.
+/// We locate the evaluator row by scanning the tenant partition
+/// newest-first and filtering in-memory for `kind='evaluator' AND
+/// conversation_id = target`. No `ALLOW FILTERING`: the partition is
+/// fully specified, clustering order is `id DESC`, and the evaluator row
+/// is always the most recent write for this partition at call time.
 ///
 /// The evaluator LLM call above emitted a Finished/Failed row through
 /// the T1.2 mpsc. Because that drain is asynchronous, the row may not
@@ -649,21 +664,25 @@ async fn mark_evaluator_row_with_issues(
     conversation_id: Uuid,
     issues_joined: &str,
 ) -> Result<(), crate::errors::AppError> {
-    // Small bounded retry (three attempts, ~600ms total) — any longer
-    // and we're wasting time on a telemetry side-effect.
+    // Bound the partition scan. The evaluator row lands newest-first
+    // (clustering DESC on id); we look at the last handful of rows only.
+    // Higher than 20 would waste bytes; lower risks missing the row if
+    // the primary turn already wrote a few rows between the evaluator
+    // spawn and this UPDATE.
+    const SCAN_LIMIT: i32 = 20;
+
+    // Bounded retry (three attempts, ~600ms total) — any longer and
+    // we're wasting time on a telemetry side-effect.
     for attempt in 0..3u8 {
         if attempt > 0 {
             tokio::time::sleep(Duration::from_millis(200)).await;
         }
 
-        // Find the most recent evaluator row for this
-        // (user_id, assistant_id) partition tied to this conversation.
         let select_res = db
             .query_unpaged(
-                "SELECT id FROM inertial_eclipse.llm_call_logs \
-                 WHERE user_id = ? AND assistant_id = ? AND kind = ? AND conversation_id = ? \
-                 LIMIT 1 ALLOW FILTERING",
-                (&user_id, &assistant_id, "evaluator", &conversation_id),
+                "SELECT id, kind, conversation_id FROM inertial_eclipse.llm_call_logs \
+                 WHERE user_id = ? AND assistant_id = ? LIMIT ?",
+                (&user_id, &assistant_id, SCAN_LIMIT),
             )
             .await;
 
@@ -687,15 +706,11 @@ async fn mark_evaluator_row_with_issues(
             }
         };
 
-        let row = match rows.maybe_first_row::<(Uuid,)>() {
-            Ok(Some(r)) => r,
-            Ok(None) => {
-                // Not yet visible — keep retrying up to the limit.
-                if attempt == 2 {
-                    return Ok(());
-                }
-                continue;
-            }
+        // Row tuple: (id, kind, conversation_id). Non-PK columns are
+        // nullable per Cassandra semantics.
+        type LogRow = (scylla::frame::value::CqlTimeuuid, Option<String>, Option<Uuid>);
+        let typed_rows = match rows.rows::<LogRow>() {
+            Ok(it) => it,
             Err(e) => {
                 if attempt == 2 {
                     return Err(crate::errors::AppError::DatabaseError(e.to_string()));
@@ -704,7 +719,28 @@ async fn mark_evaluator_row_with_issues(
             }
         };
 
-        let id = row.0;
+        let mut matched_id: Option<Uuid> = None;
+        for row in typed_rows.flatten() {
+            if row.1.as_deref() == Some("evaluator")
+                && row.2 == Some(conversation_id)
+            {
+                matched_id = Some(Uuid::from(row.0));
+                break;
+            }
+        }
+
+        let id = match matched_id {
+            Some(id) => id,
+            None => {
+                // Not yet visible (mpsc drain hasn't flushed yet) or out of
+                // scan window — retry up to the limit.
+                if attempt == 2 {
+                    return Ok(());
+                }
+                continue;
+            }
+        };
+
         db.query_unpaged(
             "UPDATE inertial_eclipse.llm_call_logs \
              SET error = ? \

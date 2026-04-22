@@ -40,6 +40,7 @@ const SLASH_COMMANDS: SlashCommand[] = [
   { name: '/clear',        desc: 'limpar conversa',                kind: 'local' },
   { name: '/whoami',       desc: 'exibir info do usuário',         kind: 'local' },
   { name: '/status',       desc: 'status da conta / rate limit',   kind: 'local' },
+  { name: '/usage',        desc: 'tokens consumidos nesta hora',   kind: 'local' },
   { name: '/assistants',   desc: 'listar meus assistentes',        kind: 'ai'    },
   { name: '/new',          desc: 'criar novo assistente',          kind: 'ai'    },
   { name: '/integrations', desc: 'ver integrações disponíveis',    kind: 'ai'    },
@@ -203,7 +204,7 @@ export function BaisyncPanel() {
   }, [])
 
   const handleLiveMessage = React.useCallback((raw: string) => {
-    let msg: { type: string; data?: string; mimeType?: string; role?: string; text?: string; message?: string }
+    let msg: { type: string; data?: string; mimeType?: string; role?: string; text?: string; message?: string; used?: number; limit?: number; pct?: number; warning?: string }
     try { msg = JSON.parse(raw) } catch { return }
     switch (msg.type) {
       case 'ready':
@@ -219,6 +220,13 @@ export function BaisyncPanel() {
         appendLiveTranscript(role, text)
         break
       }
+      case 'rate_limit':
+        if (msg.used !== undefined && msg.limit !== undefined && msg.pct !== undefined) {
+          useBaisyncStore.setState({
+            rateLimit: { used: msg.used, limit: msg.limit, resetAt: '', pct: msg.pct, warning: msg.warning },
+          })
+        }
+        break
       case 'turn_complete':
       case 'interrupted':
         // No UI change here; transcript already reflects the turn
@@ -563,7 +571,23 @@ export function BaisyncPanel() {
             const pct = rl?.pct ?? 0
             const streaming = isStreaming ? 'streaming' : 'ocioso'
             reply(
-              `estado: **${streaming}**\n\nrate-limit: ${used}/${limit} (${pct}%)`,
+              `estado: **${streaming}**\n\ntokens esta hora: ${used}/${limit} (${pct}%)`,
+            )
+          })
+          return true
+        }
+        case '/usage': {
+          echo()
+          void fetchRateLimit().then(() => {
+            const rl = useBaisyncStore.getState().rateLimit
+            const used = rl?.used ?? 0
+            const limit = rl?.limit ?? 0
+            const pct = rl?.pct ?? 0
+            const remaining = Math.max(0, limit - used)
+            reply(
+              `**Tokens consumidos nesta hora**\n\n` +
+                `${used.toLocaleString('pt-BR')} / ${limit.toLocaleString('pt-BR')} tokens (${pct}%)\n` +
+                `restam ${remaining.toLocaleString('pt-BR')} tokens até o próximo reset.`,
             )
           })
           return true
@@ -871,19 +895,26 @@ export function BaisyncPanel() {
         )}
       </div>
 
-      {/* Rate limit bar */}
-      {rateLimit && rateLimit.pct >= 60 && (
+      {/* Rate limit bar — shown whenever the user has spent any tokens this
+           hour so `/usage` feedback is always visible, not just past 60%. */}
+      {rateLimit && rateLimit.pct >= 90 && (
         <div className="px-4 py-1.5" style={{ background: 'rgba(255,255,255,0.02)', borderTop: '1px solid rgba(255,255,255,0.05)' }}>
           <div className="flex items-center justify-between mb-1">
-            <span className="text-[10px] text-subtle">{rateLimit.warning || `${rateLimit.used}/${rateLimit.limit} mensagens`}</span>
+            <span className="text-[10px] text-subtle">
+              {rateLimit.warning || `${rateLimit.used.toLocaleString('pt-BR')}/${rateLimit.limit.toLocaleString('pt-BR')} tokens`}
+            </span>
             <span className="text-[10px] text-subtle">{rateLimit.pct}%</span>
           </div>
           <div className="w-full h-1 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.06)' }}>
             <div
               className="h-full rounded-full transition-all"
               style={{
-                width: `${Math.min(rateLimit.pct, 100)}%`,
-                background: rateLimit.pct >= 90 ? '#ef4444' : rateLimit.pct >= 80 ? '#ff6b2c' : '#f59e0b',
+                width: `${Math.min(Math.max(rateLimit.pct, 2), 100)}%`,
+                background:
+                  rateLimit.pct >= 90 ? '#ef4444'
+                  : rateLimit.pct >= 80 ? '#ff6b2c'
+                  : rateLimit.pct >= 60 ? '#f59e0b'
+                  : '#ff6b2c66',
               }}
             />
           </div>

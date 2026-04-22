@@ -126,6 +126,52 @@ pub fn build_router(
                 .put(handlers::assistants::update)
                 .delete(handlers::assistants::delete),
         )
+        // Skills (workspace-scoped capability library)
+        .route(
+            "/api/skills",
+            get(handlers::skills::list).post(handlers::skills::create),
+        )
+        .route(
+            "/api/skills/{id}",
+            get(handlers::skills::get)
+                .patch(handlers::skills::update)
+                .delete(handlers::skills::delete),
+        )
+        .route(
+            "/api/assistants/{assistant_id}/skills",
+            get(handlers::skills::list_for_assistant),
+        )
+        .route(
+            "/api/assistants/{assistant_id}/skills/{skill_id}",
+            post(handlers::skills::link).delete(handlers::skills::unlink),
+        )
+        // MCP servers (workspace-scoped external tool providers)
+        .route(
+            "/api/mcp-servers",
+            get(handlers::mcp_servers::list).post(handlers::mcp_servers::create),
+        )
+        .route(
+            "/api/mcp-servers/{id}",
+            get(handlers::mcp_servers::get)
+                .patch(handlers::mcp_servers::update)
+                .delete(handlers::mcp_servers::delete),
+        )
+        .route(
+            "/api/mcp-servers/{id}/test",
+            post(handlers::mcp_servers::test_connection),
+        )
+        .route(
+            "/api/mcp-servers/{id}/refresh-tools",
+            post(handlers::mcp_servers::refresh_tools),
+        )
+        .route(
+            "/api/assistants/{assistant_id}/mcp-servers",
+            get(handlers::mcp_servers::list_for_assistant),
+        )
+        .route(
+            "/api/assistants/{assistant_id}/mcp-servers/{server_id}",
+            post(handlers::mcp_servers::link).delete(handlers::mcp_servers::unlink),
+        )
         // Tools
         .route("/api/tools/test-url", post(handlers::tools::test_url))
         .route(

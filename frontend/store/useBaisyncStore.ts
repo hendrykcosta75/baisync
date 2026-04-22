@@ -286,12 +286,15 @@ export const useBaisyncStore = create<BaisyncState>()(
   fetchRateLimit: async () => {
     try {
       const data = await apiFetch<{ used: number; limit: number; reset_at: string }>('/api/baisync/rate-limit')
+      const pct = data.limit > 0
+        ? Math.min(100, Math.round((data.used / data.limit) * 100))
+        : 0
       set({
         rateLimit: {
           used: data.used,
           limit: data.limit,
           resetAt: data.reset_at,
-          pct: Math.round((data.used / data.limit) * 100),
+          pct,
         },
       })
     } catch {
@@ -486,7 +489,7 @@ export const useBaisyncStore = create<BaisyncState>()(
                     limit: data.limit,
                     resetAt: '',
                     pct: data.pct,
-                    warning: data.warning,
+                    warning: data.warning ?? undefined,
                   },
                 })
               } else if (eventType === 'error' && data.error) {
@@ -673,7 +676,7 @@ export const useBaisyncStore = create<BaisyncState>()(
               if (eventType === 'token' && data.text) {
                 fullContent += data.text
               } else if (eventType === 'rate_limit') {
-                set({ rateLimit: { used: data.used, limit: data.limit, resetAt: '', pct: data.pct, warning: data.warning } })
+                set({ rateLimit: { used: data.used, limit: data.limit, resetAt: '', pct: data.pct, warning: data.warning ?? undefined } })
               } else if (eventType === 'done') {
                 streamDone = true
               }
