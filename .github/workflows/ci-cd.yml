@@ -232,9 +232,13 @@ jobs:
       - backend-test
       - frontend-test
     outputs:
-      backend: ${{ needs.changes.outputs.backend }}
-      frontend: ${{ needs.changes.outputs.frontend }}
+      backend: ${{ steps.flags.outputs.backend }}
+      frontend: ${{ steps.flags.outputs.frontend }}
     steps:
+      - id: flags
+        run: |
+          echo "backend=${{ needs.changes.outputs.backend }}" >> $GITHUB_OUTPUT
+          echo "frontend=${{ needs.changes.outputs.frontend }}" >> $GITHUB_OUTPUT
       - run: echo "Security + tests passed — gate open"
 
   # ── Deploy (backend primeiro, depois frontend) ───────────────────────────────
