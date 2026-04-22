@@ -322,11 +322,13 @@ const ACTION_LABELS: Record<string, { running: string; done: string; error: stri
   link_mcp_server: { running: 'Vinculando servidor MCP...', done: 'Servidor MCP vinculado', error: 'Falha ao vincular servidor MCP' },
   unlink_mcp_server: { running: 'Desvinculando servidor MCP...', done: 'Servidor MCP desvinculado', error: 'Falha ao desvincular servidor MCP' },
   refresh_mcp_tools: { running: 'Atualizando ferramentas MCP...', done: 'Ferramentas MCP atualizadas', error: 'Falha ao atualizar ferramentas MCP' },
+  tirar_print: { running: 'Capturando tela...', done: 'Screenshot enviado', error: 'Falha ao capturar tela' },
 }
 
 interface ActionResult {
   status: 'done' | 'error'
   createdAssistantId?: string
+  attachments?: BaisyncAttachment[]
 }
 
 // Runs all actions in a message sequentially, passing context between them
@@ -349,6 +351,7 @@ function ActionSequence({ actions }: { actions: BaisyncAction[] }) {
     const runAll = async () => {
       // Context shared across sequential actions
       let createdAssistantId: string | null = null
+      const allAttachments: BaisyncAttachment[] = []
 
       for (let i = 0; i < actions.length; i++) {
         const action = actions[i]
@@ -358,6 +361,9 @@ function ActionSequence({ actions }: { actions: BaisyncAction[] }) {
           const result = await executeAction(action, createdAssistantId)
           if (result.createdAssistantId) {
             createdAssistantId = result.createdAssistantId
+          }
+          if (result.attachments?.length) {
+            allAttachments.push(...result.attachments)
           }
           setResults((prev) => new Map(prev).set(i, { status: result.status }))
           if (result.status === 'error') break
@@ -378,7 +384,9 @@ function ActionSequence({ actions }: { actions: BaisyncAction[] }) {
 
       // Send all accumulated action results as one backend call so Sophie
       // gets a coherent summary instead of triggering a new round per action.
-      await useBaisyncStore.getState().flushActionResults()
+      await useBaisyncStore.getState().flushActionResults(
+        allAttachments.length > 0 ? allAttachments : undefined
+      )
     }
 
     const isValidUUID = (id: string): boolean =>
@@ -1590,6 +1598,22 @@ function ActionSequence({ actions }: { actions: BaisyncAction[] }) {
         const res = await apiFetch<{ tools_count: number }>(`/api/mcp-servers/${data.server_id}/refresh-tools`, { method: 'POST' })
         useBaisyncStore.getState().queueActionResult(`Ferramentas MCP atualizadas: ${res.tools_count} tools encontradas.`)
         return { status: 'done' }
+      }
+
+      if (action.action === 'tirar_print') {
+        const { toJpeg } = await import('html-to-image')
+        const dataUrl = await toJpeg(document.body, {
+          quality: 0.75,
+          pixelRatio: 0.5,
+          filter: (node) => !(node as Element).hasAttribute?.('data-baisync-panel'),
+        })
+        const att: BaisyncAttachment = {
+          name: 'screenshot.jpg',
+          mime_type: 'image/jpeg',
+          data_base64: dataUrl.split(',')[1],
+        }
+        useBaisyncStore.getState().queueActionResult('Screenshot capturado com sucesso.')
+        return { status: 'done', attachments: [att] }
       }
 
       return { status: 'done' }

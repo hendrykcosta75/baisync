@@ -198,12 +198,13 @@ async fn build_voice_system_prompt(db: &DbSession, user_id: &Uuid) -> String {
 - Não use markdown, listas, tabelas, XML ou blocos de código.
 - Se precisar listar, fale: "primeiro…, depois…, por último…".
 
-## Skills disponíveis
-Você pode chamar `ativar_skill` com os seguintes nomes:
-- `criar_atendente`: guia passo a passo para criar um assistente de IA
-- `sobre_plataforma`: dúvidas sobre recursos e funcionamento da plataforma
-
-Use a skill quando o usuário pedir detalhes sobre esses tópicos.
+## Ferramentas disponíveis
+- `ativar_skill(nome)`: ativa guia detalhado. Nomes: `criar_atendente`, `sobre_plataforma`.
+  Use quando o usuário quiser criar um assistente ou entender a plataforma.
+- `tirar_print()`: captura screenshot da tela do usuário.
+  Use quando o usuário mencionar confusão com uma página, pedir ajuda visual, ou quando
+  ver a tela ajudaria a dar instruções mais precisas. Após receber a imagem, descreva
+  brevemente o que vê e guie o usuário passo a passo.
 
 ## Escopo
 - Foque em: criar/configurar assistentes, planos, integrações, dúvidas sobre a plataforma Baisync.
@@ -239,21 +240,32 @@ async fn open_google_session(api_key: &str, system_prompt: &str) -> Result<(Goog
             "inputAudioTranscription": {},
             "outputAudioTranscription": {},
             "tools": [{
-                "functionDeclarations": [{
-                    "name": "ativar_skill",
-                    "description": "Ativa uma skill para obter guia detalhado. Use quando o usuário quiser criar um assistente ('criar_atendente') ou tirar dúvidas sobre a plataforma ('sobre_plataforma').",
-                    "parameters": {
-                        "type": "OBJECT",
-                        "properties": {
-                            "nome": {
-                                "type": "STRING",
-                                "description": "Identificador da skill",
-                                "enum": ["criar_atendente", "sobre_plataforma"]
-                            }
-                        },
-                        "required": ["nome"]
+                "functionDeclarations": [
+                    {
+                        "name": "ativar_skill",
+                        "description": "Ativa uma skill para obter guia detalhado. Use quando o usuário quiser criar um assistente ('criar_atendente') ou tirar dúvidas sobre a plataforma ('sobre_plataforma').",
+                        "parameters": {
+                            "type": "OBJECT",
+                            "properties": {
+                                "nome": {
+                                    "type": "STRING",
+                                    "description": "Identificador da skill",
+                                    "enum": ["criar_atendente", "sobre_plataforma"]
+                                }
+                            },
+                            "required": ["nome"]
+                        }
+                    },
+                    {
+                        "name": "tirar_print",
+                        "description": "Captura um screenshot da tela atual do usuário para você ver o que ele está visualizando. Use quando o usuário pedir ajuda com algo que está vendo na tela, mencionar que está confuso com alguma página, ou quando o contexto visual ajudaria a dar uma resposta mais precisa. Após receber a imagem, descreva o que vê e dê instruções contextuais.",
+                        "parameters": {
+                            "type": "OBJECT",
+                            "properties": {},
+                            "required": []
+                        }
                     }
-                }]
+                ]
             }]
         }
     });
@@ -499,6 +511,21 @@ async fn run_bridge(
                                 user_transcript_buf.push_str(text);
                                 let frame = serde_json::json!({
                                     "realtimeInput": { "text": text }
+                                });
+                                if google_tx.send(TMessage::Text(frame.to_string().into())).await.is_err() {
+                                    break;
+                                }
+                            }
+                            "screenshot_response" => {
+                                let Some(data) = parsed.get("data").and_then(|v| v.as_str()) else { continue };
+                                let mime = parsed.get("mimeType").and_then(|v| v.as_str()).unwrap_or("image/jpeg");
+                                let frame = serde_json::json!({
+                                    "realtimeInput": {
+                                        "video": {
+                                            "mimeType": mime,
+                                            "data": data
+                                        }
+                                    }
                                 });
                                 if google_tx.send(TMessage::Text(frame.to_string().into())).await.is_err() {
                                     break;
@@ -823,6 +850,18 @@ async fn run_bridge(
                                         "output": format!("Skill '{skill_name}' não encontrada.")
                                     }),
                                 }
+                            }
+                            "tirar_print" => {
+                                let _ = browser_tx
+                                    .send(Message::Text(
+                                        serde_json::json!({"type": "screenshot_request"})
+                                            .to_string()
+                                            .into(),
+                                    ))
+                                    .await;
+                                serde_json::json!({
+                                    "output": "Screenshot solicitado. Aguardando imagem do cliente para análise."
+                                })
                             }
                             other => {
                                 tracing::warn!("Baisync voice: unknown tool called: {other}");

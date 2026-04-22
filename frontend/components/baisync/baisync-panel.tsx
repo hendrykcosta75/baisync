@@ -1,6 +1,7 @@
 'use client'
 
 import React, { useEffect, useRef, useState } from 'react'
+import { toJpeg } from 'html-to-image'
 import { X, FileText, Image as ImageIcon } from 'lucide-react'
 import { useBaisyncStore, type BaisyncAttachment } from '@/store/useBaisyncStore'
 import { useAuthStore } from '@/store/useAuthStore'
@@ -46,6 +47,19 @@ const SLASH_COMMANDS: SlashCommand[] = [
   { name: '/integrations', desc: 'ver integrações disponíveis',    kind: 'ai'    },
   { name: '/docs',         desc: 'sobre a plataforma',             kind: 'ai'    },
 ]
+
+async function captureScreenshot(): Promise<BaisyncAttachment> {
+  const dataUrl = await toJpeg(document.body, {
+    quality: 0.75,
+    pixelRatio: 0.5,
+    filter: (node) => !(node as Element).hasAttribute?.('data-baisync-panel'),
+  })
+  return {
+    name: 'screenshot.jpg',
+    mime_type: 'image/jpeg',
+    data_base64: dataUrl.split(',')[1],
+  }
+}
 
 export function BaisyncPanel() {
   const {
@@ -231,6 +245,16 @@ export function BaisyncPanel() {
       case 'interrupted':
         // No UI change here; transcript already reflects the turn
         break
+      case 'screenshot_request': {
+        captureScreenshot()
+          .then((att) => {
+            wsRef.current?.send(
+              JSON.stringify({ type: 'screenshot_response', mimeType: att.mime_type, data: att.data_base64 })
+            )
+          })
+          .catch((err) => console.error('[baisync] voice screenshot failed', err))
+        break
+      }
       case 'error':
         setLiveStatus('error')
         setLiveError(msg.message || 'Erro desconhecido')

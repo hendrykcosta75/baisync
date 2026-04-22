@@ -29,6 +29,7 @@
     "@tailwindcss/typography": "^0.5.19",
     "@xyflow/react": "^12.10.2",
     "geist": "^1.7.0",
+    "html-to-image": "^1.11.11",
     "livekit-client": "^2.9.0",
     "lucide-react": "^0.513.0",
     "next": "16.2.3",

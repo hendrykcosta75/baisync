@@ -179,6 +179,12 @@ IMPORTANTE: A integração com a API Oficial da Meta (WhatsApp Cloud API) e o Te
 - unlink_mcp_server: data: {{assistant_id, server_id}} (remove o vínculo entre servidor MCP e assistente)
 - refresh_mcp_tools: data: {{server_id}} (força atualização do cache de tools do servidor MCP)
 
+### Captura de Tela
+- tirar_print: data: {} (captura um screenshot da tela atual do usuário)
+  - Use quando o usuário mencionar confusão com a interface, pedir ajuda visual, ou quando ver a tela ajudaria a diagnosticar um problema
+  - Após receber a imagem, descreva o que está vendo e oriente o usuário com instruções contextuais
+  - Não peça confirmação; execute diretamente quando fizer sentido
+
 ### Planejamento Estratégico (requer workspace_id do workspace ativo)
 - list_okrs: data: {{workspace_id}} (lista objetivos OKR com KRs e progresso)
 - list_swot: data: {{workspace_id}} (lista análises SWOT do workspace)

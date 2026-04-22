@@ -72,11 +72,11 @@ interface BaisyncState {
   open: () => void
   close: () => void
   sendMessage: (text: string, attachments?: BaisyncAttachment[]) => Promise<void>
-  sendActionResult: (result: string) => Promise<void>
+  sendActionResult: (result: string, attachments?: BaisyncAttachment[]) => Promise<void>
   /** Queue a single action result without triggering a backend call yet. */
   queueActionResult: (result: string) => void
   /** Send all queued action results as one combined sendActionResult call. */
-  flushActionResults: () => Promise<void>
+  flushActionResults: (attachments?: BaisyncAttachment[]) => Promise<void>
   clearMessages: () => void
   fetchRateLimit: () => Promise<void>
   setActiveSkill: (skill: string | null) => void
@@ -655,14 +655,14 @@ export const useBaisyncStore = create<BaisyncState>()(
     set((s) => ({ pendingActionResults: [...s.pendingActionResults, result] }))
   },
 
-  flushActionResults: async () => {
+  flushActionResults: async (attachments?: BaisyncAttachment[]) => {
     const { pendingActionResults } = get()
     if (pendingActionResults.length === 0) return
     set({ pendingActionResults: [] })
-    await get().sendActionResult(pendingActionResults.join('\n\n---\n\n'))
+    await get().sendActionResult(pendingActionResults.join('\n\n---\n\n'), attachments)
   },
 
-  sendActionResult: async (result: string) => {
+  sendActionResult: async (result: string, attachments?: BaisyncAttachment[]) => {
     const { messages, activeSkill, actionRound } = get()
 
     // Hard limit: after 4 tool rounds per user turn, force-stop the chain.
@@ -709,6 +709,7 @@ export const useBaisyncStore = create<BaisyncState>()(
           message: messageWithHint,
           history: freshHistory,
           skill: activeSkill,
+          attachments: attachments && attachments.length > 0 ? attachments : undefined,
         }),
       })
 
