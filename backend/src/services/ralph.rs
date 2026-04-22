@@ -15,11 +15,13 @@
 //   done               — sentinel that closes the SSE reader loop
 
 use std::convert::Infallible;
+use std::time::Duration;
 
 use axum::response::sse::Event;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio::sync::mpsc;
+use tokio::time::sleep;
 use uuid::Uuid;
 
 use crate::config::Config;
@@ -72,10 +74,20 @@ fn build_classifier_prompt(user_message: &str) -> String {
          - É conversa casual / greeting\n\
          - Tem menos de 80 caracteres (provavelmente simples)\n\
          \n\
+         IMPORTANTE: A `description` de cada tarefa deve ser AUTOSSUFICIENTE — \
+         inclua valores padrão concretos para que o executor possa agir sem pedir \
+         confirmação. Exemplos:\n\
+         - Em vez de \"configurar assistente\", escreva \"Criar assistente chamado \
+           'Assistente de Suporte' com modelo gemini/gemini-2.0-flash, temperatura 0.7, \
+           prompt: Você é um assistente de suporte ao cliente\"\n\
+         - Em vez de \"verificar agenda\", escreva \"Listar os próximos eventos da agenda \
+           do usuário para os próximos 7 dias\"\n\
+         \n\
          Retorne APENAS JSON válido sem markdown:\n\
          Se complexa:\n\
          {{\"is_complex\":true,\"overall_goal\":\"<objetivo geral conciso>\",\"tasks\":[\
-         {{\"id\":\"1\",\"title\":\"<título curto>\",\"description\":\"<instrução clara para Sophie executar esta etapa>\"}}\
+         {{\"id\":\"1\",\"title\":\"<título curto>\",\
+         \"description\":\"<instrução detalhada com valores padrão concretos>\"}}\
          ]}}\n\
          \n\
          Se simples:\n\
@@ -203,16 +215,19 @@ fn build_task_system_prompt(
     format!(
         "{base}\n\n\
          ## Ralph Loop — Execução de Tarefa\n\
-         Você está executando uma etapa de um plano maior. \
-         Execute APENAS a tarefa descrita abaixo. Seja direto e objetivo.\n\n\
+         Você está executando uma etapa de um plano maior.\n\n\
+         ### REGRAS ABSOLUTAS DO RALPH LOOP\n\
+         1. NUNCA peça confirmação, aprovação ou informações adicionais ao usuário.\n\
+         2. NUNCA diga \"precisaria de mais informações\" ou \"poderia me informar\".\n\
+         3. Se faltarem detalhes, escolha valores padrão razoáveis e execute imediatamente.\n\
+         4. Aja agora. Não explique o que vai fazer antes de fazer — faça e reporte.\n\
+         5. Use baisync-actions para criar/configurar/listar recursos concretos.\n\n\
          **Objetivo geral**: {goal}\n\
          **Etapa atual**: {num} de {total} — {title}\n\n\
          **Progresso das etapas anteriores**:\n\
          {progress}\n\n\
-         **Sua tarefa agora**:\n\
-         {desc}\n\n\
-         Execute esta etapa. Se envolver criar/configurar/listar algo, \
-         use as baisync-actions disponíveis.",
+         **Sua tarefa agora** (execute sem pedir confirmação):\n\
+         {desc}",
         base = base_system,
         goal = overall_goal,
         num = task_num,
@@ -286,7 +301,7 @@ pub async fn execute_ralph_loop(
 
         let messages = vec![LlmMessage {
             role: "user".into(),
-            content: format!("Execute: {}", task.description),
+            content: task.description.clone(),
             media_base64: None,
             media_mime_type: None,
         }];
@@ -327,11 +342,14 @@ pub async fn execute_ralph_loop(
             v
         };
 
+        // Retry once on rate-limit errors — 429s can appear even with the
+        // inter-task delay if the classifier call just ran. A single 5s
+        // backoff covers most RPM bucket resets without making the UX too slow.
         let response_text = match llm::call_llm_with_tools_ctx(
             "gemini",
             &model,
             &api_key,
-            all_messages,
+            all_messages.clone(),
             0.3,
             TASK_MAX_TOKENS,
             &[] as &[LlmTool],
@@ -340,6 +358,32 @@ pub async fn execute_ralph_loop(
         .await
         {
             Ok(r) => r.content,
+            Err(e) if e.to_string().contains("429") => {
+                tracing::warn!(
+                    event = "ralph.task.rate_limit",
+                    task_id = %task.id,
+                    "Gemini 429 — backing off 5s then retrying"
+                );
+                sleep(Duration::from_secs(5)).await;
+                match llm::call_llm_with_tools_ctx(
+                    "gemini",
+                    &model,
+                    &api_key,
+                    all_messages,
+                    0.3,
+                    TASK_MAX_TOKENS,
+                    &[] as &[LlmTool],
+                    &ctx,
+                )
+                .await
+                {
+                    Ok(r) => r.content,
+                    Err(e2) => {
+                        tracing::warn!(event = "ralph.task.error", task_id = %task.id, error = %e2);
+                        format!("Erro ao executar tarefa: {e2}")
+                    }
+                }
+            }
             Err(e) => {
                 tracing::warn!(event = "ralph.task.error", task_id = %task.id, error = %e);
                 format!("Erro ao executar tarefa: {e}")
@@ -384,6 +428,12 @@ pub async fn execute_ralph_loop(
                 })
                 .to_string(),
             );
+        }
+
+        // 7. Pause between tasks to respect Gemini's RPM quota. Without this,
+        //    sequential calls on the same platform key reliably trigger 429s.
+        if task_num < total {
+            sleep(Duration::from_millis(2_500)).await;
         }
     }
 

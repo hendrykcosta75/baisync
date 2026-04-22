@@ -610,7 +610,7 @@ pub struct ToolContext<'a> {
 pub const DEFAULT_MAX_TOOL_ROUNDS: i32 = 5;
 pub const DEFAULT_MAX_DURATION_MS: i32 = 30_000;
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LlmMessage {
     pub role: String,
     pub content: String,
