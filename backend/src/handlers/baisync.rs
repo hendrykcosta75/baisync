@@ -87,7 +87,7 @@ const SKILLS: &[Skill] = &[
     },
 ];
 
-fn get_skill_prompt(name: &str) -> Option<&'static str> {
+pub(crate) fn get_skill_prompt(name: &str) -> Option<&'static str> {
     SKILLS.iter().find(|s| s.name == name).map(|s| s.prompt)
 }
 

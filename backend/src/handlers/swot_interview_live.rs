@@ -28,7 +28,8 @@ use uuid::Uuid;
 use crate::config::Config;
 use crate::db::DbSession;
 use crate::errors::AppError;
-use crate::handlers::swot_interview::{build_system_prompt, parse_swot_special_tags};
+// text-mode build_system_prompt and parse_swot_special_tags are not used in voice mode;
+// voice uses function declarations instead of XML tags.
 use crate::middleware::auth::AuthUser;
 use crate::services::workspace as ws_service;
 
@@ -167,6 +168,40 @@ type GoogleRx = futures::stream::SplitStream<
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
 >;
 
+fn build_voice_system_prompt(workspace_name: &str) -> String {
+    format!(
+        r#"Você é a Sophie, especialista em análise SWOT, conduzindo uma entrevista por voz.
+O workspace atual se chama "{workspace_name}".
+
+## Regras de voz
+- RESPONDA SEMPRE EM PORTUGUÊS BRASILEIRO (pt-BR).
+- Respostas curtas, conversacionais, para fala. Máximo 2 frases por vez.
+- Não use markdown, listas, emojis, XML ou blocos de código.
+- Faça UMA pergunta por vez e aguarde a resposta antes de continuar.
+- NÃO mencione que é IA ou modelo de linguagem.
+
+## Ferramentas disponíveis
+- `criar_pergunta(pergunta, opcoes)`: emite pergunta com opções na tela do usuário.
+  Use para perguntas de múltipla escolha. Após chamar a ferramenta, faça a mesma pergunta em voz também.
+- `criar_analise_swot(titulo, itens)`: gera e exibe a análise SWOT final.
+  Antes de chamar, avise verbalmente que está gerando a análise.
+
+## Fluxo da entrevista
+1. Saudação + pedir confirmação para começar.
+2. Nome e setor da empresa → use `criar_pergunta` com opções de setor (Tecnologia, Saúde, Alimentação, Varejo, Serviços, Educação, Outro).
+3. Porte da empresa → use `criar_pergunta` com opções (MEI/Autônomo, Microempresa, Pequena, Média, Grande).
+4. Público-alvo principal → pergunta aberta (sem ferramenta).
+5. Explorar forças, fraquezas, oportunidades e ameaças (perguntas abertas, uma por vez).
+6. Após ~8 trocas, avisar que vai gerar o SWOT e chamar `criar_analise_swot` com ≥12 itens (≥3 por quadrante).
+
+## Regras da análise
+- Itens devem ser frases completas e acionáveis.
+- Quadrantes válidos: strengths, weaknesses, opportunities, threats.
+"#,
+        workspace_name = workspace_name
+    )
+}
+
 /// Connect to Google, send setup + prime, wait for `setupComplete`. Returns
 /// the split streams ready to be bridged, or an error describing why the
 /// handshake didn't finish. Called in a retry loop by the bridge so
@@ -179,7 +214,7 @@ async fn open_google_session(api_key: &str, workspace_name: &str) -> Result<(Goo
         .map_err(|e| format!("connect_async failed: {e}"))?;
     tracing::info!("SWOT live: upstream connected (status={})", resp.status());
 
-    let system_prompt = build_system_prompt(workspace_name);
+    let system_prompt = build_voice_system_prompt(workspace_name);
     // The Gemini Live WebSocket protocol is strictly camelCase on the wire
     // (snake_case is silently accepted for some fields but causes
     // "Internal error encountered" for others like clientContent).
@@ -199,7 +234,62 @@ async fn open_google_session(api_key: &str, workspace_name: &str) -> Result<(Goo
                 "parts": [{ "text": system_prompt }]
             },
             "inputAudioTranscription": {},
-            "outputAudioTranscription": {}
+            "outputAudioTranscription": {},
+            "tools": [{
+                "functionDeclarations": [
+                    {
+                        "name": "criar_pergunta",
+                        "description": "Emite pergunta estruturada com opções na tela do usuário. Use para perguntas de múltipla escolha. Após chamar, repita a pergunta em voz.",
+                        "parameters": {
+                            "type": "OBJECT",
+                            "properties": {
+                                "pergunta": {
+                                    "type": "STRING",
+                                    "description": "Texto completo da pergunta"
+                                },
+                                "opcoes": {
+                                    "type": "ARRAY",
+                                    "description": "Opções de resposta. Omita para perguntas abertas.",
+                                    "items": { "type": "STRING" }
+                                }
+                            },
+                            "required": ["pergunta"]
+                        }
+                    },
+                    {
+                        "name": "criar_analise_swot",
+                        "description": "Gera a análise SWOT final. Chame somente após coletar informações suficientes (~8 trocas). Mínimo 12 itens, 3 por quadrante.",
+                        "parameters": {
+                            "type": "OBJECT",
+                            "properties": {
+                                "titulo": {
+                                    "type": "STRING",
+                                    "description": "Título, ex: 'SWOT - Nome da Empresa'"
+                                },
+                                "itens": {
+                                    "type": "ARRAY",
+                                    "description": "Itens SWOT, mínimo 3 por quadrante.",
+                                    "items": {
+                                        "type": "OBJECT",
+                                        "properties": {
+                                            "quadrante": {
+                                                "type": "STRING",
+                                                "enum": ["strengths", "weaknesses", "opportunities", "threats"]
+                                            },
+                                            "conteudo": {
+                                                "type": "STRING",
+                                                "description": "Frase completa e acionável"
+                                            }
+                                        },
+                                        "required": ["quadrante", "conteudo"]
+                                    }
+                                }
+                            },
+                            "required": ["titulo", "itens"]
+                        }
+                    }
+                ]
+            }]
         }
     });
 
@@ -318,14 +408,29 @@ async fn run_bridge(
         serde_json::json!({ "type": "ready" }).to_string().into()
     )).await;
 
-    let mut assistant_buf = String::new();
     let mut google_msg_count: u32 = 0;
     let mut user_audio_chunks: u32 = 0;
     let mut user_audio_bytes: usize = 0;
     let mut user_transcripts: u32 = 0;
 
+    // Keepalive: send WebSocket Ping frames every 25 s to prevent reverse-proxy
+    // (Traefik) idle-timeout disconnects.
+    let mut keepalive = tokio::time::interval(std::time::Duration::from_secs(25));
+    keepalive.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    keepalive.tick().await; // consume the first immediate tick — first ping at t=25s
+
     loop {
         tokio::select! {
+            // Keepalive pings — keep both WebSocket legs alive through Traefik.
+            _ = keepalive.tick() => {
+                if browser_tx.send(Message::Ping(vec![].into())).await.is_err() {
+                    break;
+                }
+                if google_tx.send(TMessage::Ping(vec![])).await.is_err() {
+                    break;
+                }
+            }
+
             // ── Browser → Google ──
             msg = browser_rx.next() => {
                 let Some(Ok(msg)) = msg else { break };
@@ -484,13 +589,12 @@ async fn run_bridge(
                         }
                     }
 
-                    // Output (assistant speech) transcription — accumulate for tag parsing
+                    // Output (assistant speech) transcription
                     if let Some(t) = server_content
                         .pointer("/outputTranscription/text")
                         .and_then(|v| v.as_str())
                     {
                         if !t.is_empty() {
-                            assistant_buf.push_str(t);
                             let _ = browser_tx.send(Message::Text(
                                 serde_json::json!({
                                     "type": "transcript",
@@ -506,24 +610,6 @@ async fn run_bridge(
                         .and_then(|v| v.as_bool())
                         .unwrap_or(false)
                     {
-                        let (questions, swot_create) = parse_swot_special_tags(&assistant_buf);
-                        if let Some(parsed) = questions {
-                            let _ = browser_tx.send(Message::Text(
-                                serde_json::json!({
-                                    "type": "questions",
-                                    "payload": parsed
-                                }).to_string().into()
-                            )).await;
-                        }
-                        if let Some(parsed) = swot_create {
-                            let _ = browser_tx.send(Message::Text(
-                                serde_json::json!({
-                                    "type": "swot_create",
-                                    "payload": parsed
-                                }).to_string().into()
-                            )).await;
-                        }
-                        assistant_buf.clear();
                         let _ = browser_tx.send(Message::Text(
                             serde_json::json!({ "type": "turn_complete" }).to_string().into()
                         )).await;
@@ -537,6 +623,77 @@ async fn run_bridge(
                         let _ = browser_tx.send(Message::Text(
                             serde_json::json!({ "type": "interrupted" }).to_string().into()
                         )).await;
+                    }
+                }
+
+                // Gemini Live tool-call dispatch. Tool calls arrive as a top-level
+                // `toolCall.functionCalls` frame (not inside `serverContent`). We
+                // execute the tool as a side effect on the browser connection, then
+                // send `toolResponse` back — the `id` must match or Google deadlocks.
+                if let Some(calls) = value
+                    .pointer("/toolCall/functionCalls")
+                    .and_then(|v| v.as_array())
+                {
+                    let mut function_responses: Vec<serde_json::Value> = Vec::new();
+
+                    for call in calls {
+                        let call_id = call
+                            .get("id")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let tool_name = call
+                            .get("name")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let args = call
+                            .get("args")
+                            .cloned()
+                            .unwrap_or(serde_json::Value::Null);
+
+                        tracing::info!("SWOT live: tool call — name={tool_name} id={call_id}");
+
+                        match tool_name.as_str() {
+                            "criar_pergunta" => {
+                                let _ = browser_tx.send(Message::Text(
+                                    serde_json::json!({
+                                        "type": "questions",
+                                        "payload": args
+                                    }).to_string().into()
+                                )).await;
+                            }
+                            "criar_analise_swot" => {
+                                let _ = browser_tx.send(Message::Text(
+                                    serde_json::json!({
+                                        "type": "swot_create",
+                                        "payload": args
+                                    }).to_string().into()
+                                )).await;
+                            }
+                            other => {
+                                tracing::warn!("SWOT live: unknown tool: {other}");
+                            }
+                        }
+
+                        function_responses.push(serde_json::json!({
+                            "id": call_id,
+                            "name": tool_name,
+                            "response": { "output": "ok" }
+                        }));
+                    }
+
+                    if !function_responses.is_empty() {
+                        let tool_response = serde_json::json!({
+                            "toolResponse": { "functionResponses": function_responses }
+                        });
+                        if google_tx
+                            .send(TMessage::Text(tool_response.to_string().into()))
+                            .await
+                            .is_err()
+                        {
+                            break;
+                        }
                     }
                 }
             }

@@ -23,7 +23,7 @@ use uuid::Uuid;
 use crate::config::Config;
 use crate::db::DbSession;
 use crate::errors::AppError;
-use crate::handlers::baisync::{get_usage_tokens, increment_usage_tokens};
+use crate::handlers::baisync::{get_skill_prompt, get_usage_tokens, increment_usage_tokens};
 use crate::middleware::auth::AuthUser;
 use crate::services::session::{
     append_event, create_session, SessionEventType, SessionId,
@@ -161,39 +161,66 @@ type GoogleRx = futures::stream::SplitStream<
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
 >;
 
-fn build_voice_system_prompt() -> String {
-    r#"Você é a Sophie, a assistente da plataforma Baisync. Você está conversando por voz com um cliente em tempo real.
+async fn build_voice_system_prompt(db: &DbSession, user_id: &Uuid) -> String {
+    let user_name = crate::services::auth::get_user_by_id(db, user_id)
+        .await
+        .map(|u| {
+            u.name
+                .split_whitespace()
+                .next()
+                .unwrap_or("")
+                .to_string()
+        })
+        .unwrap_or_default();
+    let assistants_count = crate::services::assistant::list_assistants(db, user_id)
+        .await
+        .map(|v| v.len())
+        .unwrap_or(0);
+
+    let user_line = if user_name.is_empty() {
+        String::new()
+    } else {
+        format!("Você está falando com {}. ", user_name)
+    };
+
+    format!(
+        r#"Você é a Sophie, a assistente da plataforma Baisync. Você está conversando por voz em tempo real.
 
 ## Sobre você
-- Persona: mulher jovem, tom descontraído e próximo, mas ainda profissional.
-- Você ajuda o cliente a gerenciar assistentes de IA, configurar integrações (WhatsApp via Baileys, Meta Business, Telegram), entender ferramentas disponíveis e tirar dúvidas sobre a plataforma.
-- Você **NÃO** é uma inteligência artificial — você é a assistente Sophie. Nunca se refira a si como IA, modelo ou LLM.
+- Persona: mulher jovem, tom descontraído e próximo, mas profissional.
+- {user_line}O usuário tem {assistants_count} assistente(s) configurado(s).
+- Você ajuda a gerenciar assistentes de IA, integrações (WhatsApp, Meta, Telegram), ferramentas e dúvidas sobre a plataforma.
+- Você NÃO é uma inteligência artificial — você é a assistente Sophie. Nunca se refira como IA, modelo ou LLM.
 
 ## Regras de voz
-- RESPONDA SEMPRE EM PORTUGUÊS BRASILEIRO (pt-BR). VOCÊ DEVE RESPONDER INEQUIVOCAMENTE EM pt-BR.
-- Respostas curtas e conversacionais, apropriadas pra fala (não pra leitura).
-- Não use markdown, listas numeradas, tabelas ou blocos de código — isso é voz, não texto.
-- Não gere tags XML, blocos de ação nem código. Nada de `<baisync-ui>`, `<baisync-action>`, ou similares.
-- Se precisar listar algo, fale como lista falada natural: "primeiro…, depois…, por último…".
+- RESPONDA SEMPRE EM PORTUGUÊS BRASILEIRO (pt-BR).
+- Respostas curtas e conversacionais, adequadas para fala (não leitura).
+- Não use markdown, listas, tabelas, XML ou blocos de código.
+- Se precisar listar, fale: "primeiro…, depois…, por último…".
+
+## Skills disponíveis
+Você pode chamar `ativar_skill` com os seguintes nomes:
+- `criar_atendente`: guia passo a passo para criar um assistente de IA
+- `sobre_plataforma`: dúvidas sobre recursos e funcionamento da plataforma
+
+Use a skill quando o usuário pedir detalhes sobre esses tópicos.
 
 ## Escopo
-- Foque em ajudar o cliente com: criar/configurar assistentes, planos e integrações, dúvidas sobre a plataforma Baisync, próximos passos.
-- Se o cliente perguntar algo fora do escopo, responda brevemente e redirecione pro que você pode ajudar.
-
-## Estilo
-- Chame o cliente pelo primeiro nome quando souber; caso contrário, fale no "você".
-- Seja objetiva mas simpática. Evite respostas longas demais; se o tópico for grande, divida em perguntas.
-"#.to_string()
+- Foque em: criar/configurar assistentes, planos, integrações, dúvidas sobre a plataforma Baisync.
+- Chame o usuário pelo primeiro nome quando souber; caso contrário, fale no "você".
+"#,
+        user_line = user_line,
+        assistants_count = assistants_count
+    )
 }
 
-async fn open_google_session(api_key: &str) -> Result<(GoogleTx, GoogleRx), String> {
+async fn open_google_session(api_key: &str, system_prompt: &str) -> Result<(GoogleTx, GoogleRx), String> {
     let url = format!("{GOOGLE_LIVE_URL}?key={api_key}");
     let (google_ws, resp) = connect_async(&url)
         .await
         .map_err(|e| format!("connect_async failed: {e}"))?;
     tracing::info!("Baisync voice: upstream connected (status={})", resp.status());
 
-    let system_prompt = build_voice_system_prompt();
     let setup = serde_json::json!({
         "setup": {
             "model": LIVE_MODEL,
@@ -210,7 +237,24 @@ async fn open_google_session(api_key: &str) -> Result<(GoogleTx, GoogleRx), Stri
                 "parts": [{ "text": system_prompt }]
             },
             "inputAudioTranscription": {},
-            "outputAudioTranscription": {}
+            "outputAudioTranscription": {},
+            "tools": [{
+                "functionDeclarations": [{
+                    "name": "ativar_skill",
+                    "description": "Ativa uma skill para obter guia detalhado. Use quando o usuário quiser criar um assistente ('criar_atendente') ou tirar dúvidas sobre a plataforma ('sobre_plataforma').",
+                    "parameters": {
+                        "type": "OBJECT",
+                        "properties": {
+                            "nome": {
+                                "type": "STRING",
+                                "description": "Identificador da skill",
+                                "enum": ["criar_atendente", "sobre_plataforma"]
+                            }
+                        },
+                        "required": ["nome"]
+                    }
+                }]
+            }]
         }
     });
 
@@ -300,10 +344,13 @@ async fn run_bridge(
     rate_limit: i32,
     session_id: Option<SessionId>,
 ) -> Result<(), String> {
+    // Build system prompt once before the retry loop so DB is not re-queried on each attempt.
+    let system_prompt = build_voice_system_prompt(&db, &user_id).await;
+
     let mut last_err = String::from("unknown");
     let mut pair: Option<(GoogleTx, GoogleRx)> = None;
     for attempt in 1..=MAX_SETUP_RETRIES {
-        match open_google_session(&api_key).await {
+        match open_google_session(&api_key, &system_prompt).await {
             Ok(p) => {
                 tracing::info!("Baisync voice: session ready on attempt {attempt}");
                 pair = Some(p);
@@ -368,8 +415,25 @@ async fn run_bridge(
     // total and only bill the delta to avoid double-counting across frames.
     let mut tokens_billed: i64 = 0;
 
+    // Keepalive: send WebSocket Ping frames every 25 s to prevent reverse-proxy
+    // (Traefik) idle-timeout disconnects. Pings are protocol-level and
+    // invisible to both Google's Live API and the browser application layer.
+    let mut keepalive = tokio::time::interval(std::time::Duration::from_secs(25));
+    keepalive.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    keepalive.tick().await; // consume the first immediate tick — first ping at t=25s
+
     loop {
         tokio::select! {
+            // Keepalive pings — keep both WebSocket legs alive through Traefik.
+            _ = keepalive.tick() => {
+                if browser_tx.send(Message::Ping(vec![].into())).await.is_err() {
+                    break;
+                }
+                if google_tx.send(TMessage::Ping(vec![])).await.is_err() {
+                    break;
+                }
+            }
+
             // Browser → Google
             msg = browser_rx.next() => {
                 let Some(Ok(msg)) = msg else { break };
@@ -706,18 +770,23 @@ async fn run_bridge(
                     }
                 }
 
-                // S3.2 — Gemini Live tool-call dispatch. Live API sends
-                // tool calls as a top-level `toolCall.functionCalls` array
-                // (distinct from the `serverContent` block). Sophie voice
-                // does NOT currently register any tools in `setup`, so this
-                // path is effectively unreachable today — we still log it
-                // so that the moment voice tools land the audit trail is
-                // already producing events without a code change.
+                // S3.2 — Gemini Live tool-call dispatch. The Live API sends tool
+                // calls as a top-level `toolCall.functionCalls` array (separate
+                // from `serverContent`). We execute the tool, then send back
+                // `toolResponse` with the matching `id` — without it Google hangs
+                // waiting for a response and the session deadlocks.
                 if let Some(calls) = value
                     .pointer("/toolCall/functionCalls")
                     .and_then(|v| v.as_array())
                 {
+                    let mut function_responses: Vec<serde_json::Value> = Vec::new();
+
                     for call in calls {
+                        let call_id = call
+                            .get("id")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
                         let tool_name = call
                             .get("name")
                             .and_then(|v| v.as_str())
@@ -727,17 +796,57 @@ async fn run_bridge(
                             .get("args")
                             .cloned()
                             .unwrap_or(serde_json::Value::Null);
+
+                        // Audit log (fire-and-forget)
                         if let Some(sid) = session_id {
                             append_event(
                                 user_id,
                                 sid,
                                 SessionEventType::ToolCall,
                                 serde_json::json!({
-                                    "tool_name": tool_name,
-                                    "args": args,
+                                    "tool_name": &tool_name,
+                                    "args": &args,
                                     "source": "voice",
                                 }).to_string(),
                             );
+                        }
+
+                        let output = match tool_name.as_str() {
+                            "ativar_skill" => {
+                                let skill_name = args
+                                    .get("nome")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("");
+                                match get_skill_prompt(skill_name) {
+                                    Some(content) => serde_json::json!({ "output": content }),
+                                    None => serde_json::json!({
+                                        "output": format!("Skill '{skill_name}' não encontrada.")
+                                    }),
+                                }
+                            }
+                            other => {
+                                tracing::warn!("Baisync voice: unknown tool called: {other}");
+                                serde_json::json!({ "output": "Ferramenta não reconhecida." })
+                            }
+                        };
+
+                        function_responses.push(serde_json::json!({
+                            "id": call_id,
+                            "name": tool_name,
+                            "response": output
+                        }));
+                    }
+
+                    if !function_responses.is_empty() {
+                        let tool_response = serde_json::json!({
+                            "toolResponse": { "functionResponses": function_responses }
+                        });
+                        if google_tx
+                            .send(TMessage::Text(tool_response.to_string().into()))
+                            .await
+                            .is_err()
+                        {
+                            break;
                         }
                     }
                 }
