@@ -56,6 +56,50 @@ jobs:
           sarif_file: semgrep.sarif
         continue-on-error: true
 
+  # Deep semantic analysis of TypeScript/JavaScript via CodeQL.
+  # Results appear in the GitHub Security → Code scanning tab.
+  # Free for public repos; requires GitHub Advanced Security for private repos.
+  codeql:
+    name: CodeQL (semantic analysis — TS/JS)
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: javascript-typescript
+          queries: security-extended,security-and-quality
+      - uses: github/codeql-action/autobuild@v3
+      - uses: github/codeql-action/analyze@v3
+        with:
+          category: /language:javascript-typescript
+
+  # Filesystem CVE scan: Cargo.lock + package.json deps + known OS vulnerabilities.
+  # Trivy reports HIGH/CRITICAL CVEs and uploads findings to GitHub Security tab.
+  trivy:
+    name: Trivy (CVE scan — deps + filesystem)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run Trivy filesystem scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: fs
+          scan-ref: .
+          format: sarif
+          output: trivy.sarif
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          scanners: vuln,secret,misconfig
+      - uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy.sarif
+        continue-on-error: true
+
   # Checks Cargo.lock against the RustSec advisory database. Fails on any
   # vulnerability; yank/unmaintained warnings are informational.
   cargo-audit:
@@ -89,6 +133,26 @@ jobs:
       - name: Run yarn audit
         working-directory: frontend
         run: yarn audit --level moderate --groups dependencies
+
+  # SonarCloud — dashboard completo com code smells, tech debt, cobertura e
+  # security hotspots. Só roda quando SONAR_TOKEN estiver configurado nos
+  # secrets do repositório. Para ativar:
+  #   1. Crie conta em https://sonarcloud.io e importe o repositório
+  #   2. Gere um token em sonarcloud.io/account/security
+  #   3. Adicione como secret SONAR_TOKEN em GitHub → Settings → Secrets
+  sonarcloud:
+    name: SonarCloud (quality gate)
+    runs-on: ubuntu-latest
+    if: ${{ secrets.SONAR_TOKEN != '' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: SonarCloud Scan
+        uses: antonioaversa/sonarcloud-github-action@v4.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
   # Lint the workflow files themselves. Catches shell-quoting bugs in `run:`
   # blocks and invalid action references before they silently fail in CI.

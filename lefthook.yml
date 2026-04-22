@@ -17,7 +17,20 @@ pre-commit:
         if command -v gitleaks >/dev/null 2>&1; then
           gitleaks protect --staged --no-banner --redact
         else
-          echo "[lefthook] gitleaks not installed — skipping local scan. Install: https://github.com/gitleaks/gitleaks"
+          echo "[lefthook] gitleaks not installed — run: bash install-dev-tools.sh"
+        fi
+    # SAST rápido no staged diff: varre apenas arquivos modificados com as
+    # regras de secrets + security-audit. Mais pesado que gitleaks mas pega
+    # padrões inseguros além de segredos literais.
+    semgrep:
+      run: |
+        if command -v semgrep >/dev/null 2>&1; then
+          STAGED=$(git diff --staged --name-only --diff-filter=ACMR 2>/dev/null | grep -E '\.(rs|ts|tsx|js|jsx)$' || true)
+          if [ -n "$STAGED" ]; then
+            echo "$STAGED" | xargs semgrep --config=p/secrets --config=p/security-audit --quiet --error
+          fi
+        else
+          echo "[lefthook] semgrep not installed — run: bash install-dev-tools.sh"
         fi
 
 pre-push:
