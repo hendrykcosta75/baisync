@@ -3,6 +3,7 @@
 import React from 'react'
 import type { BaisyncUIBlock } from '@/store/useBaisyncStore'
 import { useBaisyncStore } from '@/store/useBaisyncStore'
+import { RalphTaskPanel } from './ralph-task-panel'
 import { QrCode } from 'lucide-react'
 
 const mono = "'JetBrains Mono', 'Fira Code', monospace"
@@ -171,6 +172,8 @@ export function BaisyncUIBlockRenderer({ block }: UIBlockProps) {
       return <QRCodeDisplay block={block} />
     case 'assistant_card':
       return <AssistantCard block={block} />
+    case 'ralph_tasks':
+      return <RalphTaskPanel />
     default:
       return null
   }

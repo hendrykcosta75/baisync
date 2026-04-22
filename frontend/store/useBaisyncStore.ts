@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { apiFetch } from '@/lib/api'
+import type { RalphPlan } from '@/types/ralph'
 
 export interface BaisyncAttachment {
   name: string
@@ -10,7 +11,7 @@ export interface BaisyncAttachment {
 
 export interface BaisyncMessage {
   id: string
-  role: 'user' | 'assistant' | 'status'
+  role: 'user' | 'assistant' | 'status' | 'ralph_plan'
   content: string
   timestamp: number
   uiBlocks?: BaisyncUIBlock[]
@@ -20,7 +21,7 @@ export interface BaisyncMessage {
 }
 
 export interface BaisyncUIBlock {
-  type: 'question_box' | 'qr_code' | 'assistant_card'
+  type: 'question_box' | 'qr_code' | 'assistant_card' | 'ralph_tasks'
   data: Record<string, unknown>
 }
 
@@ -63,6 +64,14 @@ interface BaisyncState {
    */
   clearedAt: number | null
 
+  // ── Ralph Loop ──────────────────────────────────────────────────────────
+  /** Whether the user has enabled Ralph Loop mode (persisted). */
+  ralphEnabled: boolean
+  /** Live plan being executed; null when no ralph session is active. */
+  ralphPlan: RalphPlan | null
+  /** True while a ralph loop is running (between ralph_plan and ralph_complete). */
+  inRalphMode: boolean
+
   toggle: () => void
   open: () => void
   close: () => void
@@ -73,6 +82,7 @@ interface BaisyncState {
   setActiveSkill: (skill: string | null) => void
   pushLocalMessage: (msg: Omit<BaisyncMessage, 'id' | 'timestamp'>) => void
   appendLiveTranscript: (role: 'user' | 'assistant', text: string) => void
+  toggleRalph: () => void
   /**
    * S2.1 — Pull Sophie's latest session from the server and merge into
    * `messages` only when the local chat is empty. On any failure (offline,
@@ -239,11 +249,15 @@ export const useBaisyncStore = create<BaisyncState>()(
   rateLimit: null,
   hydrated: false,
   clearedAt: null,
+  ralphEnabled: false,
+  ralphPlan: null,
+  inRalphMode: false,
 
   toggle: () => set((s) => ({ isOpen: !s.isOpen })),
   open: () => set({ isOpen: true }),
   close: () => set({ isOpen: false }),
   setActiveSkill: (skill) => set({ activeSkill: skill }),
+  toggleRalph: () => set((s) => ({ ralphEnabled: !s.ralphEnabled })),
 
   clearMessages: () =>
     // `hydrated: true` stops any in-flight `hydrate()` call from the same tab
@@ -256,6 +270,8 @@ export const useBaisyncStore = create<BaisyncState>()(
       activeSkill: null,
       hydrated: true,
       clearedAt: Date.now(),
+      ralphPlan: null,
+      inRalphMode: false,
     }),
 
   pushLocalMessage: (msg) => set((s) => ({
@@ -388,6 +404,7 @@ export const useBaisyncStore = create<BaisyncState>()(
           history,
           skill: activeSkill,
           attachments: attachments && attachments.length > 0 ? attachments : undefined,
+          ralph_mode: get().ralphEnabled,
         }),
       })
 
@@ -500,8 +517,102 @@ export const useBaisyncStore = create<BaisyncState>()(
                   ],
                   isStreaming: false,
                   streamingContent: '',
+                  ralphPlan: null,
+                  inRalphMode: false,
                 }))
                 return
+
+              // ── Ralph Loop SSE events ─────────────────────────────────────
+              } else if (eventType === 'ralph_plan') {
+                const plan: RalphPlan = {
+                  overall_goal: data.overall_goal as string,
+                  tasks: (data.tasks as Array<{ id: string; title: string }>).map((t) => ({
+                    id: t.id,
+                    title: t.title,
+                    status: 'pending' as const,
+                  })),
+                }
+                set((s) => ({
+                  ralphPlan: plan,
+                  inRalphMode: true,
+                  messages: [
+                    ...s.messages.filter((m) => m.role !== 'status'),
+                    { id: generateId(), role: 'ralph_plan' as const, content: '', timestamp: Date.now() },
+                  ],
+                }))
+
+              } else if (eventType === 'ralph_task_start') {
+                const taskId = data.task_id as string
+                fullContent = ''
+                set((s) => ({
+                  ralphPlan: s.ralphPlan
+                    ? {
+                        ...s.ralphPlan,
+                        tasks: s.ralphPlan.tasks.map((t) =>
+                          t.id === taskId ? { ...t, status: 'running' as const } : t,
+                        ),
+                      }
+                    : null,
+                }))
+
+              } else if (eventType === 'ralph_task_done') {
+                const taskId = data.task_id as string
+                const taskIndex = data.index as number
+                const taskTotal = get().ralphPlan?.tasks.length ?? 1
+                const taskTitle = get().ralphPlan?.tasks.find((t) => t.id === taskId)?.title ?? ''
+                const responseText = (data.response as string) ?? ''
+
+                // Mark done in plan
+                set((s) => ({
+                  ralphPlan: s.ralphPlan
+                    ? {
+                        ...s.ralphPlan,
+                        tasks: s.ralphPlan.tasks.map((t) =>
+                          t.id === taskId
+                            ? { ...t, status: 'done' as const, response: responseText }
+                            : t,
+                        ),
+                      }
+                    : null,
+                }))
+
+                // Animate response into chat — remove status first
+                set((s) => ({ messages: s.messages.filter((m) => m.role !== 'status') }))
+                const label = `**[${taskIndex}/${taskTotal}] ${taskTitle}**`
+                const paragraphs = responseText
+                  ? [label + '\n\n' + responseText]
+                  : [label]
+
+                for (let pi = 0; pi < paragraphs.length; pi++) {
+                  const para = paragraphs[pi]
+                  const words = para.split(/(\s+)/)
+                  let revealed = ''
+                  for (let wi = 0; wi < words.length; wi++) {
+                    revealed += words[wi]
+                    set({ streamingContent: revealed })
+                    await new Promise((r) => setTimeout(r, 14))
+                  }
+                  const { cleanContent: c1, uiBlocks } = parseUIBlocks(para)
+                  const { cleanContent: finalPara, actions } = parseActions(c1)
+                  set((s) => ({
+                    messages: [
+                      ...s.messages,
+                      {
+                        id: generateId(),
+                        role: 'assistant' as const,
+                        content: finalPara || para,
+                        timestamp: Date.now() + pi,
+                        uiBlocks: uiBlocks.length > 0 ? uiBlocks : undefined,
+                        actions: actions.length > 0 ? actions : undefined,
+                      },
+                    ],
+                    streamingContent: '',
+                  }))
+                }
+
+              } else if (eventType === 'ralph_complete') {
+                set({ inRalphMode: false })
+
               } else if (eventType === 'done') {
                 streamDone = true
               }
@@ -766,7 +877,7 @@ export const useBaisyncStore = create<BaisyncState>()(
     name: 'baisync-chat',
     partialize: (state) => ({
       messages: state.messages
-        .filter((m) => m.role !== 'status')
+        .filter((m) => m.role !== 'status' && m.role !== 'ralph_plan')
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
         .map(({ actions, attachments, ...rest }) => ({
           ...rest,
@@ -774,6 +885,7 @@ export const useBaisyncStore = create<BaisyncState>()(
         })),
       activeSkill: state.activeSkill,
       clearedAt: state.clearedAt,
+      ralphEnabled: state.ralphEnabled,
     }),
   }
 ))

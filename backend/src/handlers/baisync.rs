@@ -38,6 +38,11 @@ pub struct BaisyncChatRequest {
     pub skill: Option<String>,
     #[serde(default)]
     pub attachments: Vec<BaisyncAttachment>,
+    /// When `true`, Sophie attempts to classify the message as a complex
+    /// multi-step task and, if so, enters Ralph Loop mode — executing each
+    /// task sequentially with fresh context between them.
+    #[serde(default)]
+    pub ralph_mode: bool,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -580,6 +585,13 @@ pub async fn chat(
     // the OnceLock semaphore first.
     let evaluator_max_concurrent = config.evaluator_max_concurrent;
 
+    // Ralph Loop — capture inputs before moving into the spawn.
+    let ralph_mode = req.ralph_mode;
+    let ralph_user_msg = req.message.clone();
+    let ralph_db = db.clone();
+    let ralph_config = if ralph_mode { Some(config.clone()) } else { None };
+    let ralph_encryption = if ralph_mode { Some(encryption.clone()) } else { None };
+
     // Create channel for SSE events
     let (tx, rx) = mpsc::channel::<Result<Event, Infallible>>(128);
 
@@ -601,6 +613,43 @@ pub async fn chat(
                 crate::services::session::SessionEventType::UserMsg,
                 serde_json::json!({ "content": session_user_msg }).to_string(),
             );
+        }
+
+        // Ralph Loop — if ralph_mode is set, try to classify the user message
+        // as a multi-step task and, if complex, execute each task sequentially
+        // with fresh context (no history). Falls through to the normal
+        // single-call flow on any error or when the message is simple.
+        if ralph_mode {
+            if let (Some(r_config), Some(r_enc)) = (ralph_config, ralph_encryption) {
+                let maybe_plan = crate::services::ralph::classify_and_plan(
+                    &api_key,
+                    user_id,
+                    &ralph_user_msg,
+                )
+                .await;
+
+                if let Some(plan) = maybe_plan {
+                    tracing::info!(
+                        event = "ralph.loop.start",
+                        task_count = plan.tasks.len(),
+                        "entering ralph loop"
+                    );
+                    crate::services::ralph::execute_ralph_loop(
+                        ralph_db,
+                        r_config,
+                        r_enc,
+                        user_id,
+                        plan,
+                        system_prompt,
+                        api_key,
+                        tx,
+                        session_id_opt,
+                    )
+                    .await;
+                    return;
+                }
+                tracing::debug!(event = "ralph.loop.skip", "message not complex; normal flow");
+            }
         }
 
         // S2.2 — optional Planner call. Runs BEFORE the Gemini generator

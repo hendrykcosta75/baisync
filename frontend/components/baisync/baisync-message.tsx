@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useRef } from 'react'
 import type { BaisyncMessage, BaisyncUIBlock, BaisyncAction, BaisyncAttachment } from '@/store/useBaisyncStore'
 import { BaisyncUIBlockRenderer } from './baisync-ui-blocks'
+import { RalphTaskPanel } from './ralph-task-panel'
 import { useAssistantStore } from '@/store/useAssistantStore'
 import { useCalendarStore } from '@/store/useCalendarStore'
 import { useNotificationStore } from '@/store/useNotificationStore'
@@ -1494,6 +1495,14 @@ function ActionSequence({ actions }: { actions: BaisyncAction[] }) {
 }
 
 export function BaisyncMessageComponent({ message }: MessageProps) {
+  if (message.role === 'ralph_plan') {
+    return (
+      <div style={{ marginBottom: 10, animation: 'baisync-msg-in 0.2s ease-out' }}>
+        <RalphTaskPanel />
+      </div>
+    )
+  }
+
   if (message.role === 'status') {
     return (
       <div
