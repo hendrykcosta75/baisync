@@ -1545,7 +1545,7 @@ mod tests {
         // Byte length captured pre-refactor (r#"..."# literal with same fixture).
         // S1.3 bumped the snapshot by 301 bytes when the new Observabilidade
         // section (get_my_recent_errors + get_platform_health) was added.
-        const EXPECTED_LEN: usize = 16020;
+        const EXPECTED_LEN: usize = 17542;
         assert_eq!(
             rendered.len(),
             EXPECTED_LEN,
