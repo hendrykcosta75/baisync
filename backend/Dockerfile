@@ -14,6 +14,7 @@ RUN rm -rf src
 
 # 2) Copy real source and build (only app code recompiles)
 COPY src ./src
+COPY resources ./resources
 RUN touch src/main.rs && cargo build --release
 
 # Stage 2: Production runner
