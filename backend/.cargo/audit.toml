@@ -1,5 +1,11 @@
 [advisories]
-# rand 0.8.5 (RUSTSEC-2026-0097) — unsoundness only reachable via custom
-# log::set_logger, which this codebase does not use. Dep is transitive from
-# scylla 0.15 and tokio-tungstenite 0.24; no patched version available yet.
-ignore = ["RUSTSEC-2026-0097"]
+# RUSTSEC-2023-0071 — rsa 0.9.x Marvin Attack (timing side-channel on RSA decryption).
+# Transitive via jsonwebtoken rust_crypto feature. No fix available upstream.
+# Risk is zero for this codebase: we use HS256 (HMAC) exclusively; RSA code
+# paths in jsonwebtoken are never exercised.
+#
+# RUSTSEC-2026-0097 — rand 0.8.5 unsoundness with custom log::set_logger.
+# Transitive via scylla 0.15 and tokio-tungstenite 0.24; no patched version
+# available. We do not set a custom logger, so the unsoundness path is
+# unreachable.
+ignore = ["RUSTSEC-2023-0071", "RUSTSEC-2026-0097"]
