@@ -38,11 +38,6 @@ pub struct BaisyncChatRequest {
     pub skill: Option<String>,
     #[serde(default)]
     pub attachments: Vec<BaisyncAttachment>,
-    /// When `true`, Sophie attempts to classify the message as a complex
-    /// multi-step task and, if so, enters Ralph Loop mode — executing each
-    /// task sequentially with fresh context between them.
-    #[serde(default)]
-    pub ralph_mode: bool,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -65,6 +60,11 @@ pub struct RateLimitResponse {
     pub limit: i32,
     pub reset_at: String,
 }
+
+/// Gemini model used for Sophie's main streaming response. Exposed so the
+/// SWOT interview handler and other SSE paths can stay in sync.
+pub const SOPHIE_GEMINI_MODEL: &str = "gemini-3-flash-preview";
+
 
 // ─── Skills ──────────────────────────────────────────────────────────────────
 
@@ -264,6 +264,8 @@ pub async fn chat(
         .get("planner")
         .map(|v| v == "true" || v == "1")
         .unwrap_or(false);
+
+    let gemini_model = SOPHIE_GEMINI_MODEL;
 
     let user_id = auth_user.user_id;
 
@@ -585,13 +587,6 @@ pub async fn chat(
     // the OnceLock semaphore first.
     let evaluator_max_concurrent = config.evaluator_max_concurrent;
 
-    // Ralph Loop — capture inputs before moving into the spawn.
-    let ralph_mode = req.ralph_mode;
-    let ralph_user_msg = req.message.clone();
-    let ralph_db = db.clone();
-    let ralph_config = if ralph_mode { Some(config.clone()) } else { None };
-    let ralph_encryption = if ralph_mode { Some(encryption.clone()) } else { None };
-
     // Create channel for SSE events
     let (tx, rx) = mpsc::channel::<Result<Event, Infallible>>(128);
 
@@ -613,43 +608,6 @@ pub async fn chat(
                 crate::services::session::SessionEventType::UserMsg,
                 serde_json::json!({ "content": session_user_msg }).to_string(),
             );
-        }
-
-        // Ralph Loop — if ralph_mode is set, try to classify the user message
-        // as a multi-step task and, if complex, execute each task sequentially
-        // with fresh context (no history). Falls through to the normal
-        // single-call flow on any error or when the message is simple.
-        if ralph_mode {
-            if let (Some(r_config), Some(r_enc)) = (ralph_config, ralph_encryption) {
-                let maybe_plan = crate::services::ralph::classify_and_plan(
-                    &api_key,
-                    user_id,
-                    &ralph_user_msg,
-                )
-                .await;
-
-                if let Some(plan) = maybe_plan {
-                    tracing::info!(
-                        event = "ralph.loop.start",
-                        task_count = plan.tasks.len(),
-                        "entering ralph loop"
-                    );
-                    crate::services::ralph::execute_ralph_loop(
-                        ralph_db,
-                        r_config,
-                        r_enc,
-                        user_id,
-                        plan,
-                        system_prompt,
-                        api_key,
-                        tx,
-                        session_id_opt,
-                    )
-                    .await;
-                    return;
-                }
-                tracing::debug!(event = "ralph.loop.skip", "message not complex; normal flow");
-            }
         }
 
         // S2.2 — optional Planner call. Runs BEFORE the Gemini generator
@@ -745,8 +703,8 @@ pub async fn chat(
         });
 
         let url = format!(
-            "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:streamGenerateContent?alt=sse&key={}",
-            api_key
+            "https://generativelanguage.googleapis.com/v1beta/models/{}:streamGenerateContent?alt=sse&key={}",
+            gemini_model, api_key
         );
 
         // T1.3 + T2.2 — retry the initial POST (connect + response headers)
@@ -821,6 +779,11 @@ pub async fn chat(
                 // updates this cumulatively and the last frame carries the
                 // final tally for this turn.
                 let mut total_tokens: i64 = 0;
+                // Gemini thinking models include internal reasoning tokens in
+                // totalTokenCount but these are NOT billed in the Gemini
+                // dashboard. Track thoughtsTokenCount to subtract them so our
+                // counter matches what Gemini actually charges.
+                let mut thoughts_tokens: i64 = 0;
 
                 use futures::StreamExt;
                 while let Some(chunk_result) = stream.next().await {
@@ -849,6 +812,13 @@ pub async fn chat(
                                         {
                                             if t > total_tokens {
                                                 total_tokens = t;
+                                            }
+                                        }
+                                        if let Some(t) =
+                                            parsed["usageMetadata"]["thoughtsTokenCount"].as_i64()
+                                        {
+                                            if t > thoughts_tokens {
+                                                thoughts_tokens = t;
                                             }
                                         }
                                         // Gemini streaming: extract text from candidates
@@ -887,7 +857,9 @@ pub async fn chat(
                 // for the whole session and the per-hour block would never
                 // trip — the bug this commit fixes.
                 let billed_tokens: i64 = if total_tokens > 0 {
-                    total_tokens
+                    // Subtract thinking tokens — they're included in totalTokenCount
+                    // but Gemini doesn't bill them (the dashboard excludes them).
+                    (total_tokens - thoughts_tokens).max(0)
                 } else if !full_content.is_empty() {
                     let estimated = estimate_tokens_from_chars(
                         session_user_msg.chars().count(),
@@ -909,6 +881,7 @@ pub async fn chat(
                     event = "baisync.post_stream_billing",
                     user_id = %user_id,
                     total_tokens_reported = total_tokens,
+                    thoughts_tokens = thoughts_tokens,
                     billed_tokens = billed_tokens,
                     response_chars = full_content.chars().count(),
                     "post-stream billing decision"

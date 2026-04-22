@@ -88,6 +88,10 @@ const RETRY_BACKOFFS: [Duration; 3] = [
     Duration::from_millis(8000),
 ];
 
+/// Maximum delay we will honour from a `Retry-After` header to avoid blocking
+/// a request handler for too long (some providers return 3600).
+const RETRY_AFTER_CAP: Duration = Duration::from_secs(90);
+
 /// Outcome metadata emitted alongside the `Response` so callers can forward
 /// `retries_attempted` into `llm_call_logs.retry_count`.
 #[derive(Debug, Clone, Copy, Default)]
@@ -121,10 +125,16 @@ where
 {
     let mut last_err_msg: Option<String> = None;
     let mut last_status: Option<u16> = None;
+    // Delay override set when the provider returns a `Retry-After` header.
+    // Consumed once at the top of the NEXT iteration so it replaces the
+    // fixed backoff schedule for that specific sleep only.
+    let mut next_delay_override: Option<Duration> = None;
 
     for attempt in 0..=RETRY_BACKOFFS.len() {
         if attempt > 0 {
-            let delay = RETRY_BACKOFFS[attempt - 1];
+            let delay = next_delay_override
+                .take()
+                .unwrap_or(RETRY_BACKOFFS[attempt - 1]);
             tracing::warn!(
                 label = label,
                 attempt = attempt,
@@ -148,18 +158,55 @@ where
                     );
                 }
                 if code == 429 || (500..=599).contains(&code) {
-                    // Retryable status — drop the response, loop forward.
-                    tracing::warn!(
-                        label = label,
-                        status = code,
-                        attempt = attempt,
-                        "retryable HTTP status"
-                    );
+                    // Honour `Retry-After` header if the provider sent one.
+                    // Gemini sends this on quota exhaustion — ignoring it
+                    // causes rapid retries that keep hitting the same window.
+                    let retry_after = response
+                        .headers()
+                        .get("retry-after")
+                        .and_then(|v| v.to_str().ok())
+                        .and_then(|s| s.parse::<u64>().ok())
+                        .map(|secs| {
+                            let capped = Duration::from_secs(secs).min(RETRY_AFTER_CAP);
+                            tracing::warn!(
+                                label = label,
+                                status = code,
+                                retry_after_secs = secs,
+                                capped_ms = capped.as_millis() as u64,
+                                "provider sent Retry-After — overriding next backoff"
+                            );
+                            capped
+                        });
+                    if retry_after.is_some() {
+                        next_delay_override = retry_after;
+                    }
+
+                    // Read the first 300 bytes of the body for diagnostics
+                    // before releasing the connection slot.
+                    match response.bytes().await {
+                        Ok(body) if !body.is_empty() => {
+                            let preview = String::from_utf8_lossy(
+                                &body[..body.len().min(300)],
+                            );
+                            tracing::warn!(
+                                label = label,
+                                status = code,
+                                attempt = attempt,
+                                body = %preview,
+                                "retryable HTTP status"
+                            );
+                        }
+                        _ => {
+                            tracing::warn!(
+                                label = label,
+                                status = code,
+                                attempt = attempt,
+                                "retryable HTTP status (empty body)"
+                            );
+                        }
+                    }
                     last_status = Some(code);
                     last_err_msg = Some(format!("HTTP {code}"));
-                    // Consume the body to release the connection slot before
-                    // sleeping. Best-effort: ignore body-read errors.
-                    let _ = response.bytes().await;
                     continue;
                 }
                 // Non-retryable 4xx — return as-is. Caller parses body for

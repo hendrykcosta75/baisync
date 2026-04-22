@@ -1,7 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { apiFetch } from '@/lib/api'
-import type { RalphPlan } from '@/types/ralph'
 
 export interface BaisyncAttachment {
   name: string
@@ -11,7 +10,7 @@ export interface BaisyncAttachment {
 
 export interface BaisyncMessage {
   id: string
-  role: 'user' | 'assistant' | 'status' | 'ralph_plan'
+  role: 'user' | 'assistant' | 'status'
   content: string
   timestamp: number
   uiBlocks?: BaisyncUIBlock[]
@@ -21,7 +20,7 @@ export interface BaisyncMessage {
 }
 
 export interface BaisyncUIBlock {
-  type: 'question_box' | 'qr_code' | 'assistant_card' | 'ralph_tasks'
+  type: 'question_box' | 'qr_code' | 'assistant_card'
   data: Record<string, unknown>
 }
 
@@ -64,25 +63,25 @@ interface BaisyncState {
    */
   clearedAt: number | null
 
-  // ── Ralph Loop ──────────────────────────────────────────────────────────
-  /** Whether the user has enabled Ralph Loop mode (persisted). */
-  ralphEnabled: boolean
-  /** Live plan being executed; null when no ralph session is active. */
-  ralphPlan: RalphPlan | null
-  /** True while a ralph loop is running (between ralph_plan and ralph_complete). */
-  inRalphMode: boolean
+  /** Accumulator for action results; flushed as one sendActionResult at end of ActionSequence. */
+  pendingActionResults: string[]
+  /** Counts sendActionResult rounds per user turn; resets on sendMessage. Prevents infinite tool loops. */
+  actionRound: number
 
   toggle: () => void
   open: () => void
   close: () => void
   sendMessage: (text: string, attachments?: BaisyncAttachment[]) => Promise<void>
   sendActionResult: (result: string) => Promise<void>
+  /** Queue a single action result without triggering a backend call yet. */
+  queueActionResult: (result: string) => void
+  /** Send all queued action results as one combined sendActionResult call. */
+  flushActionResults: () => Promise<void>
   clearMessages: () => void
   fetchRateLimit: () => Promise<void>
   setActiveSkill: (skill: string | null) => void
   pushLocalMessage: (msg: Omit<BaisyncMessage, 'id' | 'timestamp'>) => void
   appendLiveTranscript: (role: 'user' | 'assistant', text: string) => void
-  toggleRalph: () => void
   /**
    * S2.1 — Pull Sophie's latest session from the server and merge into
    * `messages` only when the local chat is empty. On any failure (offline,
@@ -249,15 +248,13 @@ export const useBaisyncStore = create<BaisyncState>()(
   rateLimit: null,
   hydrated: false,
   clearedAt: null,
-  ralphEnabled: false,
-  ralphPlan: null,
-  inRalphMode: false,
+  pendingActionResults: [] as string[],
+  actionRound: 0,
 
   toggle: () => set((s) => ({ isOpen: !s.isOpen })),
   open: () => set({ isOpen: true }),
   close: () => set({ isOpen: false }),
   setActiveSkill: (skill) => set({ activeSkill: skill }),
-  toggleRalph: () => set((s) => ({ ralphEnabled: !s.ralphEnabled })),
 
   clearMessages: () =>
     // `hydrated: true` stops any in-flight `hydrate()` call from the same tab
@@ -270,8 +267,6 @@ export const useBaisyncStore = create<BaisyncState>()(
       activeSkill: null,
       hydrated: true,
       clearedAt: Date.now(),
-      ralphPlan: null,
-      inRalphMode: false,
     }),
 
   pushLocalMessage: (msg) => set((s) => ({
@@ -387,6 +382,8 @@ export const useBaisyncStore = create<BaisyncState>()(
       messages: [...s.messages, userMsg],
       isStreaming: true,
       streamingContent: '',
+      actionRound: 0,
+      pendingActionResults: [],
     }))
 
     // Build history from previous messages (exclude status messages)
@@ -404,7 +401,6 @@ export const useBaisyncStore = create<BaisyncState>()(
           history,
           skill: activeSkill,
           attachments: attachments && attachments.length > 0 ? attachments : undefined,
-          ralph_mode: get().ralphEnabled,
         }),
       })
 
@@ -480,7 +476,23 @@ export const useBaisyncStore = create<BaisyncState>()(
                 })
               } else if (eventType === 'token' && data.text) {
                 fullContent += data.text
-                // Don't update streamingContent — accumulate silently to hide raw JSON/actions
+                // Stream visible text live. Mask content inside open action/UI tag blocks
+                // so the user never sees raw XML mid-stream. Once the closing tag arrives
+                // (and closed tags are stripped by parseActions/parseUIBlocks at stream end)
+                // the final committed message is clean.
+                // Count open vs close tags — `includes()` fails when the first pair has
+                // already closed and a second open tag appears later in the stream.
+                const actionOpen = (fullContent.match(/<baisync-action>/g) || []).length
+                const actionClose = (fullContent.match(/<\/baisync-action>/g) || []).length
+                const uiOpen = (fullContent.match(/<baisync-ui>/g) || []).length
+                const uiClose = (fullContent.match(/<\/baisync-ui>/g) || []).length
+                const hasOpenTag = actionOpen > actionClose || uiOpen > uiClose
+                if (!hasOpenTag) {
+                  const display = fullContent
+                    .replace(/<baisync-action>[\s\S]*?<\/baisync-action>/g, '')
+                    .replace(/<baisync-ui>[\s\S]*?<\/baisync-ui>/g, '')
+                  set({ streamingContent: display })
+                }
               } else if (eventType === 'status' && data.text) {
                 set((s) => {
                   const lastMsg = s.messages[s.messages.length - 1]
@@ -517,101 +529,8 @@ export const useBaisyncStore = create<BaisyncState>()(
                   ],
                   isStreaming: false,
                   streamingContent: '',
-                  ralphPlan: null,
-                  inRalphMode: false,
                 }))
                 return
-
-              // ── Ralph Loop SSE events ─────────────────────────────────────
-              } else if (eventType === 'ralph_plan') {
-                const plan: RalphPlan = {
-                  overall_goal: data.overall_goal as string,
-                  tasks: (data.tasks as Array<{ id: string; title: string }>).map((t) => ({
-                    id: t.id,
-                    title: t.title,
-                    status: 'pending' as const,
-                  })),
-                }
-                set((s) => ({
-                  ralphPlan: plan,
-                  inRalphMode: true,
-                  messages: [
-                    ...s.messages.filter((m) => m.role !== 'status'),
-                    { id: generateId(), role: 'ralph_plan' as const, content: '', timestamp: Date.now() },
-                  ],
-                }))
-
-              } else if (eventType === 'ralph_task_start') {
-                const taskId = data.task_id as string
-                fullContent = ''
-                set((s) => ({
-                  ralphPlan: s.ralphPlan
-                    ? {
-                        ...s.ralphPlan,
-                        tasks: s.ralphPlan.tasks.map((t) =>
-                          t.id === taskId ? { ...t, status: 'running' as const } : t,
-                        ),
-                      }
-                    : null,
-                }))
-
-              } else if (eventType === 'ralph_task_done') {
-                const taskId = data.task_id as string
-                const taskIndex = data.index as number
-                const taskTotal = get().ralphPlan?.tasks.length ?? 1
-                const taskTitle = get().ralphPlan?.tasks.find((t) => t.id === taskId)?.title ?? ''
-                const responseText = (data.response as string) ?? ''
-
-                // Mark done in plan
-                set((s) => ({
-                  ralphPlan: s.ralphPlan
-                    ? {
-                        ...s.ralphPlan,
-                        tasks: s.ralphPlan.tasks.map((t) =>
-                          t.id === taskId
-                            ? { ...t, status: 'done' as const, response: responseText }
-                            : t,
-                        ),
-                      }
-                    : null,
-                }))
-
-                // Animate response into chat — remove status first
-                set((s) => ({ messages: s.messages.filter((m) => m.role !== 'status') }))
-                const label = `**[${taskIndex}/${taskTotal}] ${taskTitle}**`
-                const paragraphs = responseText
-                  ? [label + '\n\n' + responseText]
-                  : [label]
-
-                for (let pi = 0; pi < paragraphs.length; pi++) {
-                  const para = paragraphs[pi]
-                  const words = para.split(/(\s+)/)
-                  let revealed = ''
-                  for (let wi = 0; wi < words.length; wi++) {
-                    revealed += words[wi]
-                    set({ streamingContent: revealed })
-                    await new Promise((r) => setTimeout(r, 14))
-                  }
-                  const { cleanContent: c1, uiBlocks } = parseUIBlocks(para)
-                  const { cleanContent: finalPara, actions } = parseActions(c1)
-                  set((s) => ({
-                    messages: [
-                      ...s.messages,
-                      {
-                        id: generateId(),
-                        role: 'assistant' as const,
-                        content: finalPara || para,
-                        timestamp: Date.now() + pi,
-                        uiBlocks: uiBlocks.length > 0 ? uiBlocks : undefined,
-                        actions: actions.length > 0 ? actions : undefined,
-                      },
-                    ],
-                    streamingContent: '',
-                  }))
-                }
-
-              } else if (eventType === 'ralph_complete') {
-                set({ inRalphMode: false })
 
               } else if (eventType === 'done') {
                 streamDone = true
@@ -660,16 +579,10 @@ export const useBaisyncStore = create<BaisyncState>()(
           ? finalContent.split(/\n\n+/).map((p) => p.trim()).filter(Boolean)
           : []
 
+        // Tokens already streamed live into streamingContent — no word animation
+        // needed. Just commit each paragraph directly to the messages array.
         for (let pi = 0; pi < paragraphs.length; pi++) {
           const para = paragraphs[pi]
-          const words = para.split(/(\s+)/)
-          let revealed = ''
-          for (let i = 0; i < words.length; i++) {
-            revealed += words[i]
-            set({ streamingContent: revealed })
-            await new Promise((r) => setTimeout(r, 18))
-          }
-
           const isLast = pi === paragraphs.length - 1
           set((s) => ({
             messages: [
@@ -684,8 +597,6 @@ export const useBaisyncStore = create<BaisyncState>()(
             ],
             streamingContent: '',
           }))
-
-          if (!isLast) await new Promise((r) => setTimeout(r, 300))
         }
 
         if (paragraphs.length === 0 && uiBlocks.length > 0) {
@@ -700,6 +611,19 @@ export const useBaisyncStore = create<BaisyncState>()(
                 uiBlocks,
               },
             ],
+          }))
+        } else if (paragraphs.length === 0 && uiBlocks.length === 0 && fullContent.trim()) {
+          set((s) => ({
+            messages: [
+              ...s.messages,
+              {
+                id: generateId(),
+                role: 'assistant',
+                content: fullContent.trim(),
+                timestamp: Date.now(),
+              },
+            ],
+            streamingContent: '',
           }))
         }
       }
@@ -727,15 +651,54 @@ export const useBaisyncStore = create<BaisyncState>()(
     }
   },
 
+  queueActionResult: (result: string) => {
+    set((s) => ({ pendingActionResults: [...s.pendingActionResults, result] }))
+  },
+
+  flushActionResults: async () => {
+    const { pendingActionResults } = get()
+    if (pendingActionResults.length === 0) return
+    set({ pendingActionResults: [] })
+    await get().sendActionResult(pendingActionResults.join('\n\n---\n\n'))
+  },
+
   sendActionResult: async (result: string) => {
-    const { messages, activeSkill } = get()
+    const { messages, activeSkill, actionRound } = get()
 
-    set({ isStreaming: true, streamingContent: '' })
+    // Hard limit: after 4 tool rounds per user turn, force-stop the chain.
+    // Sophie should have all the data it needs by then; if not, it's looping.
+    const MAX_ACTION_ROUNDS = 4
+    if (actionRound >= MAX_ACTION_ROUNDS) {
+      set({ isStreaming: false, streamingContent: '', pendingActionResults: [], actionRound: 0 })
+      get().pushLocalMessage({
+        role: 'assistant',
+        content: 'Não consegui reunir todas as informações em tempo hábil. Tente um pedido mais específico.',
+      })
+      return
+    }
+    set({ isStreaming: true, streamingContent: '', actionRound: actionRound + 1 })
 
-    // Build history including the action result as a system context message
-    const history = messages
-      .filter((m) => m.role !== 'status')
-      .map((m) => ({ role: m.role, content: m.content }))
+    // Ralph Loop principle: fresh context per round.
+    // Instead of passing the full growing conversation history (which confuses
+    // Sophie into retrying the same tools), we send ONLY:
+    //   1. The original user request (the trigger for this action chain)
+    //   2. All accumulated tool results so far
+    // This mirrors how ralph.rs executes each task with a clean context and
+    // only progress notes — not the full back-and-forth.
+    const originalUserMsg = [...messages]
+      .filter((m) => m.role === 'user' && !m.content.startsWith('[Resultado'))
+      .at(-1)?.content ?? ''
+
+    const freshHistory = originalUserMsg
+      ? [{ role: 'user', content: originalUserMsg }]
+      : []
+
+    const isLastRound = actionRound + 1 >= MAX_ACTION_ROUNDS - 1
+    const stopHint = isLastRound
+      ? '\n\n[INSTRUÇÃO: Esta é a última rodada disponível. Escreva a resposta final agora sem chamar mais baisync-actions.]'
+      : '\n\n[Se você tem dados suficientes para responder, escreva a resposta final sem chamar mais ferramentas.]'
+
+    const messageWithHint = `[Resultados das ferramentas]\n${result}${stopHint}`
 
     try {
       const response = await fetch('/api/baisync/chat', {
@@ -743,8 +706,8 @@ export const useBaisyncStore = create<BaisyncState>()(
         headers: { 'Content-Type': 'application/json' },
         credentials: 'same-origin',
         body: JSON.stringify({
-          message: `[Resultado de ação do sistema]\n${result}`,
-          history,
+          message: messageWithHint,
+          history: freshHistory,
           skill: activeSkill,
         }),
       })
@@ -786,8 +749,20 @@ export const useBaisyncStore = create<BaisyncState>()(
               const data = JSON.parse(dataStr)
               if (eventType === 'token' && data.text) {
                 fullContent += data.text
+                // Stream live — fast model returns prose, no action tags expected
+                set({ streamingContent: fullContent })
               } else if (eventType === 'rate_limit') {
                 set({ rateLimit: { used: data.used, limit: data.limit, resetAt: '', pct: data.pct, warning: data.warning ?? undefined } })
+              } else if (eventType === 'error' && data.error) {
+                set((s) => ({
+                  messages: [
+                    ...s.messages.filter((m) => m.role !== 'status'),
+                    { id: generateId(), role: 'assistant', content: data.error, timestamp: Date.now() },
+                  ],
+                  isStreaming: false,
+                  streamingContent: '',
+                }))
+                return
               } else if (eventType === 'done') {
                 streamDone = true
               }
@@ -824,15 +799,9 @@ export const useBaisyncStore = create<BaisyncState>()(
           ? finalContent.split(/\n\n+/).map((p) => p.trim()).filter(Boolean)
           : []
 
+        // Tokens already streamed live — commit paragraphs directly, no animation.
         for (let pi = 0; pi < paragraphs.length; pi++) {
           const para = paragraphs[pi]
-          const words = para.split(/(\s+)/)
-          let revealed = ''
-          for (let i = 0; i < words.length; i++) {
-            revealed += words[i]
-            set({ streamingContent: revealed })
-            await new Promise((r) => setTimeout(r, 18))
-          }
           const isLast = pi === paragraphs.length - 1
           set((s) => ({
             messages: [
@@ -847,7 +816,6 @@ export const useBaisyncStore = create<BaisyncState>()(
             ],
             streamingContent: '',
           }))
-          if (!isLast) await new Promise((r) => setTimeout(r, 300))
         }
 
         if (paragraphs.length === 0 && uiBlocks.length > 0) {
@@ -863,10 +831,26 @@ export const useBaisyncStore = create<BaisyncState>()(
               },
             ],
           }))
+        } else if (paragraphs.length === 0 && uiBlocks.length === 0 && fullContent.trim()) {
+          // The model responded but everything got stripped (e.g. malformed tags).
+          // Show the raw content so the chat is never silently empty.
+          set((s) => ({
+            messages: [
+              ...s.messages,
+              {
+                id: generateId(),
+                role: 'assistant',
+                content: fullContent.trim(),
+                timestamp: Date.now(),
+              },
+            ],
+            streamingContent: '',
+          }))
         }
       }
 
       set({ isStreaming: false, streamingContent: '' })
+      void get().fetchRateLimit()
     } catch (err) {
       console.error('[baisync] action result stream error:', err)
       set({ isStreaming: false, streamingContent: '' })
@@ -877,7 +861,7 @@ export const useBaisyncStore = create<BaisyncState>()(
     name: 'baisync-chat',
     partialize: (state) => ({
       messages: state.messages
-        .filter((m) => m.role !== 'status' && m.role !== 'ralph_plan')
+        .filter((m) => m.role !== 'status')
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
         .map(({ actions, attachments, ...rest }) => ({
           ...rest,
@@ -885,7 +869,6 @@ export const useBaisyncStore = create<BaisyncState>()(
         })),
       activeSkill: state.activeSkill,
       clearedAt: state.clearedAt,
-      ralphEnabled: state.ralphEnabled,
     }),
   }
 ))

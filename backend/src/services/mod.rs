@@ -34,7 +34,6 @@ pub mod grok_audio;
 pub mod openai_audio;
 pub mod pix;
 pub mod rag;
-pub mod ralph;
 pub mod team;
 pub mod transcription;
 pub mod webhook_dedup;

@@ -3,7 +3,6 @@
 import React, { useState, useEffect, useRef } from 'react'
 import type { BaisyncMessage, BaisyncUIBlock, BaisyncAction, BaisyncAttachment } from '@/store/useBaisyncStore'
 import { BaisyncUIBlockRenderer } from './baisync-ui-blocks'
-import { RalphTaskPanel } from './ralph-task-panel'
 import { useAssistantStore } from '@/store/useAssistantStore'
 import { useCalendarStore } from '@/store/useCalendarStore'
 import { useNotificationStore } from '@/store/useNotificationStore'
@@ -308,6 +307,21 @@ const ACTION_LABELS: Record<string, { running: string; done: string; error: stri
 
   list_teams: { running: 'Buscando equipes...', done: 'Equipes carregadas', error: 'Falha ao buscar equipes' },
   get_strategy_map: { running: 'Buscando mapa estratégico...', done: 'Mapa carregado', error: 'Falha ao buscar mapa' },
+  // Skills
+  list_skills: { running: 'Buscando skills...', done: 'Skills carregadas', error: 'Falha ao buscar skills' },
+  create_skill: { running: 'Criando skill...', done: 'Skill criada', error: 'Falha ao criar skill' },
+  update_skill: { running: 'Atualizando skill...', done: 'Skill atualizada', error: 'Falha ao atualizar skill' },
+  delete_skill: { running: 'Excluindo skill...', done: 'Skill excluída', error: 'Falha ao excluir skill' },
+  link_skill: { running: 'Vinculando skill...', done: 'Skill vinculada', error: 'Falha ao vincular skill' },
+  unlink_skill: { running: 'Desvinculando skill...', done: 'Skill desvinculada', error: 'Falha ao desvincular skill' },
+  // MCP Servers
+  list_mcp_servers: { running: 'Buscando servidores MCP...', done: 'Servidores MCP carregados', error: 'Falha ao buscar servidores MCP' },
+  create_mcp_server: { running: 'Criando servidor MCP...', done: 'Servidor MCP criado', error: 'Falha ao criar servidor MCP' },
+  update_mcp_server: { running: 'Atualizando servidor MCP...', done: 'Servidor MCP atualizado', error: 'Falha ao atualizar servidor MCP' },
+  delete_mcp_server: { running: 'Excluindo servidor MCP...', done: 'Servidor MCP excluído', error: 'Falha ao excluir servidor MCP' },
+  link_mcp_server: { running: 'Vinculando servidor MCP...', done: 'Servidor MCP vinculado', error: 'Falha ao vincular servidor MCP' },
+  unlink_mcp_server: { running: 'Desvinculando servidor MCP...', done: 'Servidor MCP desvinculado', error: 'Falha ao desvincular servidor MCP' },
+  refresh_mcp_tools: { running: 'Atualizando ferramentas MCP...', done: 'Ferramentas MCP atualizadas', error: 'Falha ao atualizar ferramentas MCP' },
 }
 
 interface ActionResult {
@@ -351,7 +365,7 @@ function ActionSequence({ actions }: { actions: BaisyncAction[] }) {
           // Backend 4xx/5xx: surface the message to Sophie so she can retry
           // with corrected args instead of letting Next's dev overlay show it.
           if (err instanceof ApiError) {
-            useBaisyncStore.getState().sendActionResult(
+            useBaisyncStore.getState().queueActionResult(
               `Erro ao executar ${action.action}: ${err.message} (HTTP ${err.status}). Revise os argumentos (IDs, nomes) e tente de novo.`,
             )
           } else {
@@ -361,6 +375,10 @@ function ActionSequence({ actions }: { actions: BaisyncAction[] }) {
           break
         }
       }
+
+      // Send all accumulated action results as one backend call so Sophie
+      // gets a coherent summary instead of triggering a new round per action.
+      await useBaisyncStore.getState().flushActionResults()
     }
 
     const isValidUUID = (id: string): boolean =>
@@ -384,7 +402,7 @@ function ActionSequence({ actions }: { actions: BaisyncAction[] }) {
 
         if (dataId) {
           if (!isValidUUID(dataId)) {
-            useBaisyncStore.getState().sendActionResult(
+            useBaisyncStore.getState().queueActionResult(
               `Erro: "${dataId}" não é um ID válido. Use o UUID real do assistente (listado em "Contexto do Usuário" ou via list_assistants).`,
             )
             return null
@@ -397,7 +415,7 @@ function ActionSequence({ actions }: { actions: BaisyncAction[] }) {
           if (byName) return byName.id
         }
 
-        useBaisyncStore.getState().sendActionResult(
+        useBaisyncStore.getState().queueActionResult(
           dataId
             ? `Erro: assistente com id "${dataId}" não existe. Use list_assistants para ver os IDs atuais.`
             : 'Erro: nenhum assistente especificado. Use list_assistants para ver os IDs disponíveis.',
@@ -465,7 +483,7 @@ function ActionSequence({ actions }: { actions: BaisyncAction[] }) {
           : appointments.map((a) =>
               `- **${a.client_name}** (id: ${a.id}) | ${a.date_time} | ${a.duration_minutes}min | ${a.status}${a.appointment_type ? ` | ${a.appointment_type}` : ''}${a.client_phone ? ` | tel: ${a.client_phone}` : ''}`
             ).join('\n')
-        useBaisyncStore.getState().sendActionResult(summary)
+        useBaisyncStore.getState().queueActionResult(summary)
         return { status: 'done' }
       }
 
@@ -559,7 +577,7 @@ function ActionSequence({ actions }: { actions: BaisyncAction[] }) {
           : assistants.map((a) =>
               `- **${a.name}** (id: ${a.id}) | ${a.llmProvider}/${a.model} | temp: ${a.temperature}`
             ).join('\n')
-        useBaisyncStore.getState().sendActionResult(summary)
+        useBaisyncStore.getState().queueActionResult(summary)
         return { status: 'done' }
       }
 
@@ -578,7 +596,7 @@ function ActionSequence({ actions }: { actions: BaisyncAction[] }) {
               const type = t.tool_type || 'http_request'
               return `- **${t.name}** (id: ${t.id}, ${t.is_enabled ? 'ativo' : 'inativo'}, tipo: ${type}) | ${t.method} ${t.endpoint}`
             }).join('\n')
-        useBaisyncStore.getState().sendActionResult(summary)
+        useBaisyncStore.getState().queueActionResult(summary)
         return { status: 'done' }
       }
 
@@ -742,7 +760,7 @@ function ActionSequence({ actions }: { actions: BaisyncAction[] }) {
           : integrations.map((i) =>
               `- **${i.channel}/${i.provider}** (id: ${i.id}) | status: ${i.status}${i.config_phone_number ? ` | tel: ${i.config_phone_number}` : ''}`
             ).join('\n')
-        useBaisyncStore.getState().sendActionResult(summary)
+        useBaisyncStore.getState().queueActionResult(summary)
         return { status: 'done' }
       }
 
@@ -764,7 +782,7 @@ function ActionSequence({ actions }: { actions: BaisyncAction[] }) {
               const convId = (c.id || '') as string
               return `- **${name}** (${channel}, id: ${convId}) | ${count} msgs | ${aiOn} | Última: "${lastMsg.slice(0, 60)}"`
             }).join('\n')
-        useBaisyncStore.getState().sendActionResult(summary)
+        useBaisyncStore.getState().queueActionResult(summary)
         return { status: 'done' }
       }
 
@@ -781,7 +799,7 @@ function ActionSequence({ actions }: { actions: BaisyncAction[] }) {
               const content = (m.content || '') as string
               return `**${sender}**: ${content.slice(0, 200)}`
             }).join('\n')
-        useBaisyncStore.getState().sendActionResult(summary)
+        useBaisyncStore.getState().queueActionResult(summary)
         return { status: 'done' }
       }
 
@@ -810,7 +828,7 @@ function ActionSequence({ actions }: { actions: BaisyncAction[] }) {
         const result = await apiFetch<{ summary?: string }>(`/api/assistants/${aid}/conversations/${data.conversation_id}/summary`, {
           method: 'POST', body: JSON.stringify({ provider: 'openai', model: 'gpt-4o-mini' }),
         })
-        useBaisyncStore.getState().sendActionResult(result.summary || 'Resumo não disponível.')
+        useBaisyncStore.getState().queueActionResult(result.summary || 'Resumo não disponível.')
         return { status: 'done' }
       }
 
@@ -830,7 +848,7 @@ function ActionSequence({ actions }: { actions: BaisyncAction[] }) {
               const email = t.email ? ` | ${t.email}` : ''
               return `- **${t.name}** (id: ${t.id}) | ${t.permission_level}${revoked}${email}`
             }).join('\n')
-        useBaisyncStore.getState().sendActionResult(summary)
+        useBaisyncStore.getState().queueActionResult(summary)
         return { status: 'done' }
       }
 
@@ -846,7 +864,7 @@ function ActionSequence({ actions }: { actions: BaisyncAction[] }) {
           }),
         })
         if (result.token) {
-          useBaisyncStore.getState().sendActionResult(`Token criado: \`${result.token}\``)
+          useBaisyncStore.getState().queueActionResult(`Token criado: \`${result.token}\``)
         }
         return { status: 'done' }
       }
@@ -875,7 +893,7 @@ function ActionSequence({ actions }: { actions: BaisyncAction[] }) {
         const result = await apiFetch<{ token?: string }>(`/api/assistants/${aid}/share-token`, { method: 'POST', body: JSON.stringify({}) })
         if (result.token) {
           const shareUrl = `${window.location.origin}/shared/${result.token}`
-          useBaisyncStore.getState().sendActionResult(`Link de compartilhamento criado: ${shareUrl}`)
+          useBaisyncStore.getState().queueActionResult(`Link de compartilhamento criado: ${shareUrl}`)
         }
         return { status: 'done' }
       }
@@ -888,12 +906,12 @@ function ActionSequence({ actions }: { actions: BaisyncAction[] }) {
           const result = await apiFetch<{ token?: string }>(`/api/assistants/${aid}/share-token`)
           if (result.token) {
             const shareUrl = `${window.location.origin}/shared/${result.token}`
-            useBaisyncStore.getState().sendActionResult(`Link de compartilhamento ativo: ${shareUrl}`)
+            useBaisyncStore.getState().queueActionResult(`Link de compartilhamento ativo: ${shareUrl}`)
           } else {
-            useBaisyncStore.getState().sendActionResult('Nenhum link de compartilhamento ativo.')
+            useBaisyncStore.getState().queueActionResult('Nenhum link de compartilhamento ativo.')
           }
         } catch {
-          useBaisyncStore.getState().sendActionResult('Nenhum link de compartilhamento ativo.')
+          useBaisyncStore.getState().queueActionResult('Nenhum link de compartilhamento ativo.')
         }
         return { status: 'done' }
       }
@@ -932,7 +950,7 @@ function ActionSequence({ actions }: { actions: BaisyncAction[] }) {
             summary = 'Não foi possível buscar vozes OpenAI.'
           }
         }
-        useBaisyncStore.getState().sendActionResult(summary)
+        useBaisyncStore.getState().queueActionResult(summary)
         return { status: 'done' }
       }
 
@@ -985,9 +1003,9 @@ function ActionSequence({ actions }: { actions: BaisyncAction[] }) {
             `- **Máximo por dia**: ${avail.max_per_day}`,
             `- **Datas bloqueadas**: ${blocked}`,
           ].join('\n')
-          useBaisyncStore.getState().sendActionResult(summary)
+          useBaisyncStore.getState().queueActionResult(summary)
         } catch {
-          useBaisyncStore.getState().sendActionResult('Nenhuma disponibilidade configurada para este assistente.')
+          useBaisyncStore.getState().queueActionResult('Nenhuma disponibilidade configurada para este assistente.')
         }
         return { status: 'done' }
       }
@@ -1018,7 +1036,7 @@ function ActionSequence({ actions }: { actions: BaisyncAction[] }) {
         const summary = slots.length === 0
           ? `Nenhum horário disponível em ${date}.`
           : [`Horários disponíveis em **${date}**:`, ...slots.map((s) => `- ${s}`)].join('\n')
-        useBaisyncStore.getState().sendActionResult(summary)
+        useBaisyncStore.getState().queueActionResult(summary)
         return { status: 'done' }
       }
 
@@ -1033,7 +1051,7 @@ function ActionSequence({ actions }: { actions: BaisyncAction[] }) {
               const read = n.is_read ? '' : ' (nova)'
               return `- **${n.title}**${read} (id: ${n.id})\n  ${n.message}`
             }).join('\n')
-        useBaisyncStore.getState().sendActionResult(summary)
+        useBaisyncStore.getState().queueActionResult(summary)
         useNotificationStore.getState().fetch()
         return { status: 'done' }
       }
@@ -1073,13 +1091,13 @@ function ActionSequence({ actions }: { actions: BaisyncAction[] }) {
           paidCount: number; unpaidCount: number; pendingCount: number
         }[]>('/api/user/financeiro/overview')
         if (overviews.length === 0) {
-          useBaisyncStore.getState().sendActionResult('Nenhuma cobrança PIX encontrada em nenhum assistente.')
+          useBaisyncStore.getState().queueActionResult('Nenhuma cobrança PIX encontrada em nenhum assistente.')
         } else {
           const lines = overviews.map(o => {
             const a = useAssistantStore.getState().assistants.find(a => a.id === o.assistantId)
             return `**${a?.name || o.assistantId}**: R$ ${o.totalRevenue.toFixed(2)} receita | ${o.totalCharges} cobranças (${o.paidCount} pagas, ${o.pendingCount} pendentes, ${o.unpaidCount} canceladas)`
           })
-          useBaisyncStore.getState().sendActionResult(`Resumo financeiro:\n${lines.join('\n')}`)
+          useBaisyncStore.getState().queueActionResult(`Resumo financeiro:\n${lines.join('\n')}`)
         }
         return { status: 'done' }
       }
@@ -1092,7 +1110,7 @@ function ActionSequence({ actions }: { actions: BaisyncAction[] }) {
           totalRevenue: number; totalCharges: number; paidCount: number; unpaidCount: number; pendingCount: number
         }>(`/api/assistants/${id}/financeiro/summary`)
         const a = useAssistantStore.getState().assistants.find(a => a.id === id)
-        useBaisyncStore.getState().sendActionResult(
+        useBaisyncStore.getState().queueActionResult(
           `Financeiro de **${a?.name || id}**:\n- Receita: R$ ${s.totalRevenue.toFixed(2)}\n- Total cobranças: ${s.totalCharges}\n- Pagas: ${s.paidCount}\n- Pendentes: ${s.pendingCount}\n- Canceladas/Expiradas: ${s.unpaidCount}`
         )
         return { status: 'done' }
@@ -1110,7 +1128,7 @@ function ActionSequence({ actions }: { actions: BaisyncAction[] }) {
           contactPhone: string; createdAt: string; customerName?: string; customerCpf?: string; pixMode?: string }[]>(`/api/assistants/${id}/financeiro/charges?limit=${limit}`)
         const charges = Array.isArray(rawCharges) ? rawCharges : (rawCharges.items || [])
         if (charges.length === 0) {
-          useBaisyncStore.getState().sendActionResult('Nenhuma cobrança encontrada para este assistente.')
+          useBaisyncStore.getState().queueActionResult('Nenhuma cobrança encontrada para este assistente.')
         } else {
           const statusMap: Record<string, string> = { approved: 'Pago', pending: 'Pendente', cancelled: 'Cancelado', refunded: 'Estornado' }
           const lines = charges.map(c => {
@@ -1120,7 +1138,7 @@ function ActionSequence({ actions }: { actions: BaisyncAction[] }) {
             const mode = c.pixMode === 'mercadopago' ? 'MP' : 'Direto'
             return `${date} | R$ ${c.amount.toFixed(2)} | ${st} | ${mode} | ${name} | ${c.description}`
           })
-          useBaisyncStore.getState().sendActionResult(`Cobranças (${charges.length}):\nData | Valor | Status | Modo | Cliente | Descrição\n${lines.join('\n')}`)
+          useBaisyncStore.getState().queueActionResult(`Cobranças (${charges.length}):\nData | Valor | Status | Modo | Cliente | Descrição\n${lines.join('\n')}`)
         }
         return { status: 'done' }
       }
@@ -1129,7 +1147,7 @@ function ActionSequence({ actions }: { actions: BaisyncAction[] }) {
       if (action.action === 'get_usage') {
         const days = await apiFetch<{ date: string; requests: number; tokens: number }[]>('/api/user/usage?days=30')
         if (days.length === 0) {
-          useBaisyncStore.getState().sendActionResult('Nenhum dado de uso encontrado nos últimos 30 dias.')
+          useBaisyncStore.getState().queueActionResult('Nenhum dado de uso encontrado nos últimos 30 dias.')
         } else {
           const totalTokens = days.reduce((s, d) => s + d.tokens, 0)
           const totalReqs = days.reduce((s, d) => s + d.requests, 0)
@@ -1141,7 +1159,7 @@ function ActionSequence({ actions }: { actions: BaisyncAction[] }) {
             `- **Total de requisições (30 dias)**: ${totalReqs}`,
             `- **Últimos 7 dias**:\n${recent}`,
           ].join('\n')
-          useBaisyncStore.getState().sendActionResult(summary)
+          useBaisyncStore.getState().queueActionResult(summary)
         }
         return { status: 'done' }
       }
@@ -1163,7 +1181,7 @@ function ActionSequence({ actions }: { actions: BaisyncAction[] }) {
           `- **Última interação**: ${stats.last_interaction_at || 'Nenhuma'}`,
           `- **Canais**: ${channels}`,
         ].join('\n')
-        useBaisyncStore.getState().sendActionResult(summary)
+        useBaisyncStore.getState().queueActionResult(summary)
         return { status: 'done' }
       }
 
@@ -1183,7 +1201,7 @@ function ActionSequence({ actions }: { actions: BaisyncAction[] }) {
               const status = l.error ? `erro: ${l.error.slice(0, 50)}` : `status: ${l.status_code || '?'}`
               return `- [${l.called_at}] **${l.tool_name}** | ${status} | ${l.duration_ms}ms`
             }).join('\n')
-        useBaisyncStore.getState().sendActionResult(summary)
+        useBaisyncStore.getState().queueActionResult(summary)
         return { status: 'done' }
       }
 
@@ -1196,7 +1214,7 @@ function ActionSequence({ actions }: { actions: BaisyncAction[] }) {
           : activity.map((a) =>
               `- [${a.timestamp}] **${a.event_type}** (${a.assistant_name}): ${a.description.slice(0, 100)}`
             ).join('\n')
-        useBaisyncStore.getState().sendActionResult(summary)
+        useBaisyncStore.getState().queueActionResult(summary)
         return { status: 'done' }
       }
 
@@ -1217,7 +1235,7 @@ function ActionSequence({ actions }: { actions: BaisyncAction[] }) {
                 return `- [${e.provider}/${e.model}] ${msg} (${e.created_at})`
               }),
             ].join('\n')
-        useBaisyncStore.getState().sendActionResult(summary)
+        useBaisyncStore.getState().queueActionResult(summary)
         return { status: 'done' }
       }
 
@@ -1245,7 +1263,7 @@ function ActionSequence({ actions }: { actions: BaisyncAction[] }) {
           `Mensagens: ${q.total_messages}`,
           `Tokens: ${q.total_tokens}`,
         ].join('\n')
-        useBaisyncStore.getState().sendActionResult(summary)
+        useBaisyncStore.getState().queueActionResult(summary)
         return { status: 'done' }
       }
 
@@ -1254,7 +1272,7 @@ function ActionSequence({ actions }: { actions: BaisyncAction[] }) {
       const resolveWorkspaceId = (wsId?: string): string | null => {
         const id = wsId || useWorkspaceStore.getState().activeWorkspace?.workspace_id
         if (!id) {
-          useBaisyncStore.getState().sendActionResult('Erro: nenhum workspace ativo encontrado.')
+          useBaisyncStore.getState().queueActionResult('Erro: nenhum workspace ativo encontrado.')
           return null
         }
         return id
@@ -1271,7 +1289,7 @@ function ActionSequence({ actions }: { actions: BaisyncAction[] }) {
               const active = w.workspace_id === res.active_workspace_id ? ' <- ativo' : ''
               return `- **${w.workspace_name}** (id: ${w.workspace_id}, tipo: ${w.workspace_type}, role: ${w.role})${active}`
             }).join('\n')
-        useBaisyncStore.getState().sendActionResult(summary)
+        useBaisyncStore.getState().queueActionResult(summary)
         return { status: 'done' }
       }
 
@@ -1279,7 +1297,7 @@ function ActionSequence({ actions }: { actions: BaisyncAction[] }) {
         const data = action.data as { workspace_id: string }
         if (!data.workspace_id) return { status: 'error' }
         await useWorkspaceStore.getState().switchWorkspace(data.workspace_id)
-        useBaisyncStore.getState().sendActionResult(`Workspace alterado para ${data.workspace_id}. A página será recarregada.`)
+        useBaisyncStore.getState().queueActionResult(`Workspace alterado para ${data.workspace_id}. A página será recarregada.`)
         return { status: 'done' }
       }
 
@@ -1295,7 +1313,7 @@ function ActionSequence({ actions }: { actions: BaisyncAction[] }) {
           : members.map((m) =>
               `- **${m.user_name || 'Sem nome'}** (${m.user_email || 'sem email'}) | role: ${m.role} | id: ${m.user_id}`
             ).join('\n')
-        useBaisyncStore.getState().sendActionResult(summary)
+        useBaisyncStore.getState().queueActionResult(summary)
         return { status: 'done' }
       }
 
@@ -1313,7 +1331,7 @@ function ActionSequence({ actions }: { actions: BaisyncAction[] }) {
               const prefix = c.channel_type === 'dm' ? '' : '#'
               return `- ${prefix}**${c.name}** (id: ${c.id}, tipo: ${c.channel_type}, ${c.unread_count} não lidas)${c.description ? ` — ${c.description}` : ''}`
             }).join('\n')
-        useBaisyncStore.getState().sendActionResult(summary)
+        useBaisyncStore.getState().queueActionResult(summary)
         return { status: 'done' }
       }
 
@@ -1330,7 +1348,7 @@ function ActionSequence({ actions }: { actions: BaisyncAction[] }) {
           : msgs.reverse().map((m) =>
               `- **${m.sender_name}** (${m.created_at}): ${m.content.slice(0, 200)}`
             ).join('\n')
-        useBaisyncStore.getState().sendActionResult(summary)
+        useBaisyncStore.getState().queueActionResult(summary)
         return { status: 'done' }
       }
 
@@ -1341,7 +1359,7 @@ function ActionSequence({ actions }: { actions: BaisyncAction[] }) {
           method: 'POST',
           body: JSON.stringify({ content: data.content }),
         })
-        useBaisyncStore.getState().sendActionResult('Mensagem enviada com sucesso.')
+        useBaisyncStore.getState().queueActionResult('Mensagem enviada com sucesso.')
         return { status: 'done' }
       }
 
@@ -1357,7 +1375,7 @@ function ActionSequence({ actions }: { actions: BaisyncAction[] }) {
           : notes.map((n) =>
               `- **${n.title}** (id: ${n.id}) | criada: ${n.created_at} | atualizada: ${n.updated_at}`
             ).join('\n')
-        useBaisyncStore.getState().sendActionResult(summary)
+        useBaisyncStore.getState().queueActionResult(summary)
         return { status: 'done' }
       }
 
@@ -1369,7 +1387,7 @@ function ActionSequence({ actions }: { actions: BaisyncAction[] }) {
         }>(`/api/channels/${data.channel_id}/notes/${data.note_id}`)
         const note = res.note
         const summary = `**${note.title}**\n\n${note.content || '(sem conteúdo)'}\n\n_Criada: ${note.created_at} | Atualizada: ${note.updated_at}_`
-        useBaisyncStore.getState().sendActionResult(summary)
+        useBaisyncStore.getState().queueActionResult(summary)
         return { status: 'done' }
       }
 
@@ -1385,7 +1403,7 @@ function ActionSequence({ actions }: { actions: BaisyncAction[] }) {
             channel_type: data.channel_type || 'public',
           }),
         })
-        useBaisyncStore.getState().sendActionResult(`Canal #${res.channel.name} criado com sucesso (id: ${res.channel.id}).`)
+        useBaisyncStore.getState().queueActionResult(`Canal #${res.channel.name} criado com sucesso (id: ${res.channel.id}).`)
         return { status: 'done' }
       }
 
@@ -1393,7 +1411,7 @@ function ActionSequence({ actions }: { actions: BaisyncAction[] }) {
         const data = action.data as { channel_id: string }
         if (!data.channel_id) return { status: 'error' }
         await apiFetch(`/api/channels/${data.channel_id}/read`, { method: 'POST' })
-        useBaisyncStore.getState().sendActionResult('Canal marcado como lido.')
+        useBaisyncStore.getState().queueActionResult('Canal marcado como lido.')
         return { status: 'done' }
       }
 
@@ -1408,15 +1426,15 @@ function ActionSequence({ actions }: { actions: BaisyncAction[] }) {
       if (strategicListActions[action.action]) {
         const data = action.data as { workspace_id: string }
         const wsId = data.workspace_id || useWorkspaceStore.getState().activeWorkspace?.workspace_id
-        if (!wsId) { useBaisyncStore.getState().sendActionResult('Erro: workspace_id necessário.'); return { status: 'error' } }
+        if (!wsId) { useBaisyncStore.getState().queueActionResult('Erro: workspace_id necessário.'); return { status: 'error' } }
         const cfg = strategicListActions[action.action]
         const res = await apiFetch<Record<string, unknown[]>>(`/api/workspaces/${wsId}/${cfg.endpoint}`)
         const items = res[cfg.resultKey] || Object.values(res).find(Array.isArray) || []
         if (items.length === 0) {
-          useBaisyncStore.getState().sendActionResult(`Nenhum item encontrado em ${cfg.endpoint}.`)
+          useBaisyncStore.getState().queueActionResult(`Nenhum item encontrado em ${cfg.endpoint}.`)
         } else {
           const formatted = items.map((item) => cfg.formatItem(item as Record<string, unknown>)).join('\n')
-          useBaisyncStore.getState().sendActionResult(`${items.length} item(ns) encontrado(s):\n${formatted}`)
+          useBaisyncStore.getState().queueActionResult(`${items.length} item(ns) encontrado(s):\n${formatted}`)
         }
         return { status: 'done' }
       }
@@ -1424,9 +1442,153 @@ function ActionSequence({ actions }: { actions: BaisyncAction[] }) {
       if (action.action === 'get_strategy_map') {
         const data = action.data as { workspace_id: string }
         const wsId = data.workspace_id || useWorkspaceStore.getState().activeWorkspace?.workspace_id
-        if (!wsId) { useBaisyncStore.getState().sendActionResult('Erro: workspace_id necessário.'); return { status: 'error' } }
+        if (!wsId) { useBaisyncStore.getState().queueActionResult('Erro: workspace_id necessário.'); return { status: 'error' } }
         const res = await apiFetch<{ nodes: Record<string, unknown>[]; edges: Record<string, unknown>[] }>(`/api/workspaces/${wsId}/strategy-map`)
-        useBaisyncStore.getState().sendActionResult(`Mapa estratégico: ${res.nodes?.length || 0} nós, ${res.edges?.length || 0} conexões.${res.nodes?.length ? '\nNós:\n' + res.nodes.map((n) => `- [${n.node_type}] ${n.label}`).join('\n') : ''}`)
+        useBaisyncStore.getState().queueActionResult(`Mapa estratégico: ${res.nodes?.length || 0} nós, ${res.edges?.length || 0} conexões.${res.nodes?.length ? '\nNós:\n' + res.nodes.map((n) => `- [${n.node_type}] ${n.label}`).join('\n') : ''}`)
+        return { status: 'done' }
+      }
+
+      // ─── Skills ────────────────────────────────────────────────────────
+
+      if (action.action === 'list_skills') {
+        const skills = await apiFetch<{
+          id: string; name: string; slug: string; description: string; instructions: string
+        }[]>('/api/skills')
+        const summary = skills.length === 0
+          ? 'Nenhuma skill configurada neste workspace.'
+          : skills.map((s) =>
+              `- **${s.name}** (id: ${s.id}, slug: ${s.slug})\n  ${s.description}`
+            ).join('\n')
+        useBaisyncStore.getState().queueActionResult(summary)
+        return { status: 'done' }
+      }
+
+      if (action.action === 'create_skill') {
+        const data = action.data as { name: string; description: string; instructions: string }
+        if (!data.name || !data.description || !data.instructions) return { status: 'error' }
+        const skill = await apiFetch<{ id: string; name: string; slug: string }>('/api/skills', {
+          method: 'POST',
+          body: JSON.stringify({ name: data.name, description: data.description, instructions: data.instructions }),
+        })
+        useBaisyncStore.getState().queueActionResult(`Skill **${skill.name}** criada (id: ${skill.id}, slug: ${skill.slug}).`)
+        return { status: 'done' }
+      }
+
+      if (action.action === 'update_skill') {
+        const data = action.data as { skill_id: string; name?: string; description?: string; instructions?: string }
+        if (!data.skill_id) return { status: 'error' }
+        const body: Record<string, unknown> = {}
+        if (data.name !== undefined) body.name = data.name
+        if (data.description !== undefined) body.description = data.description
+        if (data.instructions !== undefined) body.instructions = data.instructions
+        await apiFetch(`/api/skills/${data.skill_id}`, { method: 'PATCH', body: JSON.stringify(body) })
+        return { status: 'done' }
+      }
+
+      if (action.action === 'delete_skill') {
+        const data = action.data as { skill_id: string }
+        if (!data.skill_id) return { status: 'error' }
+        await apiFetch(`/api/skills/${data.skill_id}`, { method: 'DELETE' })
+        return { status: 'done' }
+      }
+
+      if (action.action === 'link_skill') {
+        const data = action.data as { assistant_id: string; skill_id: string }
+        const aid = resolveAssistantId(data.assistant_id)
+        if (!aid || !data.skill_id) return { status: 'error' }
+        await apiFetch(`/api/assistants/${aid}/skills/${data.skill_id}`, { method: 'POST' })
+        return { status: 'done' }
+      }
+
+      if (action.action === 'unlink_skill') {
+        const data = action.data as { assistant_id: string; skill_id: string }
+        const aid = resolveAssistantId(data.assistant_id)
+        if (!aid || !data.skill_id) return { status: 'error' }
+        await apiFetch(`/api/assistants/${aid}/skills/${data.skill_id}`, { method: 'DELETE' })
+        return { status: 'done' }
+      }
+
+      // ─── MCP Servers ────────────────────────────────────────────────────
+
+      if (action.action === 'list_mcp_servers') {
+        const servers = await apiFetch<{
+          id: string; name: string; slug: string; url: string; transport: string
+          has_auth_header: boolean; tools_count: number | null; last_error: string | null
+        }[]>('/api/mcp-servers')
+        const summary = servers.length === 0
+          ? 'Nenhum servidor MCP configurado neste workspace.'
+          : servers.map((s) => {
+              const auth = s.has_auth_header ? ' [auth]' : ''
+              const tools = s.tools_count !== null ? `, ${s.tools_count} tools` : ''
+              const err = s.last_error ? ` ⚠ ${s.last_error.slice(0, 60)}` : ''
+              return `- **${s.name}** (id: ${s.id}, ${s.transport}${auth}${tools})\n  ${s.url}${err}`
+            }).join('\n')
+        useBaisyncStore.getState().queueActionResult(summary)
+        return { status: 'done' }
+      }
+
+      if (action.action === 'create_mcp_server') {
+        const data = action.data as {
+          name: string; url: string; transport: string
+          auth_header_name?: string; auth_header_value?: string
+        }
+        if (!data.name || !data.url || !data.transport) return { status: 'error' }
+        const server = await apiFetch<{ id: string; name: string; slug: string }>('/api/mcp-servers', {
+          method: 'POST',
+          body: JSON.stringify({
+            name: data.name, url: data.url, transport: data.transport,
+            auth_header_name: data.auth_header_name || null,
+            auth_header_value: data.auth_header_value || null,
+          }),
+        })
+        useBaisyncStore.getState().queueActionResult(`Servidor MCP **${server.name}** criado (id: ${server.id}).`)
+        return { status: 'done' }
+      }
+
+      if (action.action === 'update_mcp_server') {
+        const data = action.data as {
+          server_id: string; name?: string; url?: string; transport?: string
+          auth_header_name?: string; auth_header_value?: string
+        }
+        if (!data.server_id) return { status: 'error' }
+        const body: Record<string, unknown> = {}
+        if (data.name !== undefined) body.name = data.name
+        if (data.url !== undefined) body.url = data.url
+        if (data.transport !== undefined) body.transport = data.transport
+        if (data.auth_header_name !== undefined) body.auth_header_name = data.auth_header_name
+        if (data.auth_header_value !== undefined) body.auth_header_value = data.auth_header_value
+        await apiFetch(`/api/mcp-servers/${data.server_id}`, { method: 'PATCH', body: JSON.stringify(body) })
+        return { status: 'done' }
+      }
+
+      if (action.action === 'delete_mcp_server') {
+        const data = action.data as { server_id: string }
+        if (!data.server_id) return { status: 'error' }
+        await apiFetch(`/api/mcp-servers/${data.server_id}`, { method: 'DELETE' })
+        return { status: 'done' }
+      }
+
+      if (action.action === 'link_mcp_server') {
+        const data = action.data as { assistant_id: string; server_id: string }
+        const aid = resolveAssistantId(data.assistant_id)
+        if (!aid || !data.server_id) return { status: 'error' }
+        await apiFetch(`/api/assistants/${aid}/mcp-servers/${data.server_id}`, { method: 'POST' })
+        return { status: 'done' }
+      }
+
+      if (action.action === 'unlink_mcp_server') {
+        const data = action.data as { assistant_id: string; server_id: string }
+        const aid = resolveAssistantId(data.assistant_id)
+        if (!aid || !data.server_id) return { status: 'error' }
+        await apiFetch(`/api/assistants/${aid}/mcp-servers/${data.server_id}`, { method: 'DELETE' })
+        return { status: 'done' }
+      }
+
+      if (action.action === 'refresh_mcp_tools') {
+        const data = action.data as { server_id: string }
+        if (!data.server_id) return { status: 'error' }
+        const res = await apiFetch<{ tools_count: number }>(`/api/mcp-servers/${data.server_id}/refresh-tools`, { method: 'POST' })
+        useBaisyncStore.getState().queueActionResult(`Ferramentas MCP atualizadas: ${res.tools_count} tools encontradas.`)
         return { status: 'done' }
       }
 
@@ -1495,14 +1657,6 @@ function ActionSequence({ actions }: { actions: BaisyncAction[] }) {
 }
 
 export function BaisyncMessageComponent({ message }: MessageProps) {
-  if (message.role === 'ralph_plan') {
-    return (
-      <div style={{ marginBottom: 10, animation: 'baisync-msg-in 0.2s ease-out' }}>
-        <RalphTaskPanel />
-      </div>
-    )
-  }
-
   if (message.role === 'status') {
     return (
       <div

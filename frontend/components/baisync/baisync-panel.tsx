@@ -64,9 +64,6 @@ export function BaisyncPanel() {
     appendLiveTranscript,
     hydrate,
     hydrated,
-    ralphEnabled,
-    toggleRalph,
-    inRalphMode,
   } = useBaisyncStore()
 
   const { user } = useAuthStore()
@@ -723,37 +720,6 @@ export function BaisyncPanel() {
           <span style={{ fontSize: 12, color: '#8a8a92', marginLeft: 6 }}>~/sophie</span>
         </div>
         <div className="flex items-center" style={{ gap: 8 }}>
-          {/* Ralph Loop toggle */}
-          <button
-            onClick={(e) => { e.stopPropagation(); toggleRalph() }}
-            onMouseDown={(e) => e.stopPropagation()}
-            title={ralphEnabled ? 'Ralph Loop ativo — desativar' : 'Ativar Ralph Loop (tarefas autônomas)'}
-            aria-label={ralphEnabled ? 'Desativar Ralph Loop' : 'Ativar Ralph Loop'}
-            style={{
-              background: 'transparent',
-              border: 'none',
-              padding: '2px 5px',
-              borderRadius: 4,
-              cursor: 'pointer',
-              fontSize: 11,
-              fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
-              color: ralphEnabled ? '#ff7a1a' : '#5a5a64',
-              transition: 'color 0.2s',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 3,
-            }}
-            onMouseEnter={(e) => { if (!ralphEnabled) e.currentTarget.style.color = '#8a8a92' }}
-            onMouseLeave={(e) => { if (!ralphEnabled) e.currentTarget.style.color = '#5a5a64' }}
-          >
-            <span>⚡</span>
-            <span style={{ fontSize: 10 }}>
-              {inRalphMode ? 'loop' : 'ralph'}
-            </span>
-          </button>
-
-          <div style={{ width: '0.5px', height: 10, background: '#2a2a30' }} />
-
           <span
             aria-hidden="true"
             style={{
@@ -931,7 +897,7 @@ export function BaisyncPanel() {
 
       {/* Rate limit bar — shown whenever the user has spent any tokens this
            hour so `/usage` feedback is always visible, not just past 60%. */}
-      {rateLimit && rateLimit.pct >= 90 && (
+      {rateLimit && rateLimit.used > 0 && (
         <div className="px-4 py-1.5" style={{ background: 'rgba(255,255,255,0.02)', borderTop: '1px solid rgba(255,255,255,0.05)' }}>
           <div className="flex items-center justify-between mb-1">
             <span className="text-[10px] text-subtle">
