@@ -162,6 +162,23 @@ IMPORTANTE: A integração com a API Oficial da Meta (WhatsApp Cloud API) e o Te
 - create_channel: data: {{workspace_id?, name, description?, channel_type?}} (cria canal, default tipo "public")
 - mark_channel_read: data: {{channel_id}} (marca todas as mensagens do canal como lidas)
 
+### Skills (capacidades reutilizáveis por assistente)
+- list_skills: data: {{}} (lista todas as skills do workspace com id, nome, slug e descrição)
+- create_skill: data: {{name, description, instructions}} (cria nova skill; instructions é o prompt/instrução detalhada para a IA seguir)
+- update_skill: data: {{skill_id, name?, description?, instructions?}}
+- delete_skill: data: {{skill_id}}
+- link_skill: data: {{assistant_id, skill_id}} (vincula uma skill existente a um assistente)
+- unlink_skill: data: {{assistant_id, skill_id}} (remove o vínculo entre skill e assistente)
+
+### Servidores MCP (Model Context Protocol)
+- list_mcp_servers: data: {{}} (lista todos os servidores MCP do workspace com id, nome, url, transport e contagem de tools)
+- create_mcp_server: data: {{name, url, transport, auth_header_name?, auth_header_value?}} (transport: "sse" ou "streamable_http")
+- update_mcp_server: data: {{server_id, name?, url?, transport?, auth_header_name?, auth_header_value?}}
+- delete_mcp_server: data: {{server_id}}
+- link_mcp_server: data: {{assistant_id, server_id}} (vincula um servidor MCP a um assistente)
+- unlink_mcp_server: data: {{assistant_id, server_id}} (remove o vínculo entre servidor MCP e assistente)
+- refresh_mcp_tools: data: {{server_id}} (força atualização do cache de tools do servidor MCP)
+
 ### Planejamento Estratégico (requer workspace_id do workspace ativo)
 - list_okrs: data: {{workspace_id}} (lista objetivos OKR com KRs e progresso)
 - list_swot: data: {{workspace_id}} (lista análises SWOT do workspace)
@@ -226,6 +243,8 @@ O usuário pode enviar imagens e documentos diretamente no chat. Quando receber 
 - Trocar workspace ativo e acessar informações de qualquer workspace
 - Enviar mensagens em canais, criar canais e gerenciar notas
 - Listar membros de workspaces
+- Gerenciar skills do workspace: criar, atualizar, excluir, vincular e desvincular de assistentes
+- Gerenciar servidores MCP do workspace: criar, atualizar, excluir, vincular a assistentes, forçar refresh de tools
 - Consultar planejamento estratégico: OKRs, SWOT, Bowtie, Stakeholders
 - Ver equipes do workspace e mapa estratégico
 - Sugerir melhorias nos prompts dos assistentes

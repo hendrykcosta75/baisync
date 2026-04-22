@@ -897,7 +897,7 @@ export function BaisyncPanel() {
 
       {/* Rate limit bar — shown whenever the user has spent any tokens this
            hour so `/usage` feedback is always visible, not just past 60%. */}
-      {rateLimit && rateLimit.used > 0 && (
+      {rateLimit && rateLimit.pct >= 90 && (
         <div className="px-4 py-1.5" style={{ background: 'rgba(255,255,255,0.02)', borderTop: '1px solid rgba(255,255,255,0.05)' }}>
           <div className="flex items-center justify-between mb-1">
             <span className="text-[10px] text-subtle">
