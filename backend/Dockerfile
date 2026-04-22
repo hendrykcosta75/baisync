@@ -4,7 +4,11 @@ WORKDIR /app
 
 # 1) Copy manifests and create a dummy main to cache dependency compilation
 COPY Cargo.toml Cargo.lock ./
-RUN mkdir src && echo "fn main() {}" > src/main.rs
+RUN mkdir -p src/bin && \
+    echo "fn main() {}" > src/main.rs && \
+    echo "fn main() {}" > src/bin/setup_test_keyspace.rs && \
+    echo "fn main() {}" > src/bin/encrypt_legacy.rs && \
+    echo "fn main() {}" > src/bin/decrypt_legacy.rs
 RUN cargo build --release
 RUN rm -rf src
 
