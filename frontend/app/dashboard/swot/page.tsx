@@ -118,16 +118,7 @@ export default function SwotPage() {
             </div>
           </StaggerItem>
 
-          {interviewActive ? (
-            <StaggerItem>
-              <div className="flex flex-col" style={{ minHeight: 480, height: 'calc(100vh - 230px)' }}>
-                <SwotInterview
-                  onClose={() => setInterviewActive(false)}
-                  onSwotCreated={handleSwotCreated}
-                />
-              </div>
-            </StaggerItem>
-          ) : isLoading && analyses.length === 0 ? (
+          {isLoading && !interviewActive && analyses.length === 0 ? (
             <StaggerItem>
               <div className="flex items-center justify-center py-20">
                 <span className="text-subtle text-sm" style={{ fontFamily: mono }}>Carregando...</span>
@@ -209,6 +200,14 @@ export default function SwotPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Interview overlay — outside PageTransition so fixed positioning works */}
+      {interviewActive && (
+        <SwotInterview
+          onClose={() => setInterviewActive(false)}
+          onSwotCreated={handleSwotCreated}
+        />
       )}
       </>
     )

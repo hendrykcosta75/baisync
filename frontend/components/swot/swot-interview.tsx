@@ -3,11 +3,13 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react'
 import { useWorkspaceStore } from '@/store/useWorkspaceStore'
 import {
-  Mic, MessageSquare, Play, X, Send, Volume2,
+  Mic, MicOff, MessageSquare, Play, X, Send, Volume2, MonitorUp, Camera, PhoneOff,
 } from 'lucide-react'
 import * as THREE from 'three'
+import { toJpeg } from 'html-to-image'
 
 const mono = "'JetBrains Mono', 'Fira Code', monospace"
+const NEU_SHADOW = '4px 4px 10px rgba(0,0,0,0.5), -2px -2px 8px rgba(255,255,255,0.04)'
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -66,13 +68,11 @@ const FRAGMENT_SHADER = `
   }
 
   void main() {
-    // Normalize intensity: u_intensity is already >= 1.0; map to [0,1] energy.
     float energy = clamp((u_intensity - 1.0) / 3.0, 0.0, 1.0);
 
     vec2 uv = (vUv * 2.0 - 1.0);
     uv.x *= u_resolution.x / u_resolution.y;
 
-    // Breathing: orb visibly expands with audio energy.
     float breath = 1.0 + 0.10 * energy;
     uv /= breath;
 
@@ -80,7 +80,6 @@ const FRAGMENT_SHADER = `
     float circleRadius = 0.95;
     if (dist > circleRadius) { gl_FragColor = vec4(0.0); return; }
 
-    // Audio-driven turbulence warps the noise field.
     float timeBoost = u_time * (1.0 + 0.8 * energy);
     float warp = 0.12 * energy;
     vec2 q = vec2(
@@ -100,14 +99,12 @@ const FRAGMENT_SHADER = `
     vec3 color = mix(baseLow, baseMid, clamp(f * f * 4.0, 0.0, 1.0));
     color = mix(color, baseHigh, clamp(length(q) * length(r), 0.0, 1.0));
 
-    // Overall brightness responds strongly to energy; sin pulse stays subtle.
     float pulse = 1.0 + 0.15 * sin(u_time * 2.0);
     color *= pulse * (1.0 + 1.3 * energy);
 
     float sphereShading = sqrt(1.0 - dist * dist);
     color *= sphereShading * 1.5;
 
-    // Rim glow intensifies with energy.
     float rim = smoothstep(circleRadius - 0.22, circleRadius, dist);
     color += rim * vec3(1.0, 0.45, 0.1) * (0.45 * energy);
 
@@ -147,7 +144,8 @@ function InterviewOrb({
     const scene = new THREE.Scene()
     const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1)
 
-    const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true })
+    // preserveDrawingBuffer allows html-to-image to capture the canvas for screenshots
+    const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true, preserveDrawingBuffer: true })
     renderer.setSize(size, size)
     renderer.setPixelRatio(dpr)
     rendererRef.current = renderer
@@ -173,8 +171,6 @@ function InterviewOrb({
       const target = intensityRef.current
       const speed = target > 1.5 ? 0.028 : 0.012
       uniforms.u_time.value += speed
-      // Fast attack, slow release so the orb reacts snappily to peaks
-      // but decays smoothly between syllables.
       const attack = target > currentIntensity.current ? 0.45 : 0.12
       currentIntensity.current += (target - currentIntensity.current) * attack
       uniforms.u_intensity.value = currentIntensity.current
@@ -216,16 +212,7 @@ function QuestionPanel({
   onSelect: (option: string) => void
 }) {
   return (
-    <div
-      className="flex flex-col gap-3 p-4 rounded-xl h-full overflow-y-auto"
-      style={{
-        background: '#111111',
-        border: '1px solid #1e1e1e',
-        animation: 'baisync-panel-in 0.3s cubic-bezier(0.16,1,0.3,1)',
-        minWidth: 260,
-        maxWidth: 320,
-      }}
-    >
+    <div className="flex flex-col gap-3 p-4 h-full overflow-y-auto">
       <div className="flex items-center gap-2 mb-1">
         <div
           className="w-7 h-7 rounded-lg flex items-center justify-center"
@@ -247,7 +234,7 @@ function QuestionPanel({
       <p className="text-body text-sm leading-relaxed">{questions.question}</p>
 
       <div className="flex flex-col gap-2 mt-1">
-        {questions.options.map((opt, i) => (
+        {(questions.options ?? []).map((opt, i) => (
           <button
             key={i}
             onClick={() => onSelect(opt)}
@@ -297,9 +284,6 @@ export default function SwotInterview({
   const [isStreaming, setIsStreaming] = useState(false)
   const [questions, setQuestions] = useState<QuestionBox | null>(null)
   const [isSpeaking, setIsSpeaking] = useState(false)
-  // Mic starts muted so Sophie's opening turn isn't interrupted by silence
-  // being captured while she speaks (Gemini VAD treats any audio as a
-  // user interruption). Auto-unmutes after her first turnComplete.
   const [micMuted, setMicMuted] = useState(true)
   const firstTurnDoneRef = useRef(false)
   const [liveStatus, setLiveStatus] = useState<'idle' | 'connecting' | 'connected' | 'closed'>('idle')
@@ -307,9 +291,13 @@ export default function SwotInterview({
   const [sophieReady, setSophieReady] = useState(false)
   const [loadingMsgIndex, setLoadingMsgIndex] = useState(0)
 
+  // Video-call UI state
+  const [screenStream, setScreenStream] = useState<MediaStream | null>(null)
+  const [chatOpen, setChatOpen] = useState(false)
+  const [elapsed, setElapsed] = useState(0)
+
   const chatBodyRef = useRef<HTMLDivElement>(null)
   const streamingContentRef = useRef('')
-  // Use refs for latest values to avoid stale closures in callbacks
   const messagesRef = useRef<ChatMessage[]>([])
   const tabRef = useRef(tab)
   const isStreamingRef = useRef(false)
@@ -318,7 +306,12 @@ export default function SwotInterview({
   tabRef.current = tab
   micMutedRef.current = micMuted
 
-  // Audio analysis (orb reactivity)
+  // Video-call refs
+  const containerRef = useRef<HTMLDivElement>(null)
+  const pipVideoRef = useRef<HTMLVideoElement>(null)
+  const screenStreamRef = useRef<MediaStream | null>(null)
+
+  // Audio analysis
   const audioCtxRef = useRef<AudioContext | null>(null)
   const analyserRef = useRef<AnalyserNode | null>(null)
   const orbIntensityRef = useRef(1.0)
@@ -329,6 +322,42 @@ export default function SwotInterview({
   const micStreamRef = useRef<MediaStream | null>(null)
   const workletNodeRef = useRef<AudioWorkletNode | null>(null)
   const playbackEndRef = useRef(0)
+
+  // ── Timer ──
+
+  const formatTime = (secs: number) => {
+    const m = Math.floor(secs / 60).toString().padStart(2, '0')
+    const s = (secs % 60).toString().padStart(2, '0')
+    return `${m}:${s}`
+  }
+
+  useEffect(() => {
+    if (!started) { setElapsed(0); return }
+    const id = setInterval(() => setElapsed(e => e + 1), 1000)
+    return () => clearInterval(id)
+  }, [started])
+
+  // ── Auto-open sidebar when questions arrive ──
+
+  useEffect(() => {
+    if (questions) setChatOpen(true)
+  }, [questions])
+
+  // ── PiP video source ──
+
+  useEffect(() => {
+    if (pipVideoRef.current && screenStream) {
+      pipVideoRef.current.srcObject = screenStream
+    }
+  }, [screenStream])
+
+  // ── Screen stream cleanup on unmount ──
+
+  useEffect(() => {
+    return () => {
+      screenStreamRef.current?.getTracks().forEach(t => t.stop())
+    }
+  }, [])
 
   const startAnalysis = useCallback(() => {
     cancelAnimationFrame(orbRafRef.current)
@@ -351,9 +380,6 @@ export default function SwotInterview({
         if (abs > peak) peak = abs
       }
       const rms = Math.sqrt(sum / data.length)
-      // Blend RMS (body/volume) with peak (attack/transients) for a lively
-      // response. Non-linear curve gives big swings for loud audio without
-      // collapsing quiet parts to zero.
       const mix = rms * 0.6 + peak * 0.4
       const shaped = Math.pow(mix, 0.7) * 6.0
       orbIntensityRef.current = 1.0 + Math.min(shaped, 3.5)
@@ -371,8 +397,6 @@ export default function SwotInterview({
   useEffect(() => {
     scrollToBottom()
   }, [messages, scrollToBottom])
-
-  // ── Live session (Google AI Studio Live API via backend WS proxy) ──
 
   const cleanupLiveSession = useCallback(() => {
     try { wsRef.current?.close() } catch { /* ignore */ }
@@ -403,9 +427,6 @@ export default function SwotInterview({
     const analyser = analyserRef.current
     if (!ctx || !analyser) return
 
-    // Parse sample rate from mimeType (e.g. "audio/pcm;rate=24000"). Google
-    // returns 24 kHz for native-audio models and 16 kHz for cascaded Live
-    // models — decoding at the wrong rate pitches/mutes the playback.
     let outRate = 24000
     if (mimeType) {
       const m = mimeType.match(/rate=(\d+)/)
@@ -453,7 +474,6 @@ export default function SwotInterview({
 
     switch (msg.type) {
       case 'ready':
-        // Backend auto-primes Sophie's greeting right after setupComplete.
         setIsStreaming(true)
         isStreamingRef.current = true
         break
@@ -489,9 +509,6 @@ export default function SwotInterview({
       case 'turn_complete':
         setIsStreaming(false)
         isStreamingRef.current = false
-        // Auto-unmute mic after Sophie's first complete turn so the user
-        // can start the conversation. Keep starting muted to stop VAD from
-        // interrupting the greeting.
         if (!firstTurnDoneRef.current) {
           firstTurnDoneRef.current = true
           setMicMuted(false)
@@ -522,10 +539,6 @@ export default function SwotInterview({
     setAudioStatus('Conectando...')
 
     try {
-      // 1. Audio setup — must happen while the user-gesture context is still
-      // fresh so the AudioContext starts in "running" state. Creating the
-      // AudioWorkletNode on a suspended context throws "No execution context
-      // available", hence the explicit resume() before instantiation.
       const ctx = new AudioContext()
       audioCtxRef.current = ctx
       await ctx.audioWorklet.addModule('/worklets/pcm-downsample.js')
@@ -547,13 +560,11 @@ export default function SwotInterview({
       const workletNode = new AudioWorkletNode(ctx, 'pcm-downsample')
       workletNodeRef.current = workletNode
       micSource.connect(workletNode)
-      // Silent sink keeps the worklet scheduled without audible feedback.
       const silent = ctx.createGain()
       silent.gain.value = 0
       workletNode.connect(silent)
       silent.connect(ctx.destination)
 
-      // 2. Ticket + WebSocket.
       const ticketRes = await fetch(`/api/workspaces/${wsId}/swot/interview/live-ticket`, {
         method: 'POST',
         credentials: 'same-origin',
@@ -561,8 +572,6 @@ export default function SwotInterview({
       if (!ticketRes.ok) throw new Error('ticket request failed')
       const { ticket } = await ticketRes.json() as { ticket: string }
 
-      // Same-origin: next.config.ts rewrites forward the WS upgrade to the
-      // Rust backend in dev and prod.
       const origin = typeof window !== 'undefined' ? window.location.origin : ''
       const wsUrl = origin.replace(/^http/, 'ws') +
         `/api/workspaces/${wsId}/swot/interview/live?ticket=${encodeURIComponent(ticket)}`
@@ -573,10 +582,6 @@ export default function SwotInterview({
       workletNode.port.onmessage = (ev) => {
         if (ws.readyState !== WebSocket.OPEN) return
         const buf = ev.data as ArrayBuffer
-        // Keep streaming even when muted: Google Live API closes the
-        // connection (Policy: "client failed to close") if audio stops
-        // mid-session. Silence is ignored by VAD, so zero-filled frames
-        // are safe and preserve user privacy.
         const bytes = micMutedRef.current
           ? new Uint8Array(buf.byteLength)
           : new Uint8Array(buf)
@@ -613,7 +618,6 @@ export default function SwotInterview({
 
   useEffect(() => () => cleanupLiveSession(), [cleanupLiveSession])
 
-  // Rotate through loading messages while waiting for Sophie's first audio.
   useEffect(() => {
     const loading = !sophieReady && liveStatus !== 'closed' && liveStatus !== 'idle'
     if (!loading) {
@@ -643,8 +647,6 @@ export default function SwotInterview({
     return true
   }, [])
 
-  // ── Send message to backend SSE ──
-
   const sendToBackend = useCallback(
     async (text: string, history: ChatMessage[]) => {
       if (!wsId) return
@@ -665,8 +667,6 @@ export default function SwotInterview({
 
         if (!resp.ok) {
           const errBody = await resp.text().catch(() => '')
-          console.error('Chat error:', resp.status, errBody)
-          // Try to extract error message
           let errorMsg = 'Erro ao conectar. Tente novamente.'
           try {
             const errJson = JSON.parse(errBody)
@@ -765,27 +765,22 @@ export default function SwotInterview({
     [wsId, onSwotCreated]
   )
 
-  // ── Mic toggle (audio mode) ──
-
   const toggleMic = useCallback(() => {
     setMicMuted((m) => !m)
   }, [])
-
-  // ── Start Interview — branches on selected mode ──
 
   const handleStart = useCallback(async () => {
     setStarted(true)
     if (tab === 'audio') {
       await startLiveSession()
     } else {
+      setChatOpen(true)
       const initMsg = 'Iniciar entrevista SWOT'
       const userMsg: ChatMessage = { role: 'user', content: initMsg }
       setMessages([userMsg])
       await sendToBackend(initMsg, [])
     }
   }, [tab, startLiveSession, sendToBackend])
-
-  // ── Send text message ──
 
   const handleSend = useCallback(async () => {
     const text = inputValue.trim()
@@ -800,8 +795,6 @@ export default function SwotInterview({
     await sendToBackend(text, currentHistory)
   }, [inputValue, isStreaming, sendTextToLive, sendToBackend])
 
-  // ── Handle question selection ──
-
   const handleQuestionSelect = useCallback(
     async (option: string) => {
       setQuestions(null)
@@ -814,8 +807,6 @@ export default function SwotInterview({
     [sendTextToLive, sendToBackend]
   )
 
-  // ── Clean display text (strip XML tags) ──
-
   const cleanContent = (text: string) => {
     return text
       .replace(/<swot-questions>[\s\S]*?<\/swot-questions>/g, '')
@@ -823,233 +814,356 @@ export default function SwotInterview({
       .trim()
   }
 
+  // ── Screen share ──
+
+  const toggleScreenShare = useCallback(async () => {
+    if (screenStream) {
+      screenStream.getTracks().forEach(t => t.stop())
+      screenStreamRef.current = null
+      setScreenStream(null)
+    } else {
+      try {
+        const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true })
+        stream.getVideoTracks()[0].onended = () => {
+          screenStreamRef.current = null
+          setScreenStream(null)
+        }
+        screenStreamRef.current = stream
+        setScreenStream(stream)
+      } catch (err) {
+        if (err instanceof Error && err.name !== 'NotAllowedError' && err.name !== 'AbortError') {
+          console.error('Screen share failed:', err)
+        }
+      }
+    }
+  }, [screenStream])
+
+  // ── Screenshot ──
+
+  const takeScreenshot = useCallback(async () => {
+    if (!containerRef.current) return
+    try {
+      const dataUrl = await toJpeg(containerRef.current, {
+        quality: 0.9,
+        pixelRatio: Math.min(window.devicePixelRatio || 1, 2),
+      })
+      const link = document.createElement('a')
+      link.download = `entrevista-swot-${Date.now()}.jpg`
+      link.href = dataUrl
+      link.click()
+    } catch (err) {
+      console.error('Screenshot failed:', err)
+    }
+  }, [])
+
+  const sidebarOpen = chatOpen || questions !== null
+
   return (
     <div
-      className="flex flex-col flex-1 min-h-0 rounded-xl overflow-hidden"
-      style={{
-        background: '#111111',
-        boxShadow:
-          '6px 6px 16px rgba(0,0,0,0.5), -4px -4px 10px rgba(255,255,255,0.035)',
-        animation: 'baisync-panel-in 0.45s cubic-bezier(0.16,1,0.3,1)',
-      }}
+      ref={containerRef}
+      className="fixed inset-0 z-[100] flex flex-col"
+      style={{ background: '#080808' }}
     >
-      {/* Header */}
+      {/* ── Top bar ── */}
       <div
-        className="flex items-center justify-between px-5 py-3.5 shrink-0"
-        style={{ borderBottom: '1px solid #1e1e1e' }}
+        className="flex items-center justify-between px-5 py-3 shrink-0"
+        style={{ background: '#0f0f0f', borderBottom: '1px solid #1e1e1e' }}
       >
         <div className="flex items-center gap-3">
-          <div
-            className="w-8 h-8 rounded-lg flex items-center justify-center"
-            style={{
-              background: '#161616',
-              boxShadow:
-                '2px 2px 6px rgba(0,0,0,0.5), -1px -1px 4px rgba(255,255,255,0.035)',
-            }}
-          >
-            <svg
-              viewBox="0 0 24 24"
-              width={14}
-              height={14}
-              stroke="#ff6b2c"
-              fill="none"
-              strokeWidth={2}
-            >
-              <path d="M12 2L9 9H2l6 4.5L5.5 21 12 16l6.5 5-2.5-7.5L22 9h-7z" />
-            </svg>
+          <div className="flex items-center gap-2">
+            <span
+              className="w-2 h-2 rounded-full bg-red-500"
+              style={{
+                animation: started ? 'blink 1.5s ease-in-out infinite' : 'none',
+                opacity: started ? 1 : 0.3,
+              }}
+            />
+            <span className="text-subtle text-xs tabular-nums" style={{ fontFamily: mono }}>
+              {formatTime(elapsed)}
+            </span>
           </div>
-          <div>
-            <h4
-              className="text-heading text-[13px] font-bold"
-              style={{ fontFamily: mono }}
+          <div className="w-px h-4" style={{ background: '#1e1e1e' }} />
+          <span className="text-heading text-[13px] font-bold" style={{ fontFamily: mono }}>
+            Entrevista SWOT
+          </span>
+          {started && liveStatus === 'connected' && (
+            <span
+              className="flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider"
+              style={{
+                background: 'rgba(34,197,94,0.1)',
+                color: '#22c55e',
+                fontFamily: mono,
+                border: '1px solid rgba(34,197,94,0.2)',
+              }}
             >
-              Entrevista SWOT com IA
-            </h4>
-            {started && (
-              <span className="flex items-center gap-1.5 text-[11px] text-subtle">
-                <span
-                  className="w-1.5 h-1.5 rounded-full bg-green-500"
-                  style={{ animation: 'blink 1.5s ease-in-out infinite' }}
-                />
-                Entrevista em andamento
-              </span>
-            )}
-          </div>
+              <span className="w-1 h-1 rounded-full bg-green-500" />
+              Ao vivo
+            </span>
+          )}
         </div>
         <button
           onClick={onClose}
-          className="text-subtle hover:text-heading transition-colors p-1"
+          className="w-7 h-7 rounded-lg flex items-center justify-center text-subtle hover:text-heading transition-colors"
+          style={{
+            background: '#161616',
+            boxShadow: '2px 2px 6px rgba(0,0,0,0.5), -1px -1px 4px rgba(255,255,255,0.035)',
+          }}
           aria-label="Fechar"
         >
-          <X size={16} />
+          <X size={14} />
         </button>
       </div>
 
-      {/* Tabs */}
-      <div className="flex shrink-0" style={{ borderBottom: '1px solid #1e1e1e' }}>
-        <button
-          onClick={() => setTab('audio')}
-          className={`flex items-center gap-1.5 px-4 py-2.5 text-xs font-semibold transition-colors duration-200 ${
-            tab === 'audio'
-              ? 'text-[#ff6b2c]'
-              : 'text-subtle hover:text-heading'
-          }`}
-          style={{
-            borderBottom: tab === 'audio' ? '2px solid #ff6b2c' : '2px solid transparent',
-          }}
-        >
-          <Mic size={13} />
-          Audio
-          <span
-            className="px-1.5 py-0 rounded text-[8px] font-bold uppercase tracking-wider"
-            style={{
-              background: 'rgba(255,107,44,0.12)',
-              color: '#ff6b2c',
-            }}
-          >
-            padrao
-          </span>
-        </button>
-        <button
-          onClick={() => setTab('texto')}
-          className={`flex items-center gap-1.5 px-4 py-2.5 text-xs font-semibold transition-colors duration-200 ${
-            tab === 'texto'
-              ? 'text-[#ff6b2c]'
-              : 'text-subtle hover:text-heading'
-          }`}
-          style={{
-            borderBottom: tab === 'texto' ? '2px solid #ff6b2c' : '2px solid transparent',
-          }}
-        >
-          <MessageSquare size={13} />
-          Texto
-        </button>
-      </div>
+      {/* ── Main content ── */}
+      <div className="flex flex-1 min-h-0 relative overflow-hidden">
 
-      {/* Content Area */}
-      {!started ? (
-        /* Start Screen */
-        <div className="flex-1 flex flex-col items-center justify-center gap-4 px-6 py-10">
-          <div
-            className="w-16 h-16 rounded-full flex items-center justify-center"
-            style={{
-              background: '#161616',
-              boxShadow:
-                '4px 4px 12px rgba(0,0,0,0.5), -3px -3px 8px rgba(255,255,255,0.035)',
-            }}
-          >
-            <svg
-              viewBox="0 0 24 24"
-              width={26}
-              height={26}
-              stroke="#ff6b2c"
-              fill="none"
-              strokeWidth={1.5}
-            >
-              <path d="M12 2L9 9H2l6 4.5L5.5 21 12 16l6.5 5-2.5-7.5L22 9h-7z" />
-            </svg>
-          </div>
-          <h3
-            className="text-heading text-base font-bold"
-            style={{ fontFamily: mono }}
-          >
-            Pronto para comecar
-          </h3>
-          <p className="text-subtle text-sm text-center max-w-sm leading-relaxed">
-            A IA conduzira perguntas estrategicas para mapear forcas, fraquezas,
-            oportunidades e ameacas da sua empresa.
-          </p>
-          <button
-            onClick={handleStart}
-            className="flex items-center gap-2 px-6 py-2.5 rounded-[10px] font-bold text-sm mt-2 transition-all duration-200"
-            style={{
-              color: '#ff6b2c',
-              background: '#161616',
-              fontFamily: mono,
-              boxShadow:
-                '4px 4px 10px rgba(0,0,0,0.5), -3px -3px 7px rgba(255,255,255,0.035)',
-            }}
-            onMouseDown={(e) => {
-              e.currentTarget.style.boxShadow =
-                'inset 2px 2px 6px rgba(0,0,0,0.5), inset -2px -2px 4px rgba(255,255,255,0.035)'
-            }}
-            onMouseUp={(e) => {
-              e.currentTarget.style.boxShadow =
-                '4px 4px 10px rgba(0,0,0,0.5), -3px -3px 7px rgba(255,255,255,0.035)'
-            }}
-          >
-            <Play size={15} />
-            Iniciar Entrevista
-          </button>
-        </div>
-      ) : (
-        /* Active Interview */
-        <div className="flex flex-1 min-h-0 overflow-hidden">
-          {/* Question Panel (left side) */}
-          {questions && (
-            <div className="shrink-0 p-3" style={{ borderRight: '1px solid #1e1e1e' }}>
-              <QuestionPanel questions={questions} onSelect={handleQuestionSelect} />
-            </div>
-          )}
+        {/* Sophie's main area */}
+        <div className="flex-1 flex flex-col items-center justify-center gap-6 p-6 relative">
 
-          {/* Main content (right side) */}
-          <div className="flex flex-col flex-1 min-h-0">
-            {tab === 'audio' ? (
-              /* Audio View */
-              <div className="flex-1 flex flex-col items-center justify-center gap-5 px-6 py-6">
-                <InterviewOrb
-                  active={liveStatus === 'connected' && !micMuted}
-                  intensityRef={orbIntensityRef}
-                  onPress={toggleMic}
-                  size={160}
+          {!started ? (
+            /* Pre-call state */
+            <>
+              {/* Sophie tile (pre-call) */}
+              <div
+                className="relative rounded-2xl overflow-hidden flex items-center justify-center"
+                style={{
+                  width: 420,
+                  height: 280,
+                  background: '#0d0d0d',
+                  border: '1px solid #1e1e1e',
+                  boxShadow: '0 0 60px rgba(255,107,44,0.05)',
+                }}
+              >
+                <div
+                  className="absolute inset-0"
+                  style={{
+                    backgroundImage: 'radial-gradient(rgba(255,107,44,0.03) 1px, transparent 1px)',
+                    backgroundSize: '24px 24px',
+                  }}
                 />
-                <p
-                  key={`status-${loadingMsgIndex}-${sophieReady}`}
-                  className="text-sm text-subtle font-medium text-center"
-                  style={{ animation: 'baisync-msg-in 0.35s ease-out' }}
+                <InterviewOrb
+                  active={false}
+                  intensityRef={orbIntensityRef}
+                  onPress={() => {}}
+                  size={140}
+                />
+                <div
+                  className="absolute bottom-3 left-3 flex items-center gap-1.5 px-2 py-1 rounded-md"
+                  style={{ background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(8px)' }}
                 >
-                  {!sophieReady && liveStatus !== 'closed'
-                    ? LOADING_MESSAGES[loadingMsgIndex % LOADING_MESSAGES.length]
-                    : audioStatus}
-                </p>
-                {isSpeaking && (
-                  <div className="flex items-center gap-1.5 text-xs text-subtle">
-                    <Volume2 size={13} className="text-[#ff6b2c]" />
-                    <span>Sophie está falando...</span>
-                  </div>
-                )}
-                {liveStatus === 'connected' && sophieReady && micMuted && (
-                  <div className="flex items-center gap-1.5 text-xs text-subtle">
-                    <Mic size={13} className="text-red-500" />
-                    <span>Microfone silenciado</span>
+                  <span className="w-1.5 h-1.5 rounded-full" style={{ background: '#555' }} />
+                  <span className="text-white text-[11px] font-semibold" style={{ fontFamily: mono }}>
+                    Sophie · Entrevistadora de IA
+                  </span>
+                </div>
+              </div>
+
+              {/* Mode selector */}
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setTab('audio')}
+                  className="flex items-center gap-1.5 px-4 py-2 rounded-full text-xs font-semibold transition-all duration-200"
+                  style={{
+                    background: tab === 'audio' ? 'rgba(255,107,44,0.12)' : '#161616',
+                    border: tab === 'audio' ? '1px solid rgba(255,107,44,0.3)' : '1px solid #1e1e1e',
+                    color: tab === 'audio' ? '#ff6b2c' : '#888',
+                    boxShadow: NEU_SHADOW,
+                    fontFamily: mono,
+                  }}
+                >
+                  <Mic size={12} />
+                  Voz
+                  <span
+                    className="px-1 rounded text-[8px] font-bold uppercase"
+                    style={{ background: 'rgba(255,107,44,0.15)', color: '#ff6b2c' }}
+                  >
+                    padrão
+                  </span>
+                </button>
+                <button
+                  onClick={() => setTab('texto')}
+                  className="flex items-center gap-1.5 px-4 py-2 rounded-full text-xs font-semibold transition-all duration-200"
+                  style={{
+                    background: tab === 'texto' ? 'rgba(255,107,44,0.12)' : '#161616',
+                    border: tab === 'texto' ? '1px solid rgba(255,107,44,0.3)' : '1px solid #1e1e1e',
+                    color: tab === 'texto' ? '#ff6b2c' : '#888',
+                    boxShadow: NEU_SHADOW,
+                    fontFamily: mono,
+                  }}
+                >
+                  <MessageSquare size={12} />
+                  Texto
+                </button>
+              </div>
+
+              {/* Start button */}
+              <button
+                onClick={handleStart}
+                className="flex items-center gap-2 px-8 py-3 rounded-full font-bold text-sm text-white transition-all duration-200 active:scale-[0.97]"
+                style={{
+                  background: '#ff6b2c',
+                  boxShadow: '0 0 24px rgba(255,107,44,0.4), 4px 4px 10px rgba(0,0,0,0.5)',
+                  fontFamily: mono,
+                }}
+              >
+                <Play size={15} />
+                Iniciar Entrevista
+              </button>
+            </>
+          ) : (
+            /* Active interview state */
+            <>
+              {/* Sophie tile */}
+              <div
+                className="relative rounded-2xl overflow-hidden"
+                style={{
+                  width: 420,
+                  height: 300,
+                  background: '#0d0d0d',
+                  border: '1px solid #1e1e1e',
+                  boxShadow: isSpeaking
+                    ? '0 0 40px rgba(255,107,44,0.2), 0 0 80px rgba(255,107,44,0.08)'
+                    : '0 0 20px rgba(0,0,0,0.5)',
+                  transition: 'box-shadow 0.4s ease',
+                }}
+              >
+                {/* Subtle dot grid */}
+                <div
+                  className="absolute inset-0"
+                  style={{
+                    backgroundImage: 'radial-gradient(rgba(255,107,44,0.03) 1px, transparent 1px)',
+                    backgroundSize: '24px 24px',
+                  }}
+                />
+
+                {/* Orb */}
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <InterviewOrb
+                    active={liveStatus === 'connected' && !micMuted}
+                    intensityRef={orbIntensityRef}
+                    onPress={tab === 'audio' ? toggleMic : () => {}}
+                    size={200}
+                  />
+                </div>
+
+                {/* Loading overlay */}
+                {!sophieReady && liveStatus !== 'idle' && liveStatus !== 'closed' && tab === 'audio' && (
+                  <div
+                    className="absolute inset-0 flex items-center justify-center"
+                    style={{ background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(4px)' }}
+                  >
+                    <p
+                      key={loadingMsgIndex}
+                      className="text-subtle text-sm text-center px-8"
+                      style={{ animation: 'baisync-msg-in 0.35s ease-out', fontFamily: mono }}
+                    >
+                      {LOADING_MESSAGES[loadingMsgIndex % LOADING_MESSAGES.length]}
+                    </p>
                   </div>
                 )}
 
-                {/* Show last messages in audio mode as subtitle */}
-                {messages.length > 0 && (
-                  <div className="w-full max-w-md mt-2 max-h-24 overflow-y-auto">
-                    {messages.filter(m => m.role === 'assistant').slice(-1).map((msg, i) => {
-                      const clean = cleanContent(msg.content)
-                      if (!clean) return null
-                      return (
-                        <p
-                          key={i}
-                          className="text-xs text-subtle text-center leading-relaxed px-4"
-                          style={{ opacity: 0.7 }}
-                        >
-                          {clean.length > 200 ? clean.slice(0, 200) + '...' : clean}
-                        </p>
-                      )
-                    })}
+                {/* Name label */}
+                <div
+                  className="absolute bottom-3 left-3 flex items-center gap-1.5 px-2 py-1 rounded-md"
+                  style={{ background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(8px)' }}
+                >
+                  <span
+                    className="w-1.5 h-1.5 rounded-full transition-colors duration-300"
+                    style={{ background: isSpeaking ? '#22c55e' : '#555' }}
+                  />
+                  <span className="text-white text-[11px] font-semibold" style={{ fontFamily: mono }}>
+                    Sophie · Entrevistadora
+                  </span>
+                </div>
+
+                {/* Speaking badge */}
+                {isSpeaking && (
+                  <div
+                    className="absolute top-3 right-3 flex items-center gap-1 px-2 py-1 rounded-md"
+                    style={{
+                      background: 'rgba(34,197,94,0.12)',
+                      border: '1px solid rgba(34,197,94,0.25)',
+                      animation: 'baisync-msg-in 0.2s ease-out',
+                    }}
+                  >
+                    <Volume2 size={11} className="text-green-400" />
+                    <span className="text-green-400 text-[10px] font-bold uppercase" style={{ fontFamily: mono }}>
+                      falando
+                    </span>
                   </div>
                 )}
               </div>
+
+              {/* Subtitle (audio mode) */}
+              {tab === 'audio' && (
+                <div className="max-w-[420px] text-center px-4 min-h-[40px] flex flex-col items-center gap-2">
+                  {messages.filter(m => m.role === 'assistant').slice(-1).map((msg, i) => {
+                    const clean = cleanContent(msg.content)
+                    if (!clean) return null
+                    return (
+                      <p
+                        key={i}
+                        className="text-body text-sm leading-relaxed"
+                        style={{ opacity: 0.8 }}
+                      >
+                        {clean.length > 240 ? clean.slice(0, 240) + '...' : clean}
+                      </p>
+                    )
+                  })}
+                  {micMuted && liveStatus === 'connected' && sophieReady && (
+                    <div className="flex items-center gap-1.5 text-xs" style={{ color: '#ef4444' }}>
+                      <MicOff size={12} />
+                      <span>Microfone silenciado — clique no orb para ativar</span>
+                    </div>
+                  )}
+                  {audioStatus && !sophieReady && liveStatus === 'closed' && (
+                    <p className="text-xs text-subtle">{audioStatus}</p>
+                  )}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+
+        {/* ── Right sidebar (questions + chat) ── */}
+        {sidebarOpen && (
+          <div
+            className="flex flex-col shrink-0 overflow-hidden"
+            style={{
+              width: 300,
+              background: '#111111',
+              borderLeft: '1px solid #1e1e1e',
+              animation: 'baisync-panel-in 0.25s cubic-bezier(0.16,1,0.3,1)',
+            }}
+          >
+            {/* Sidebar header */}
+            <div
+              className="flex items-center justify-between px-4 py-3 shrink-0"
+              style={{ borderBottom: '1px solid #1e1e1e' }}
+            >
+              <span
+                className="text-[11px] font-semibold uppercase tracking-wider text-subtle"
+                style={{ fontFamily: mono }}
+              >
+                {questions ? 'Perguntas' : 'Chat'}
+              </span>
+              <button
+                onClick={() => { setChatOpen(false); setQuestions(null) }}
+                className="text-subtle hover:text-heading transition-colors"
+                aria-label="Fechar painel"
+              >
+                <X size={13} />
+              </button>
+            </div>
+
+            {/* Sidebar body */}
+            {questions ? (
+              <QuestionPanel questions={questions} onSelect={handleQuestionSelect} />
             ) : (
-              /* Text View */
               <>
                 <div
                   ref={chatBodyRef}
-                  className="flex-1 overflow-y-auto px-5 py-4 flex flex-col gap-3 min-h-0"
+                  className="flex-1 overflow-y-auto px-4 py-4 flex flex-col gap-3 min-h-0"
                   style={{
                     scrollbarWidth: 'thin',
                     scrollbarColor: 'rgba(255,255,255,0.06) transparent',
@@ -1063,16 +1177,15 @@ export default function SwotInterview({
                     return (
                       <div
                         key={i}
-                        className={`max-w-[78%] px-4 py-3 rounded-xl text-sm leading-relaxed ${
+                        className={`max-w-[90%] px-3 py-2.5 text-sm leading-relaxed ${
                           msg.role === 'assistant' ? 'self-start' : 'self-end'
                         }`}
                         style={{
-                          background:
-                            msg.role === 'assistant' ? '#161616' : '#0f0f0f',
+                          background: msg.role === 'assistant' ? '#161616' : '#0f0f0f',
                           boxShadow:
                             msg.role === 'assistant'
                               ? '2px 2px 6px rgba(0,0,0,0.5), -1px -1px 4px rgba(255,255,255,0.035)'
-                              : 'inset 1px 1px 4px rgba(0,0,0,0.5), inset -1px -1px 3px rgba(255,255,255,0.035)',
+                              : 'inset 1px 1px 4px rgba(0,0,0,0.5)',
                           borderRadius:
                             msg.role === 'assistant'
                               ? '12px 12px 12px 3px'
@@ -1084,8 +1197,8 @@ export default function SwotInterview({
                           <div className="flex items-center gap-1 mb-1">
                             <svg
                               viewBox="0 0 24 24"
-                              width={11}
-                              height={11}
+                              width={10}
+                              height={10}
                               stroke="#ff6b2c"
                               fill="none"
                               strokeWidth={2}
@@ -1094,7 +1207,7 @@ export default function SwotInterview({
                             </svg>
                             <span
                               className="text-[10px] font-bold"
-                              style={{ color: '#ff6b2c' }}
+                              style={{ color: '#ff6b2c', fontFamily: mono }}
                             >
                               Sophie
                             </span>
@@ -1122,9 +1235,8 @@ export default function SwotInterview({
                   )}
                 </div>
 
-                {/* Text Input */}
                 <div
-                  className="flex gap-2.5 items-center px-5 py-3 shrink-0"
+                  className="flex gap-2 items-center px-4 py-3 shrink-0"
                   style={{ borderTop: '1px solid #1e1e1e' }}
                 >
                   <input
@@ -1138,7 +1250,7 @@ export default function SwotInterview({
                     }}
                     placeholder="Digite sua resposta..."
                     disabled={isStreaming}
-                    className="flex-1 px-3.5 py-2.5 rounded-[10px] text-sm text-body placeholder:text-subtle/50 outline-none transition-all duration-200"
+                    className="flex-1 px-3 py-2 rounded-[10px] text-sm text-body placeholder:text-subtle/50 outline-none transition-all duration-200"
                     style={{
                       background: '#0f0f0f',
                       boxShadow:
@@ -1156,20 +1268,135 @@ export default function SwotInterview({
                   <button
                     onClick={handleSend}
                     disabled={isStreaming || !inputValue.trim()}
-                    className="w-9 h-9 rounded-[10px] flex items-center justify-center shrink-0 transition-all duration-200"
+                    className="w-8 h-8 rounded-[10px] flex items-center justify-center shrink-0 transition-all duration-200"
                     style={{
                       background: '#161616',
-                      boxShadow:
-                        '3px 3px 8px rgba(0,0,0,0.5), -2px -2px 5px rgba(255,255,255,0.035)',
+                      boxShadow: '3px 3px 8px rgba(0,0,0,0.5), -2px -2px 5px rgba(255,255,255,0.035)',
                       opacity: isStreaming || !inputValue.trim() ? 0.4 : 1,
                     }}
+                    aria-label="Enviar"
                   >
-                    <Send size={14} style={{ color: '#ff6b2c' }} />
+                    <Send size={13} style={{ color: '#ff6b2c' }} />
                   </button>
                 </div>
               </>
             )}
           </div>
+        )}
+
+        {/* ── User PiP tile ── */}
+        <div
+          className="absolute rounded-xl overflow-hidden transition-all duration-300"
+          style={{
+            bottom: 16,
+            right: sidebarOpen ? 316 : 16,
+            width: 160,
+            height: 100,
+            background: '#0d0d0d',
+            border: '1px solid #1e1e1e',
+            boxShadow: '0 4px 20px rgba(0,0,0,0.5)',
+          }}
+        >
+          {screenStream ? (
+            <video
+              ref={pipVideoRef}
+              autoPlay
+              muted
+              playsInline
+              className="w-full h-full object-cover"
+            />
+          ) : (
+            <div className="w-full h-full flex flex-col items-center justify-center gap-1">
+              <div
+                className="w-10 h-10 rounded-full flex items-center justify-center"
+                style={{ background: '#1e1e1e' }}
+              >
+                <span className="text-subtle text-sm font-bold" style={{ fontFamily: mono }}>EU</span>
+              </div>
+            </div>
+          )}
+          <div
+            className="absolute bottom-2 left-2 px-1.5 py-0.5 rounded"
+            style={{ background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)' }}
+          >
+            <span className="text-white text-[10px]" style={{ fontFamily: mono }}>Você</span>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Control bar ── */}
+      {started && (
+        <div
+          className="flex items-center justify-center gap-3 px-6 py-4 shrink-0"
+          style={{ background: '#0f0f0f', borderTop: '1px solid #1e1e1e' }}
+        >
+          {/* Mic */}
+          <button
+            onClick={toggleMic}
+            disabled={tab !== 'audio' || liveStatus !== 'connected'}
+            className={`w-11 h-11 rounded-full flex items-center justify-center transition-all duration-200 active:scale-[0.97] ${
+              micMuted ? 'bg-red-500 text-white hover:bg-red-600' : 'bg-raised text-body hover:text-heading'
+            }`}
+            style={{ boxShadow: NEU_SHADOW }}
+            aria-label={micMuted ? 'Ativar microfone' : 'Silenciar microfone'}
+            title={micMuted ? 'Ativar microfone' : 'Silenciar microfone'}
+          >
+            {micMuted ? <MicOff size={18} /> : <Mic size={18} />}
+          </button>
+
+          {/* Screen share */}
+          <button
+            onClick={toggleScreenShare}
+            className="w-11 h-11 rounded-full flex items-center justify-center transition-all duration-200 active:scale-[0.97]"
+            style={{
+              background: screenStream ? '#ff6b2c' : 'var(--c-raised, #161616)',
+              color: screenStream ? '#fff' : undefined,
+              boxShadow: NEU_SHADOW,
+            }}
+            aria-label="Compartilhar tela"
+            title="Compartilhar tela"
+          >
+            <MonitorUp size={18} />
+          </button>
+
+          {/* Screenshot */}
+          <button
+            onClick={takeScreenshot}
+            className="w-11 h-11 rounded-full flex items-center justify-center bg-raised text-body hover:text-heading transition-all duration-200 active:scale-[0.97]"
+            style={{ boxShadow: NEU_SHADOW }}
+            aria-label="Tirar print"
+            title="Tirar print da entrevista"
+          >
+            <Camera size={18} />
+          </button>
+
+          {/* Chat toggle */}
+          <button
+            onClick={() => setChatOpen(!chatOpen)}
+            className="w-11 h-11 rounded-full flex items-center justify-center transition-all duration-200 active:scale-[0.97]"
+            style={{
+              background: chatOpen ? '#ff6b2c' : 'var(--c-raised, #161616)',
+              color: chatOpen ? '#fff' : undefined,
+              boxShadow: NEU_SHADOW,
+            }}
+            aria-label="Chat"
+            title="Abrir chat / transcrição"
+          >
+            <MessageSquare size={18} />
+          </button>
+
+          <div className="w-px h-8 mx-2" style={{ background: '#1e1e1e' }} />
+
+          {/* End call */}
+          <button
+            onClick={onClose}
+            className="w-11 h-11 rounded-full flex items-center justify-center bg-red-500 text-white hover:bg-red-600 transition-all duration-200 active:scale-[0.97]"
+            style={{ boxShadow: NEU_SHADOW }}
+            aria-label="Encerrar entrevista"
+            title="Encerrar entrevista"
+          >
+            <PhoneOff size={18} />
+          </button>
         </div>
       )}
     </div>
