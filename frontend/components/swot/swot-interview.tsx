@@ -286,6 +286,15 @@ export default function SwotInterview({
   const [isSpeaking, setIsSpeaking] = useState(false)
   const [micMuted, setMicMuted] = useState(true)
   const firstTurnDoneRef = useRef(false)
+  // After Sophie's `criar_analise_swot` tool fires, we keep the overlay open
+  // until she finishes her closing sentence. We can't rely on `turn_complete`
+  // for this — Gemini Live can fire it before the post-tool audio chunks
+  // arrive, which led to "pront[cut]" when closing on that signal. Instead a
+  // silence-detection watchdog polls `playbackEndRef` and closes only after
+  // the audio pipeline has been idle for a stable window.
+  const pendingCloseRef = useRef(false)
+  const closeWatchdogRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const safetyCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [liveStatus, setLiveStatus] = useState<'idle' | 'connecting' | 'connected' | 'closed'>('idle')
   const [audioStatus, setAudioStatus] = useState('Fale com a Sophie')
   const [sophieReady, setSophieReady] = useState(false)
@@ -399,6 +408,15 @@ export default function SwotInterview({
   }, [messages, scrollToBottom])
 
   const cleanupLiveSession = useCallback(() => {
+    if (closeWatchdogRef.current) {
+      clearInterval(closeWatchdogRef.current)
+      closeWatchdogRef.current = null
+    }
+    if (safetyCloseTimerRef.current) {
+      clearTimeout(safetyCloseTimerRef.current)
+      safetyCloseTimerRef.current = null
+    }
+    pendingCloseRef.current = false
     try { wsRef.current?.close() } catch { /* ignore */ }
     wsRef.current = null
     try {
@@ -503,7 +521,66 @@ export default function SwotInterview({
         break
       case 'swot_create':
         if (msg.payload && typeof msg.payload === 'object') {
-          onSwotCreated?.(msg.payload as { title: string; items: { quadrant: string; content: string }[] })
+          // Gemini tool schema uses pt-BR field names (`titulo`, `itens`,
+          // `quadrante`, `conteudo`); the backend API and `handleSwotCreated`
+          // expect English. Translate here — and accept either form so legacy
+          // text-mode payloads still work.
+          const p = msg.payload as Record<string, unknown>
+          const title = typeof p.title === 'string' ? p.title : typeof p.titulo === 'string' ? p.titulo : ''
+          const rawItems = (Array.isArray(p.items) ? p.items : Array.isArray(p.itens) ? p.itens : []) as Record<string, unknown>[]
+          const items = rawItems
+            .map((it) => {
+              const quadrant = typeof it.quadrant === 'string' ? it.quadrant : typeof it.quadrante === 'string' ? it.quadrante : ''
+              const content = typeof it.content === 'string' ? it.content : typeof it.conteudo === 'string' ? it.conteudo : ''
+              return { quadrant, content }
+            })
+            .filter((it) => it.quadrant && it.content)
+          if (title && items.length > 0) {
+            onSwotCreated?.({ title, items })
+            // Wait for Sophie's closing sentence to finish playing before
+            // unmounting. Silence-detection watchdog: poll `playbackEndRef`
+            // every 200ms, and close once the audio queue has been idle
+            // (currentTime >= playbackEndRef) for 1.5 s AND at least 2 s
+            // have passed since the tool fired (grace for chunks still in
+            // flight). Safety cap at 25 s.
+            pendingCloseRef.current = true
+            if (closeWatchdogRef.current) clearInterval(closeWatchdogRef.current)
+            if (safetyCloseTimerRef.current) clearTimeout(safetyCloseTimerRef.current)
+            const startedAt = Date.now()
+            let quietSince: number | null = null
+            closeWatchdogRef.current = setInterval(() => {
+              if (!pendingCloseRef.current) {
+                if (closeWatchdogRef.current) { clearInterval(closeWatchdogRef.current); closeWatchdogRef.current = null }
+                return
+              }
+              const ctx = audioCtxRef.current
+              if (!ctx) return
+              const idle = ctx.currentTime >= playbackEndRef.current - 0.05
+              if (!idle) {
+                quietSince = null
+                return
+              }
+              const now = Date.now()
+              if (quietSince === null) quietSince = now
+              const quietFor = now - quietSince
+              const totalWait = now - startedAt
+              if (quietFor >= 1500 && totalWait >= 2000) {
+                if (closeWatchdogRef.current) { clearInterval(closeWatchdogRef.current); closeWatchdogRef.current = null }
+                if (safetyCloseTimerRef.current) { clearTimeout(safetyCloseTimerRef.current); safetyCloseTimerRef.current = null }
+                pendingCloseRef.current = false
+                onClose?.()
+              }
+            }, 200)
+            safetyCloseTimerRef.current = setTimeout(() => {
+              if (closeWatchdogRef.current) { clearInterval(closeWatchdogRef.current); closeWatchdogRef.current = null }
+              if (pendingCloseRef.current) {
+                pendingCloseRef.current = false
+                onClose?.()
+              }
+            }, 25000)
+          } else {
+            console.error('[swot] malformed swot_create payload', p)
+          }
         }
         break
       case 'turn_complete':
@@ -513,6 +590,10 @@ export default function SwotInterview({
           firstTurnDoneRef.current = true
           setMicMuted(false)
         }
+        // Pending close is handled by the silence-detection watchdog set up
+        // in `swot_create` — don't close here. `turn_complete` fires when
+        // Gemini finishes GENERATING, which can be seconds before the last
+        // post-tool audio chunks arrive in the AudioContext queue.
         break
       case 'interrupted': {
         const ctx = audioCtxRef.current
@@ -529,7 +610,7 @@ export default function SwotInterview({
         break
       }
     }
-  }, [enqueueAudio, onSwotCreated])
+  }, [enqueueAudio, onSwotCreated, onClose])
 
   const startLiveSession = useCallback(async () => {
     if (!wsId) return
@@ -544,6 +625,14 @@ export default function SwotInterview({
       await ctx.audioWorklet.addModule('/worklets/pcm-downsample.js')
       if (ctx.state === 'suspended') {
         await ctx.resume()
+      }
+
+      // AudioContext.setSinkId('') asks Chrome to follow the OS default output
+      // device dynamically instead of locking onto whatever was default at
+      // creation time. Requires Chrome 110+. No-op if unsupported.
+      const ctxWithSink = ctx as AudioContext & { setSinkId?: (id: string) => Promise<void> }
+      if (typeof ctxWithSink.setSinkId === 'function') {
+        try { await ctxWithSink.setSinkId('') } catch { /* ignore */ }
       }
 
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })

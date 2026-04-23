@@ -1,13 +1,14 @@
 'use client'
 
 import React, { useEffect, useRef, useState } from 'react'
-import { toJpeg } from 'html-to-image'
 import { X, FileText, Image as ImageIcon } from 'lucide-react'
 import { useBaisyncStore, type BaisyncAttachment } from '@/store/useBaisyncStore'
 import { useAuthStore } from '@/store/useAuthStore'
 import { BaisyncMessageComponent, StreamingMessage, ThinkingAnimation } from './baisync-message'
 import { PixelGirl } from './pixel-girl'
 import { usePixelAudio } from './pixel-visualizer'
+import { executeBaisyncAction } from '@/lib/baisync-actions'
+import { ApiError } from '@/lib/api'
 
 const SKILLS = [
   {
@@ -47,19 +48,6 @@ const SLASH_COMMANDS: SlashCommand[] = [
   { name: '/integrations', desc: 'ver integrações disponíveis',    kind: 'ai'    },
   { name: '/docs',         desc: 'sobre a plataforma',             kind: 'ai'    },
 ]
-
-async function captureScreenshot(): Promise<BaisyncAttachment> {
-  const dataUrl = await toJpeg(document.body, {
-    quality: 0.75,
-    pixelRatio: 0.5,
-    filter: (node) => !(node as Element).hasAttribute?.('data-baisync-panel'),
-  })
-  return {
-    name: 'screenshot.jpg',
-    mime_type: 'image/jpeg',
-    data_base64: dataUrl.split(',')[1],
-  }
-}
 
 export function BaisyncPanel() {
   const {
@@ -218,7 +206,21 @@ export function BaisyncPanel() {
   }, [])
 
   const handleLiveMessage = React.useCallback((raw: string) => {
-    let msg: { type: string; data?: string; mimeType?: string; role?: string; text?: string; message?: string; used?: number; limit?: number; pct?: number; warning?: string }
+    let msg: {
+      type: string
+      data?: string
+      mimeType?: string
+      role?: string
+      text?: string
+      message?: string
+      used?: number
+      limit?: number
+      pct?: number
+      warning?: string
+      call_id?: string
+      action?: string
+      params?: Record<string, unknown>
+    }
     try { msg = JSON.parse(raw) } catch { return }
     switch (msg.type) {
       case 'ready':
@@ -245,14 +247,54 @@ export function BaisyncPanel() {
       case 'interrupted':
         // No UI change here; transcript already reflects the turn
         break
-      case 'screenshot_request': {
-        captureScreenshot()
-          .then((att) => {
-            wsRef.current?.send(
-              JSON.stringify({ type: 'screenshot_response', mimeType: att.mime_type, data: att.data_base64 })
+      case 'action_request': {
+        // Unified tool-call dispatcher — Sophie (voice) just called
+        // `executar_acao` in Gemini Live. Run the same `executeBaisyncAction`
+        // text mode uses; the backend bridge is waiting on `action_result`.
+        const callId = msg.call_id
+        const actionName = msg.action
+        if (!callId || !actionName) break
+        const params = (msg.params && typeof msg.params === 'object')
+          ? msg.params
+          : {}
+        // Isolate per-action summaries: text mode accumulates via
+        // `pendingActionResults`; for voice we snapshot just THIS action's
+        // output and send it back synchronously.
+        useBaisyncStore.setState({ pendingActionResults: [] })
+        ;(async () => {
+          let attachments: BaisyncAttachment[] | undefined
+          let errorMsg: string | undefined
+          try {
+            const result = await executeBaisyncAction(
+              { action: actionName, data: params },
+              { contextAssistantId: null },
             )
-          })
-          .catch((err) => console.error('[baisync] voice screenshot failed', err))
+            if (result.status === 'error') {
+              errorMsg = 'Ação falhou. Revise os parâmetros e tente novamente.'
+            }
+            if (result.attachments?.length) attachments = result.attachments
+          } catch (err) {
+            errorMsg = err instanceof ApiError
+              ? `${err.message} (HTTP ${err.status})`
+              : err instanceof Error
+                ? err.message
+                : 'Erro desconhecido'
+          }
+          const queued = useBaisyncStore.getState().pendingActionResults.join('\n\n')
+          useBaisyncStore.setState({ pendingActionResults: [] })
+          const payload: Record<string, unknown> = { type: 'action_result', call_id: callId }
+          if (errorMsg) {
+            payload.error = queued || errorMsg
+          } else {
+            payload.text = queued || 'Ação concluída.'
+            if (attachments) payload.attachments = attachments
+          }
+          try {
+            wsRef.current?.send(JSON.stringify(payload))
+          } catch (err) {
+            console.error('[baisync] voice action_result send failed', err)
+          }
+        })()
         break
       }
       case 'error':
@@ -273,6 +315,14 @@ export function BaisyncPanel() {
       audioCtxRef.current = ctx
       await ctx.audioWorklet.addModule('/worklets/pcm-downsample.js')
       if (ctx.state === 'suspended') await ctx.resume()
+
+      // AudioContext.setSinkId('') asks Chrome to follow the OS default output
+      // device dynamically instead of locking onto whatever was default at
+      // creation time. Requires Chrome 110+. No-op if unsupported.
+      const ctxWithSink = ctx as AudioContext & { setSinkId?: (id: string) => Promise<void> }
+      if (typeof ctxWithSink.setSinkId === 'function') {
+        try { await ctxWithSink.setSinkId('') } catch { /* ignore */ }
+      }
 
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
       micStreamRef.current = stream
@@ -1104,6 +1154,7 @@ export function BaisyncPanel() {
                 {liveStatus === 'idle' && audioSource === 'simulated' && !audioError && (
                   <p className="text-[10px]" style={{ color: '#febc2e' }}>· demo — microfone não disponível</p>
                 )}
+
               </>
             ) : (
               <>

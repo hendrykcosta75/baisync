@@ -241,49 +241,18 @@ fn estimate_tokens_from_chars(prompt_chars: usize, response_chars: usize) -> i64
 
 // ─── Chat endpoint (SSE streaming) ────��─────────────────────────────────────
 
-pub async fn chat(
-    Extension(db): Extension<DbSession>,
-    Extension(config): Extension<Config>,
-    Extension(encryption): Extension<crate::services::encryption::EncryptionService>,
-    Extension(auth_user): Extension<AuthUser>,
-    Query(qs): Query<HashMap<String, String>>,
-    Json(req): Json<BaisyncChatRequest>,
-) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, AppError> {
-    let api_key = config.baisync_api_key.clone();
-    if api_key.is_empty() {
-        return Err(AppError::InternalError(
-            "BAISYNC_API_KEY not configured".into(),
-        ));
-    }
-
-    // S2.2 — `?planner=true` (or `?planner=1`) opts into the 2-call pipeline.
-    // When absent or any other value, Sophie runs through the single-call
-    // flow exactly as before — the planner code path is never touched. The
-    // flag is dev/QA only; production keeps the default single-call path.
-    let planner_enabled = qs
-        .get("planner")
-        .map(|v| v == "true" || v == "1")
-        .unwrap_or(false);
-
-    let gemini_model = SOPHIE_GEMINI_MODEL;
-
-    let user_id = auth_user.user_id;
-
-    // Rate limit: tokens per hour per user (migration 107). Pre-check: if
-    // already at/over the budget, reject before calling Gemini. Post-stream
-    // increment happens after we read `usageMetadata.totalTokenCount`.
-    let used = get_usage_tokens(&db, &user_id).await;
-    let limit = config.baisync_rate_limit;
-    if used >= limit as i64 {
-        return Err(AppError::BadRequest(format!(
-            "Limite de tokens atingido ({}/{}). Tente novamente na próxima hora.",
-            used, limit
-        )));
-    }
-
-    // Build system prompt
-    let user = crate::services::auth::get_user_by_id(&db, &user_id).await?;
-    let assistants = crate::services::assistant::list_assistants(&db, &user_id)
+/// Build Sophie's full system prompt for `user_id`, optionally appending a
+/// skill prompt. Reused by both the text-mode chat handler and the voice
+/// bridge so the 74 actions, workspace context, assistant inventory and
+/// skill list stay in lockstep between modes.
+pub(crate) async fn build_sophie_system_prompt(
+    db: &DbSession,
+    encryption: &crate::services::encryption::EncryptionService,
+    user_id: &Uuid,
+    skill: Option<&str>,
+) -> Result<String, AppError> {
+    let user = crate::services::auth::get_user_by_id(db, user_id).await?;
+    let assistants = crate::services::assistant::list_assistants(db, user_id)
         .await
         .unwrap_or_default();
 
@@ -312,9 +281,8 @@ pub async fn chat(
             detail.push_str(&format!(", rate_limit={}/dia", rl));
         }
 
-        // Fetch integrations
         if let Ok(integrations) =
-            crate::services::assistant::list_integrations(&db, &encryption, &a.id, &user_id).await
+            crate::services::assistant::list_integrations(db, encryption, &a.id, user_id).await
         {
             if !integrations.is_empty() {
                 let int_list: Vec<String> = integrations
@@ -325,8 +293,7 @@ pub async fn chat(
             }
         }
 
-        // Fetch tools
-        if let Ok(tools) = crate::services::assistant::list_tools(&db, &a.id).await {
+        if let Ok(tools) = crate::services::assistant::list_tools(db, &a.id).await {
             if !tools.is_empty() {
                 let tool_list: Vec<String> = tools
                     .iter()
@@ -342,8 +309,7 @@ pub async fn chat(
             }
         }
 
-        // Fetch files
-        if let Ok(files) = crate::services::rag::list_files(&db, &a.id, &user_id).await {
+        if let Ok(files) = crate::services::rag::list_files(db, &a.id, user_id).await {
             if !files.is_empty() {
                 let file_list: Vec<String> = files
                     .iter()
@@ -362,17 +328,16 @@ pub async fn chat(
         assistant_details.join("\n\n")
     };
 
-    // ─── Workspace & Channel Context ─────────────────────────────────────
-    let active_ws_id = crate::services::workspace::get_active_workspace_id(&db, &user_id)
+    let active_ws_id = crate::services::workspace::get_active_workspace_id(db, user_id)
         .await
-        .unwrap_or(user_id);
-    let active_ws = crate::services::workspace::get_workspace(&db, &active_ws_id)
+        .unwrap_or(*user_id);
+    let active_ws = crate::services::workspace::get_workspace(db, &active_ws_id)
         .await
         .ok();
-    let user_workspaces = crate::services::workspace::list_user_workspaces(&db, &user_id)
+    let user_workspaces = crate::services::workspace::list_user_workspaces(db, user_id)
         .await
         .unwrap_or_default();
-    let user_channels = crate::services::channel::list_user_channels(&db, &user_id, &active_ws_id)
+    let user_channels = crate::services::channel::list_user_channels(db, user_id, &active_ws_id)
         .await
         .unwrap_or_default();
 
@@ -436,26 +401,80 @@ pub async fn chat(
         )
     };
 
-    let mut system_prompt = format!(
-        include_str!("../../resources/sophie/system.md"),
-        user_name = if user.name.is_empty() {
-            "Usuário"
-        } else {
-            &user.name
-        },
-        user_email = user.email,
-        assistant_list = assistant_list,
-        workspace_context = workspace_context,
-        skills = skills_summary(),
-    );
+    // `format!` cannot capture locals when the template comes from
+    // `include_str!`, so we substitute placeholders explicitly via
+    // `str::replace`. This also avoids the `named_arguments_used_positionally`
+    // lint. The template uses `{key}` literals (single-brace) — we still need
+    // to convert the original `{{...}}` escapes to `{...}` so the sample
+    // action payloads in system.md render correctly.
+    let user_name = if user.name.is_empty() {
+        "Usuário"
+    } else {
+        user.name.as_str()
+    };
+    let skills = skills_summary();
+    let mut system_prompt = include_str!("../../resources/sophie/system.md")
+        .replace("{user_name}", user_name)
+        .replace("{user_email}", &user.email)
+        .replace("{assistant_list}", &assistant_list)
+        .replace("{workspace_context}", &workspace_context)
+        .replace("{skills}", &skills)
+        .replace("{{", "{")
+        .replace("}}", "}");
 
-    // If a skill is active, inject its full prompt
-    if let Some(ref skill_name) = req.skill {
+    if let Some(skill_name) = skill {
         if let Some(skill_prompt) = get_skill_prompt(skill_name) {
             system_prompt.push_str("\n\n## Skill Ativa\n");
             system_prompt.push_str(skill_prompt);
         }
     }
+
+    Ok(system_prompt)
+}
+
+pub async fn chat(
+    Extension(db): Extension<DbSession>,
+    Extension(config): Extension<Config>,
+    Extension(encryption): Extension<crate::services::encryption::EncryptionService>,
+    Extension(auth_user): Extension<AuthUser>,
+    Query(qs): Query<HashMap<String, String>>,
+    Json(req): Json<BaisyncChatRequest>,
+) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, AppError> {
+    let api_key = config.baisync_api_key.clone();
+    if api_key.is_empty() {
+        return Err(AppError::InternalError(
+            "BAISYNC_API_KEY not configured".into(),
+        ));
+    }
+
+    // S2.2 — `?planner=true` (or `?planner=1`) opts into the 2-call pipeline.
+    // When absent or any other value, Sophie runs through the single-call
+    // flow exactly as before — the planner code path is never touched. The
+    // flag is dev/QA only; production keeps the default single-call path.
+    let planner_enabled = qs
+        .get("planner")
+        .map(|v| v == "true" || v == "1")
+        .unwrap_or(false);
+
+    let gemini_model = SOPHIE_GEMINI_MODEL;
+
+    let user_id = auth_user.user_id;
+
+    // Rate limit: tokens per hour per user (migration 107). Pre-check: if
+    // already at/over the budget, reject before calling Gemini. Post-stream
+    // increment happens after we read `usageMetadata.totalTokenCount`.
+    let used = get_usage_tokens(&db, &user_id).await;
+    let limit = config.baisync_rate_limit;
+    if used >= limit as i64 {
+        return Err(AppError::BadRequest(format!(
+            "Limite de tokens atingido ({}/{}). Tente novamente na próxima hora.",
+            used, limit
+        )));
+    }
+
+    // Build system prompt (shared with voice bridge — see build_sophie_system_prompt).
+    let system_prompt =
+        build_sophie_system_prompt(&db, &encryption, &user_id, req.skill.as_deref()).await?;
 
     // Build Gemini contents
     let mut contents: Vec<serde_json::Value> = Vec::new();
@@ -1533,20 +1552,23 @@ mod tests {
         let workspace_context = "## Contexto de Workspaces\n- Workspace ativo: Pessoal";
         let skills = "- **criar_atendente**: ...\n- **sobre_plataforma**: ...";
 
-        let rendered = format!(
-            include_str!("../../resources/sophie/system.md"),
-            user_name = user_name,
-            user_email = user_email,
-            assistant_list = assistant_list,
-            workspace_context = workspace_context,
-            skills = skills,
-        );
+        let rendered = include_str!("../../resources/sophie/system.md")
+            .replace("{user_name}", user_name)
+            .replace("{user_email}", user_email)
+            .replace("{assistant_list}", assistant_list)
+            .replace("{workspace_context}", workspace_context)
+            .replace("{skills}", skills)
+            .replace("{{", "{")
+            .replace("}}", "}");
 
         // Byte length captured pre-refactor (r#"..."# literal with same fixture).
         // S1.3 bumped the snapshot by 301 bytes when the new Observabilidade
         // section (get_my_recent_errors + get_platform_health) was added.
         // feat(baisync): bumped by 421 bytes for the tirar_print Captura de Tela section.
-        const EXPECTED_LEN: usize = 17963;
+        // chore(prompts): dropped 10 bytes when switching render from `format!` to
+        // `str::replace` and escaping the bare `{}` in tirar_print (was being
+        // interpolated with user_name; now renders as literal `{}`).
+        const EXPECTED_LEN: usize = 17953;
         assert_eq!(
             rendered.len(),
             EXPECTED_LEN,

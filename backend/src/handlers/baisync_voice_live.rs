@@ -23,11 +23,16 @@ use uuid::Uuid;
 use crate::config::Config;
 use crate::db::DbSession;
 use crate::errors::AppError;
-use crate::handlers::baisync::{get_skill_prompt, get_usage_tokens, increment_usage_tokens};
+use crate::handlers::baisync::{
+    build_sophie_system_prompt, get_usage_tokens, increment_usage_tokens,
+};
 use crate::middleware::auth::AuthUser;
+use crate::services::encryption::EncryptionService;
 use crate::services::session::{
     append_event, create_session, SessionEventType, SessionId,
 };
+use std::collections::HashSet;
+use tokio::sync::mpsc;
 
 // ─── Ticket ────────────────────────────────────────────────────────────────
 
@@ -80,6 +85,7 @@ pub struct VoiceQuery {
 pub async fn voice_live_ws(
     Extension(db): Extension<DbSession>,
     Extension(config): Extension<Config>,
+    Extension(encryption): Extension<EncryptionService>,
     Query(q): Query<VoiceQuery>,
     ws: WebSocketUpgrade,
 ) -> Result<Response, AppError> {
@@ -140,7 +146,9 @@ pub async fn voice_live_ws(
 
     let limit = config.baisync_rate_limit;
     Ok(ws.on_upgrade(move |socket| async move {
-        if let Err(e) = run_bridge(socket, api_key, db, user_id, limit, session_id).await {
+        if let Err(e) =
+            run_bridge(socket, api_key, db, encryption, user_id, limit, session_id).await
+        {
             tracing::warn!("Baisync voice bridge ended with error: {e}");
         }
     }))
@@ -161,58 +169,74 @@ type GoogleRx = futures::stream::SplitStream<
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
 >;
 
-async fn build_voice_system_prompt(db: &DbSession, user_id: &Uuid) -> String {
-    let user_name = crate::services::auth::get_user_by_id(db, user_id)
-        .await
-        .map(|u| {
-            u.name
-                .split_whitespace()
-                .next()
-                .unwrap_or("")
-                .to_string()
-        })
-        .unwrap_or_default();
-    let assistants_count = crate::services::assistant::list_assistants(db, user_id)
-        .await
-        .map(|v| v.len())
-        .unwrap_or(0);
-
-    let user_line = if user_name.is_empty() {
-        String::new()
-    } else {
-        format!("Você está falando com {}. ", user_name)
+/// Voice system prompt = the full text-mode Sophie prompt (`system.md` rendered
+/// with workspace + assistant inventory + 74 actions) + a voice-specific
+/// overlay that tells Sophie to call the `executar_acao` tool instead of
+/// emitting XML tags. The overlay supersedes the "Actions" / "UI Blocks"
+/// sections of `system.md` when they conflict; all other rules (IDs,
+/// workspace, validation) still apply. Shared source of truth keeps voice
+/// and text in lockstep — add an action to `system.md` and both modes see it.
+async fn build_voice_system_prompt(
+    db: &DbSession,
+    encryption: &EncryptionService,
+    user_id: &Uuid,
+) -> String {
+    // Fall back to a minimal prompt if the full builder errors — voice should
+    // still work even if (say) the user row is temporarily unreachable.
+    let base = match build_sophie_system_prompt(db, encryption, user_id, None).await {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                user_id = %user_id,
+                "baisync voice: failed to build full system prompt — using minimal fallback"
+            );
+            "Você é a Sophie, a assistente da plataforma Baisync.".to_string()
+        }
     };
 
-    format!(
-        r#"Você é a Sophie, a assistente da plataforma Baisync. Você está conversando por voz em tempo real.
+    let voice_overlay = r#"
+## MODO DE VOZ (sobrepõe regras anteriores quando conflitar)
 
-## Sobre você
-- Persona: mulher jovem, tom descontraído e próximo, mas profissional.
-- {user_line}O usuário tem {assistants_count} assistente(s) configurado(s).
-- Você ajuda a gerenciar assistentes de IA, integrações (WhatsApp, Meta, Telegram), ferramentas e dúvidas sobre a plataforma.
-- Você NÃO é uma inteligência artificial — você é a assistente Sophie. Nunca se refira como IA, modelo ou LLM.
+Você está conversando por voz em tempo real, em pt-BR. Aja como uma atendente humana experiente da plataforma, não como uma interface técnica.
 
-## Regras de voz
-- RESPONDA SEMPRE EM PORTUGUÊS BRASILEIRO (pt-BR).
-- Respostas curtas e conversacionais, adequadas para fala (não leitura).
-- Não use markdown, listas, tabelas, XML ou blocos de código.
-- Se precisar listar, fale: "primeiro…, depois…, por último…".
+### Tom e estilo
+- Respostas curtas, naturais, adequadas para fala. Sem markdown, listas, tabelas, emojis, XML ou blocos de código.
+- Sophie, jovem, calorosa, resolutiva. Fala como colega que conhece a plataforma de cor. Nunca se refira como IA, modelo ou LLM.
 
-## Ferramentas disponíveis
-- `ativar_skill(nome)`: ativa guia detalhado. Nomes: `criar_atendente`, `sobre_plataforma`.
-  Use quando o usuário quiser criar um assistente ou entender a plataforma.
-- `tirar_print()`: captura screenshot da tela do usuário.
-  Use quando o usuário mencionar confusão com uma página, pedir ajuda visual, ou quando
-  ver a tela ajudaria a dar instruções mais precisas. Após receber a imagem, descreva
-  brevemente o que vê e guie o usuário passo a passo.
+### Ferramenta única: `executar_acao(nome, parametros)`
+Dispara qualquer ação documentada em "Ações do Sistema" acima. `nome` é o identificador exato (ex: `list_assistants`, `create_assistant`, `list_conversations`). `parametros` é o objeto `data: {...}` daquela ação; use `{}` quando vazio.
 
-## Escopo
-- Foque em: criar/configurar assistentes, planos, integrações, dúvidas sobre a plataforma Baisync.
-- Chame o usuário pelo primeiro nome quando souber; caso contrário, fale no "você".
-"#,
-        user_line = user_line,
-        assistants_count = assistants_count
-    )
+NÃO emita tags XML (`<baisync-action>`, `<baisync-ui>`, `<swot-*>`) nem JSON por voz — SEMPRE chame a ferramenta.
+
+### NUNCA fale por voz
+- **Nenhum ID, UUID, hash ou hexadecimal** — jamais. Se precisar diferenciar entidades, use nome, função ou característica ("o de vendas", "o do WhatsApp Business").
+- Nomes de ações (`list_assistants`, `create_assistant`), nomes de parâmetros, JSON, chaves de API, endpoints.
+- "Conforme o retorno da ferramenta…", "executando ação…", "API", "backend", "endpoint".
+
+Se for absolutamente necessário referenciar algo técnico, reformule em linguagem humana ("o assistente de atendimento que você configurou ontem").
+
+### Descoberta automática de contexto — NÃO pergunte IDs
+O usuário fala por NOME e CONTEXTO, não por UUID. Você tem o inventário completo no system prompt ("Contexto do Usuário") e pode chamar `list_*` sempre que quiser. Regras:
+
+1. **Referência por nome** → passe o nome como parâmetro: quase toda ação aceita `assistant_name` (ou `name`) como fallback quando o `assistant_id` é desconhecido. Ex: usuário diz "atualiza o prompt do atendente de vendas" → chame `update_assistant` com `{"assistant_name": "vendas", "system_prompt": "..."}`. O sistema resolve o ID pelo nome automaticamente.
+2. **Referência ambígua ou genérica** ("meu assistente", "aquele da loja") → se o system prompt mostra só UM assistente, use ele. Se mostra vários, tente inferir pelo contexto (último criado, o mencionado antes, o que combina com o tema). Só pergunte se realmente não dá pra decidir.
+3. **Contexto faltando** → chame `list_assistants`, `list_conversations`, `list_events`, `list_channels` etc. SILENCIOSAMENTE antes de responder. Depois de ter o dado, responda direto ao usuário como se soubesse desde sempre. NÃO diga "vou consultar", "deixa eu verificar", "um momento" — apenas chame e responda.
+4. **Disambiguação humana** → se houver duas opções plausíveis e ambíguas após listar, pergunte por atributo natural: "você tem dois chamados Ana, o de vendas e o de suporte — qual deles?". NUNCA "qual ID?".
+
+### Estilo das respostas
+- Depois da ferramenta retornar, resuma em prosa conversacional. NÃO leia o retorno bruto, NÃO liste itens um por um por voz.
+- Listas curtas (≤3 itens): fale naturalmente — "você tem dois: o de vendas e o de suporte".
+- Listas longas (>3 itens): dê o total e os destaques — "você tem sete assistentes. Os mais ativos são o de vendas e o da Ana. Quer saber de algum específico?".
+- Números e datas: fale em forma humana ("três conversas novas", "ontem às dez da manhã"), não ISO 8601 nem numerais cardinais técnicos.
+
+### Encadeamento natural
+- Uma frase do usuário = uma intenção. Execute a ação completa em uma tacada só (descobrir ID + executar), sem pausas para confirmar o óbvio.
+- Só peça confirmação antes de ações destrutivas (`delete_*`, `revoke_*`, `cancel_event`) ou que custam dinheiro.
+- Se o usuário falar algo fora do escopo da plataforma, redirecione gentilmente sem chamar ferramenta.
+"#;
+
+    format!("{}\n\n{}", base, voice_overlay)
 }
 
 async fn open_google_session(api_key: &str, system_prompt: &str) -> Result<(GoogleTx, GoogleRx), String> {
@@ -239,33 +263,38 @@ async fn open_google_session(api_key: &str, system_prompt: &str) -> Result<(Goog
             },
             "inputAudioTranscription": {},
             "outputAudioTranscription": {},
+            // Single universal dispatcher: Sophie calls `executar_acao` with
+            // any action name + params documented in system.md. Backend
+            // forwards to the browser (which runs `executeBaisyncAction` from
+            // frontend/lib/baisync-actions.ts) and returns the result. Schema
+            // types are lowercase OpenAPI/JSON-Schema form — the Gemini 3.1
+            // Live validator silently drops UPPERCASE (`"OBJECT"`, `"STRING"`)
+            // declarations, which is why the previous setup registered tools
+            // that the model never saw.
+            // NOTE: `toolConfig` is a REST-API-only field. The Live API
+            // setup message rejects it with "Unknown name 'toolConfig'";
+            // AUTO is the implicit default when `functionDeclarations`
+            // is present, so we rely on that.
             "tools": [{
-                "functionDeclarations": [
-                    {
-                        "name": "ativar_skill",
-                        "description": "Ativa uma skill para obter guia detalhado. Use quando o usuário quiser criar um assistente ('criar_atendente') ou tirar dúvidas sobre a plataforma ('sobre_plataforma').",
-                        "parameters": {
-                            "type": "OBJECT",
-                            "properties": {
-                                "nome": {
-                                    "type": "STRING",
-                                    "description": "Identificador da skill",
-                                    "enum": ["criar_atendente", "sobre_plataforma"]
-                                }
+                "functionDeclarations": [{
+                    "name": "executar_acao",
+                    "description": "Executa uma ação da plataforma Baisync. Use para QUALQUER ação descrita em 'Ações do Sistema' no system prompt (create_assistant, list_conversations, tirar_print, connect_whatsapp, list_events, financial_summary, etc.). Os parâmetros dependem da ação — siga exatamente os campos de `data: {...}` no system prompt.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "nome": {
+                                "type": "string",
+                                "description": "Nome exato da ação (ex: create_assistant, list_conversations, tirar_print, connect_whatsapp)."
                             },
-                            "required": ["nome"]
-                        }
-                    },
-                    {
-                        "name": "tirar_print",
-                        "description": "Captura um screenshot da tela atual do usuário para você ver o que ele está visualizando. Use quando o usuário pedir ajuda com algo que está vendo na tela, mencionar que está confuso com alguma página, ou quando o contexto visual ajudaria a dar uma resposta mais precisa. Após receber a imagem, descreva o que vê e dê instruções contextuais.",
-                        "parameters": {
-                            "type": "OBJECT",
-                            "properties": {},
-                            "required": []
-                        }
+                            "parametros": {
+                                "type": "object",
+                                "description": "Parâmetros da ação — correspondem ao objeto `data` documentado no system prompt. Objeto vazio {} quando a ação não tem parâmetros.",
+                                "properties": {}
+                            }
+                        },
+                        "required": ["nome"]
                     }
-                ]
+                }]
             }]
         }
     });
@@ -348,16 +377,39 @@ fn now_ms() -> i64 {
     Utc::now().timestamp_millis()
 }
 
+/// Outcome of a pending `executar_acao` call — pushed onto an internal mpsc
+/// channel by either (a) the browser_rx arm when the frontend returns an
+/// `action_result`, or (b) a spawned timeout task after 30 s of silence. The
+/// select loop drains this channel and emits the matching `toolResponse` (+
+/// any image attachments as `realtimeInput.video`) to Google. First-outcome
+/// wins: the pending HashSet guards against duplicates.
+#[derive(Debug, Default)]
+struct ToolOutcome {
+    call_id: String,
+    text: Option<String>,
+    error: Option<String>,
+    attachments: Vec<ActionAttachment>,
+}
+
+#[derive(Debug)]
+struct ActionAttachment {
+    mime_type: String,
+    data_base64: String,
+}
+
+const ACTION_TIMEOUT_SECS: u64 = 30;
+
 async fn run_bridge(
     browser_ws: WebSocket,
     api_key: String,
     db: DbSession,
+    encryption: EncryptionService,
     user_id: Uuid,
     rate_limit: i32,
     session_id: Option<SessionId>,
 ) -> Result<(), String> {
     // Build system prompt once before the retry loop so DB is not re-queried on each attempt.
-    let system_prompt = build_voice_system_prompt(&db, &user_id).await;
+    let system_prompt = build_voice_system_prompt(&db, &encryption, &user_id).await;
 
     let mut last_err = String::from("unknown");
     let mut pair: Option<(GoogleTx, GoogleRx)> = None;
@@ -426,6 +478,20 @@ async fn run_bridge(
     // in a standalone frame (no `serverContent`) so we track the last-seen
     // total and only bill the delta to avoid double-counting across frames.
     let mut tokens_billed: i64 = 0;
+
+    // Outstanding `executar_acao` call_ids waiting for a result. Populated
+    // when we forward the action to the browser; drained when either the
+    // browser's `action_result` arrives OR the per-call timeout task fires.
+    // Gemini 3.1 Live is synchronous — the model stalls until we reply with
+    // `toolResponse`, so we MUST always drain these (timeout path emits an
+    // error toolResponse).
+    let mut pending_actions: HashSet<String> = HashSet::new();
+
+    // mpsc channel that multiplexes tool-call outcomes from two sources into
+    // the select loop: (a) browser replies via `action_result` frame, and
+    // (b) timeout tasks spawned per-call. Drained by a dedicated select
+    // arm that emits the `toolResponse` to Google.
+    let (outcome_tx, mut outcome_rx) = mpsc::channel::<ToolOutcome>(32);
 
     // Keepalive: send WebSocket Ping frames every 25 s to prevent reverse-proxy
     // (Traefik) idle-timeout disconnects. Pings are protocol-level and
@@ -516,20 +582,53 @@ async fn run_bridge(
                                     break;
                                 }
                             }
-                            "screenshot_response" => {
-                                let Some(data) = parsed.get("data").and_then(|v| v.as_str()) else { continue };
-                                let mime = parsed.get("mimeType").and_then(|v| v.as_str()).unwrap_or("image/jpeg");
-                                let frame = serde_json::json!({
-                                    "realtimeInput": {
-                                        "video": {
-                                            "mimeType": mime,
-                                            "data": data
-                                        }
-                                    }
-                                });
-                                if google_tx.send(TMessage::Text(frame.to_string().into())).await.is_err() {
-                                    break;
-                                }
+                            // Unified action-dispatch reply from browser.
+                            // Triggered when the frontend finishes running
+                            // an `executar_acao` call. Pushes the outcome
+                            // onto the mpsc so the outcome-arm below emits
+                            // the toolResponse back to Gemini Live.
+                            "action_result" => {
+                                let Some(call_id) = parsed
+                                    .get("call_id")
+                                    .and_then(|v| v.as_str())
+                                    .map(str::to_string)
+                                else { continue };
+                                let text = parsed
+                                    .get("text")
+                                    .and_then(|v| v.as_str())
+                                    .map(str::to_string);
+                                let error = parsed
+                                    .get("error")
+                                    .and_then(|v| v.as_str())
+                                    .map(str::to_string);
+                                let attachments: Vec<ActionAttachment> = parsed
+                                    .get("attachments")
+                                    .and_then(|v| v.as_array())
+                                    .map(|arr| {
+                                        arr.iter()
+                                            .filter_map(|a| {
+                                                Some(ActionAttachment {
+                                                    mime_type: a
+                                                        .get("mime_type")?
+                                                        .as_str()?
+                                                        .to_string(),
+                                                    data_base64: a
+                                                        .get("data_base64")?
+                                                        .as_str()?
+                                                        .to_string(),
+                                                })
+                                            })
+                                            .collect()
+                                    })
+                                    .unwrap_or_default();
+                                let _ = outcome_tx
+                                    .send(ToolOutcome {
+                                        call_id,
+                                        text,
+                                        error,
+                                        attachments,
+                                    })
+                                    .await;
                             }
                             "end" => break,
                             _ => {}
@@ -797,17 +896,26 @@ async fn run_bridge(
                     }
                 }
 
-                // S3.2 — Gemini Live tool-call dispatch. The Live API sends tool
-                // calls as a top-level `toolCall.functionCalls` array (separate
-                // from `serverContent`). We execute the tool, then send back
-                // `toolResponse` with the matching `id` — without it Google hangs
-                // waiting for a response and the session deadlocks.
+                // Gemini Live tool-call dispatch. Sophie has a single unified
+                // tool `executar_acao` that proxies to the frontend's existing
+                // `executeBaisyncAction()` for ALL 74 actions documented in
+                // system.md. Flow:
+                //   1. Record call_id in pending_actions
+                //   2. Send `action_request` to browser (frontend runs it)
+                //   3. Spawn a timeout task (30s) that emits an error outcome
+                //      if the browser never replies
+                //   4. The outcome-arm below receives either the browser's
+                //      `action_result` or the timeout, emits toolResponse
+                //      (+ any image attachments as realtimeInput.video), and
+                //      removes call_id from pending_actions.
+                //
+                // Unknown tool names (Gemini should never call anything
+                // except `executar_acao`, but guard against drift) get an
+                // immediate error toolResponse — no pending entry needed.
                 if let Some(calls) = value
                     .pointer("/toolCall/functionCalls")
                     .and_then(|v| v.as_array())
                 {
-                    let mut function_responses: Vec<serde_json::Value> = Vec::new();
-
                     for call in calls {
                         let call_id = call
                             .get("id")
@@ -824,70 +932,168 @@ async fn run_bridge(
                             .cloned()
                             .unwrap_or(serde_json::Value::Null);
 
-                        // Audit log (fire-and-forget)
+                        if tool_name != "executar_acao" {
+                            tracing::warn!(
+                                tool = %tool_name,
+                                call_id = %call_id,
+                                "Baisync voice: unknown tool called; replying with error"
+                            );
+                            let tool_response = serde_json::json!({
+                                "toolResponse": {
+                                    "functionResponses": [{
+                                        "id": call_id,
+                                        "name": tool_name,
+                                        "response": { "output": "Ferramenta não reconhecida. Use apenas executar_acao." }
+                                    }]
+                                }
+                            });
+                            if google_tx
+                                .send(TMessage::Text(tool_response.to_string().into()))
+                                .await
+                                .is_err()
+                            {
+                                break;
+                            }
+                            continue;
+                        }
+
+                        let action_name = args
+                            .get("nome")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let params = args
+                            .get("parametros")
+                            .cloned()
+                            .unwrap_or_else(|| serde_json::json!({}));
+
+                        tracing::info!(
+                            event = "gemini_live.tool_call",
+                            handler = "baisync_voice",
+                            action = %action_name,
+                            call_id = %call_id,
+                            "received executar_acao from Gemini Live"
+                        );
+
                         if let Some(sid) = session_id {
                             append_event(
                                 user_id,
                                 sid,
                                 SessionEventType::ToolCall,
                                 serde_json::json!({
-                                    "tool_name": &tool_name,
-                                    "args": &args,
+                                    "tool_name": "executar_acao",
+                                    "action": &action_name,
+                                    "params": &params,
                                     "source": "voice",
-                                }).to_string(),
+                                })
+                                .to_string(),
                             );
                         }
 
-                        let output = match tool_name.as_str() {
-                            "ativar_skill" => {
-                                let skill_name = args
-                                    .get("nome")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("");
-                                match get_skill_prompt(skill_name) {
-                                    Some(content) => serde_json::json!({ "output": content }),
-                                    None => serde_json::json!({
-                                        "output": format!("Skill '{skill_name}' não encontrada.")
-                                    }),
+                        pending_actions.insert(call_id.clone());
+
+                        let request = serde_json::json!({
+                            "type": "action_request",
+                            "call_id": &call_id,
+                            "action": &action_name,
+                            "params": &params,
+                        });
+                        if browser_tx
+                            .send(Message::Text(request.to_string().into()))
+                            .await
+                            .is_err()
+                        {
+                            break;
+                        }
+
+                        // Per-call timeout — guarantees the outcome arm
+                        // eventually fires a toolResponse even if the
+                        // browser disappears mid-action. First outcome
+                        // wins (the arm checks pending_actions).
+                        let timeout_tx = outcome_tx.clone();
+                        let timeout_call_id = call_id.clone();
+                        let timeout_action_name = action_name.clone();
+                        tokio::spawn(async move {
+                            tokio::time::sleep(std::time::Duration::from_secs(
+                                ACTION_TIMEOUT_SECS,
+                            ))
+                            .await;
+                            let _ = timeout_tx
+                                .send(ToolOutcome {
+                                    call_id: timeout_call_id,
+                                    text: None,
+                                    error: Some(format!(
+                                        "Timeout: ação '{}' não concluída em {}s.",
+                                        timeout_action_name, ACTION_TIMEOUT_SECS
+                                    )),
+                                    attachments: Vec::new(),
+                                })
+                                .await;
+                        });
+                    }
+                }
+            }
+
+            // Tool-call outcome (either from browser action_result or from
+            // a timeout task). First outcome per call_id wins; later ones
+            // are skipped via the pending_actions guard.
+            Some(outcome) = outcome_rx.recv() => {
+                if !pending_actions.remove(&outcome.call_id) {
+                    // Already resolved (e.g., action_result arrived right
+                    // after timeout fired). No-op.
+                    continue;
+                }
+
+                // Inject image attachments as `realtimeInput.video` BEFORE
+                // the toolResponse so Sophie "sees" the image in the live
+                // conversation. Non-image attachments are currently ignored
+                // (Gemini Live doesn't have a streaming document channel).
+                for att in &outcome.attachments {
+                    if att.mime_type.starts_with("image/") {
+                        let frame = serde_json::json!({
+                            "realtimeInput": {
+                                "video": {
+                                    "mimeType": &att.mime_type,
+                                    "data": &att.data_base64
                                 }
                             }
-                            "tirar_print" => {
-                                let _ = browser_tx
-                                    .send(Message::Text(
-                                        serde_json::json!({"type": "screenshot_request"})
-                                            .to_string()
-                                            .into(),
-                                    ))
-                                    .await;
-                                serde_json::json!({
-                                    "output": "Screenshot solicitado. Aguardando imagem do cliente para análise."
-                                })
-                            }
-                            other => {
-                                tracing::warn!("Baisync voice: unknown tool called: {other}");
-                                serde_json::json!({ "output": "Ferramenta não reconhecida." })
-                            }
-                        };
-
-                        function_responses.push(serde_json::json!({
-                            "id": call_id,
-                            "name": tool_name,
-                            "response": output
-                        }));
-                    }
-
-                    if !function_responses.is_empty() {
-                        let tool_response = serde_json::json!({
-                            "toolResponse": { "functionResponses": function_responses }
                         });
                         if google_tx
-                            .send(TMessage::Text(tool_response.to_string().into()))
+                            .send(TMessage::Text(frame.to_string().into()))
                             .await
                             .is_err()
                         {
                             break;
                         }
                     }
+                }
+
+                let output = outcome.error.unwrap_or_else(|| {
+                    outcome
+                        .text
+                        .unwrap_or_else(|| "Ação executada.".to_string())
+                });
+                let tool_response = serde_json::json!({
+                    "toolResponse": {
+                        "functionResponses": [{
+                            "id": &outcome.call_id,
+                            "name": "executar_acao",
+                            "response": { "output": output }
+                        }]
+                    }
+                });
+                tracing::info!(
+                    event = "gemini_live.tool_response",
+                    handler = "baisync_voice",
+                    call_id = %outcome.call_id,
+                    "sending toolResponse to Gemini Live"
+                );
+                if google_tx
+                    .send(TMessage::Text(tool_response.to_string().into()))
+                    .await
+                    .is_err()
+                {
+                    break;
                 }
             }
         }

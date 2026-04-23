@@ -170,33 +170,34 @@ type GoogleRx = futures::stream::SplitStream<
 
 fn build_voice_system_prompt(workspace_name: &str) -> String {
     format!(
-        r#"Você é a Sophie, especialista em análise SWOT, conduzindo uma entrevista por voz.
-O workspace atual se chama "{workspace_name}".
+        r#"Você é a Sophie, consultora de estratégia empresarial, conduzindo uma entrevista SWOT por voz.
+O workspace atual se chama "{workspace_name}". Aja como uma consultora humana experiente — curiosa, calorosa, atenta — não como uma interface técnica.
 
-## Regras de voz
-- RESPONDA SEMPRE EM PORTUGUÊS BRASILEIRO (pt-BR).
-- Respostas curtas, conversacionais, para fala. Máximo 2 frases por vez.
-- Não use markdown, listas, emojis, XML ou blocos de código.
-- Faça UMA pergunta por vez e aguarde a resposta antes de continuar.
-- NÃO mencione que é IA ou modelo de linguagem.
+## Tom e estilo
+- SEMPRE em português brasileiro (pt-BR).
+- Respostas curtas, naturais, para fala. Máximo 2 frases por vez.
+- Sem markdown, listas, emojis, XML, JSON ou blocos de código na fala. Nunca pronuncie IDs, UUIDs, nomes de ferramentas ou termos técnicos.
+- Uma pergunta por vez. Aguarde a resposta antes de prosseguir.
+- Nunca se refira como IA, modelo ou LLM. Fale como consultora de carne e osso.
 
-## Ferramentas disponíveis
-- `criar_pergunta(pergunta, opcoes)`: emite pergunta com opções na tela do usuário.
-  Use para perguntas de múltipla escolha. Após chamar a ferramenta, faça a mesma pergunta em voz também.
-- `criar_analise_swot(titulo, itens)`: gera e exibe a análise SWOT final.
-  Antes de chamar, avise verbalmente que está gerando a análise.
+## Ferramenta disponível
+- `criar_analise_swot(titulo, itens)`: gera a análise SWOT final na tela do usuário. Antes de chamar, avise por voz (ex: "Pronto, com base no que você me contou, vou montar sua SWOT agora"). Mínimo 12 itens totais, com pelo menos 3 por quadrante. Quadrantes válidos: `strengths`, `weaknesses`, `opportunities`, `threats`. Use essa ferramenta UMA única vez, ao final da entrevista.
 
-## Fluxo da entrevista
-1. Saudação + pedir confirmação para começar.
-2. Nome e setor da empresa → use `criar_pergunta` com opções de setor (Tecnologia, Saúde, Alimentação, Varejo, Serviços, Educação, Outro).
-3. Porte da empresa → use `criar_pergunta` com opções (MEI/Autônomo, Microempresa, Pequena, Média, Grande).
-4. Público-alvo principal → pergunta aberta (sem ferramenta).
-5. Explorar forças, fraquezas, oportunidades e ameaças (perguntas abertas, uma por vez).
-6. Após ~8 trocas, avisar que vai gerar o SWOT e chamar `criar_analise_swot` com ≥12 itens (≥3 por quadrante).
+As perguntas durante a conversa são todas por voz — você NÃO tem ferramenta para exibir pergunta na tela. Simplesmente pergunte falando.
 
-## Regras da análise
-- Itens devem ser frases completas e acionáveis.
-- Quadrantes válidos: strengths, weaknesses, opportunities, threats.
+## Fluxo da entrevista (tudo por voz, uma pergunta por vez)
+1. Saudação breve e calorosa. Confirme se o usuário está pronto para começar.
+2. Pergunte o nome da empresa.
+3. Pergunte em que setor ela atua (Tecnologia, Saúde, Alimentação, Varejo, Serviços, Educação, outro). Sugira os exemplos oralmente se ajudar.
+4. Pergunte o porte (MEI/autônomo, micro, pequena, média, grande).
+5. Pergunte quem é o público-alvo principal.
+6. Pergunte o diferencial frente à concorrência.
+7. Pergunte o maior desafio interno atual.
+8. Pergunte que oportunidade de crescimento ele enxerga.
+9. Pergunte o que mais preocupa no mercado ou ambiente externo.
+10. Depois de 7-9 trocas com respostas substanciais, resuma rapidamente o que entendeu, avise que vai gerar a análise e chame `criar_analise_swot`.
+
+Adapte as perguntas ao contexto — se o usuário já deu a informação em uma resposta anterior, não repita. Aprofunde quando a resposta for rasa ("Pode me dar um exemplo?"). Seja curiosa como uma consultora humana seria. Ao final, o SWOT deve refletir exatamente o que o usuário contou.
 "#,
         workspace_name = workspace_name
     )
@@ -235,49 +236,39 @@ async fn open_google_session(api_key: &str, workspace_name: &str) -> Result<(Goo
             },
             "inputAudioTranscription": {},
             "outputAudioTranscription": {},
+            // Schema types are lowercase OpenAPI/JSON-Schema form — the
+            // Gemini 3.1 Live validator silently drops UPPERCASE (`"OBJECT"`,
+            // `"STRING"`, `"ARRAY"`) declarations, which made the model
+            // never call these tools despite the setup returning
+            // `setupComplete` successfully. `toolConfig.functionCallingConfig.mode`
+            // defaults to AUTO but we set it explicitly to insulate against
+            // future validator changes.
+            // Voice mode asks questions verbally; only the final SWOT
+            // generation needs a UI-rendering tool.
             "tools": [{
                 "functionDeclarations": [
-                    {
-                        "name": "criar_pergunta",
-                        "description": "Emite pergunta estruturada com opções na tela do usuário. Use para perguntas de múltipla escolha. Após chamar, repita a pergunta em voz.",
-                        "parameters": {
-                            "type": "OBJECT",
-                            "properties": {
-                                "pergunta": {
-                                    "type": "STRING",
-                                    "description": "Texto completo da pergunta"
-                                },
-                                "opcoes": {
-                                    "type": "ARRAY",
-                                    "description": "Opções de resposta. Omita para perguntas abertas.",
-                                    "items": { "type": "STRING" }
-                                }
-                            },
-                            "required": ["pergunta"]
-                        }
-                    },
                     {
                         "name": "criar_analise_swot",
                         "description": "Gera a análise SWOT final. Chame somente após coletar informações suficientes (~8 trocas). Mínimo 12 itens, 3 por quadrante.",
                         "parameters": {
-                            "type": "OBJECT",
+                            "type": "object",
                             "properties": {
                                 "titulo": {
-                                    "type": "STRING",
+                                    "type": "string",
                                     "description": "Título, ex: 'SWOT - Nome da Empresa'"
                                 },
                                 "itens": {
-                                    "type": "ARRAY",
+                                    "type": "array",
                                     "description": "Itens SWOT, mínimo 3 por quadrante.",
                                     "items": {
-                                        "type": "OBJECT",
+                                        "type": "object",
                                         "properties": {
                                             "quadrante": {
-                                                "type": "STRING",
+                                                "type": "string",
                                                 "enum": ["strengths", "weaknesses", "opportunities", "threats"]
                                             },
                                             "conteudo": {
-                                                "type": "STRING",
+                                                "type": "string",
                                                 "description": "Frase completa e acionável"
                                             }
                                         },
@@ -290,6 +281,9 @@ async fn open_google_session(api_key: &str, workspace_name: &str) -> Result<(Goo
                     }
                 ]
             }]
+            // NOTE: `toolConfig` is a REST-API-only field. The Live API
+            // setup message rejects it with "Unknown name 'toolConfig'";
+            // AUTO is the default when `functionDeclarations` is present.
         }
     });
 
@@ -655,14 +649,6 @@ async fn run_bridge(
                         tracing::info!("SWOT live: tool call — name={tool_name} id={call_id}");
 
                         match tool_name.as_str() {
-                            "criar_pergunta" => {
-                                let _ = browser_tx.send(Message::Text(
-                                    serde_json::json!({
-                                        "type": "questions",
-                                        "payload": args
-                                    }).to_string().into()
-                                )).await;
-                            }
                             "criar_analise_swot" => {
                                 let _ = browser_tx.send(Message::Text(
                                     serde_json::json!({

@@ -7,6 +7,7 @@ import { useAuthStore } from '@/store/useAuthStore'
 import { useWorkspaceStore } from '@/store/useWorkspaceStore'
 import { NotificationBell } from '@/components/notifications/NotificationBell'
 import { WorkspaceModal } from '@/components/workspace/workspace-modal'
+import { HelpModal } from '@/components/help/help-modal'
 import { Users } from 'lucide-react'
 import { UserAvatar } from '@/components/user-avatar'
 
@@ -15,6 +16,7 @@ export function Header({ onMenuClick }: { onMenuClick: () => void }) {
   useWorkspaceStore()
   const router = useRouter()
   const [wsModalOpen, setWsModalOpen] = useState(false)
+  const [helpOpen, setHelpOpen] = useState(false)
 
   return (
     <>
@@ -84,6 +86,7 @@ export function Header({ onMenuClick }: { onMenuClick: () => void }) {
             <Dropdown.Popover>
               <Dropdown.Menu aria-label="Profile Actions" onAction={(key) => {
                 if (key === 'settings') router.push('/dashboard/settings')
+                if (key === 'help_and_feedback') setHelpOpen(true)
                 if (key === 'logout') logout()
               }}>
                 <Dropdown.Item id="profile" className="h-14 gap-2">
@@ -102,6 +105,7 @@ export function Header({ onMenuClick }: { onMenuClick: () => void }) {
       </header>
 
       <WorkspaceModal isOpen={wsModalOpen} onClose={() => setWsModalOpen(false)} />
+      <HelpModal isOpen={helpOpen} onOpenChange={setHelpOpen} />
     </>
   )
 }

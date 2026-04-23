@@ -37,7 +37,9 @@ export default function SwotPage() {
         await createItem(analysis.id, { quadrant: item.quadrant, content: item.content })
       }
       await getAnalysis(wsId, analysis.id)
-      setInterviewActive(false)
+      // Don't close the interview here — the SwotInterview component itself
+      // will auto-close on the next `turn_complete`, so Sophie's final
+      // sentence isn't cut off mid-speech.
     } catch (err) {
       console.error('Error creating SWOT from interview:', err)
     }

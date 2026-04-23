@@ -180,7 +180,7 @@ IMPORTANTE: A integração com a API Oficial da Meta (WhatsApp Cloud API) e o Te
 - refresh_mcp_tools: data: {{server_id}} (força atualização do cache de tools do servidor MCP)
 
 ### Captura de Tela
-- tirar_print: data: {} (captura um screenshot da tela atual do usuário)
+- tirar_print: data: {{}} (captura um screenshot da tela atual do usuário)
   - Use quando o usuário mencionar confusão com a interface, pedir ajuda visual, ou quando ver a tela ajudaria a diagnosticar um problema
   - Após receber a imagem, descreva o que está vendo e oriente o usuário com instruções contextuais
   - Não peça confirmação; execute diretamente quando fizer sentido
