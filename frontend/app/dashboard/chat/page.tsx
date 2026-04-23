@@ -13,8 +13,27 @@ import { ChannelCanvas } from '@/components/channels/channel-canvas'
 import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { UserAvatar } from '@/components/user-avatar'
+import {
+  MentionAutocomplete,
+  detectMentionTrigger,
+  type MentionCandidate,
+} from '@/components/channels/mention-autocomplete'
 
 const mono = "'JetBrains Mono', 'Fira Code', monospace"
+
+const MENTION_TOKEN_RE =
+  /<@([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|todos)>/g
+
+/** Convert raw message content (with `<@uuid>` / `<@todos>` tokens) into
+ * markdown where each token becomes a `[@name](mention:raw)` link. The chat
+ * renderer overrides the `a` component to paint these as chips. */
+function contentToMarkdown(content: string, nameById: Map<string, string>): string {
+  return content.replace(MENTION_TOKEN_RE, (_m, raw: string) => {
+    if (raw.toLowerCase() === 'todos') return `[@todos](mention:todos)`
+    const name = nameById.get(raw) ?? 'usuário'
+    return `[@${name}](mention:${raw})`
+  })
+}
 
 // ─── SSE listener ───
 function useChatSSE() {
@@ -1132,21 +1151,47 @@ function ChannelTabs({
 function MessageArea() {
   const {
     activeChannel, messages, nextCursor, isLoading,
-    sendMessage, fetchMessages, notes,
+    sendMessage, fetchMessages, notes, members, fetchMembers,
   } = useChannelStore()
   const { user } = useAuthStore()
   const [input, setInput] = useState('')
   const [activeTab, setActiveTab] = useState('messages')
   const [showSettings, setShowSettings] = useState(false)
+  const [mentionTrigger, setMentionTrigger] = useState<{ start: number; query: string } | null>(null)
+  // Confirmed mentions in the composer: range `[start, end)` holds the literal
+  // `@Label` visible to the user, which we convert to `<@uuid>` on send.
+  type PendingMention = { start: number; end: number; uuid: string; label: string }
+  const [pending, setPending] = useState<PendingMention[]>([])
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
   const isLoadingOlderRef = useRef(false)
 
   // Reset tab when switching channels
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setActiveTab('messages')
+    setMentionTrigger(null)
+    setPending([])
+    setInput('')
   }, [activeChannel?.id])
+
+  // Ensure members are loaded for the active channel so @-autocomplete has data.
+  useEffect(() => {
+    if (activeChannel?.id) {
+      fetchMembers(activeChannel.id).catch(() => {})
+    }
+  }, [activeChannel?.id, fetchMembers])
+
+  // Lookup: uuid -> display name, for rendering inbound messages.
+  const memberNameById = useMemo(() => {
+    const m = new Map<string, string>()
+    for (const mem of members) {
+      if (mem.user_name) m.set(mem.user_id, mem.user_name)
+      else if (mem.user_email) m.set(mem.user_id, mem.user_email)
+    }
+    return m
+  }, [members])
 
   // Auto-scroll to bottom only for new messages, not pagination
   useEffect(() => {
@@ -1159,16 +1204,113 @@ function MessageArea() {
 
   const { showError } = useErrorStore()
 
+  // Convert the visible composer text (with literal `@Label` chips) into the
+  // stored token format (`<@uuid>`) using the current pending mention ranges.
+  const buildOutgoingContent = (): string => {
+    const sorted = [...pending].sort((a, b) => b.start - a.start)
+    let out = input
+    for (const m of sorted) {
+      if (out.slice(m.start, m.end) === `@${m.label}`) {
+        const token = m.uuid === 'todos' ? '<@todos>' : `<@${m.uuid}>`
+        out = out.slice(0, m.start) + token + out.slice(m.end)
+      }
+    }
+    return out
+  }
+
   const handleSend = async () => {
     if (!input.trim() || !activeChannel) return
-    const msg = input.trim()
+    const msg = buildOutgoingContent().trim()
+    const restore = input
+    const restorePending = pending
     setInput('')
+    setPending([])
+    setMentionTrigger(null)
     try {
       await sendMessage(activeChannel.id, msg)
     } catch (err) {
-      setInput(msg)
+      setInput(restore)
+      setPending(restorePending)
       showError(err instanceof Error ? err.message : 'Erro ao enviar mensagem')
     }
+  }
+
+  const syncMentionTrigger = (value: string, caret: number) => {
+    setMentionTrigger(detectMentionTrigger(value, caret))
+  }
+
+  // Apply a text edit (any onChange) and shift/drop pending mentions accordingly.
+  const applyInputChange = (nextValue: string, caret: number) => {
+    const oldValue = input
+    if (nextValue === oldValue) {
+      syncMentionTrigger(nextValue, caret)
+      return
+    }
+    // Find common prefix/suffix to locate the edit window.
+    const maxPre = Math.min(oldValue.length, nextValue.length)
+    let p = 0
+    while (p < maxPre && oldValue[p] === nextValue[p]) p++
+    const remaining = Math.min(oldValue.length - p, nextValue.length - p)
+    let s = 0
+    while (s < remaining && oldValue[oldValue.length - 1 - s] === nextValue[nextValue.length - 1 - s]) s++
+    const editStart = p
+    const editEndOld = oldValue.length - s
+    const editEndNew = nextValue.length - s
+    const delta = editEndNew - editEndOld
+
+    const next: PendingMention[] = []
+    for (const m of pending) {
+      if (m.end <= editStart) {
+        next.push(m)
+      } else if (m.start >= editEndOld) {
+        next.push({ ...m, start: m.start + delta, end: m.end + delta })
+      }
+      // Overlapping mentions are discarded — user edited the chip itself.
+    }
+    const valid = next.filter((m) => nextValue.slice(m.start, m.end) === `@${m.label}`)
+
+    setInput(nextValue)
+    setPending(valid)
+    syncMentionTrigger(nextValue, caret)
+  }
+
+  const handleMentionSelect = (c: MentionCandidate) => {
+    const ta = textareaRef.current
+    if (!ta || !mentionTrigger) return
+    const label = c.kind === 'everyone' ? 'todos' : c.label
+    const uuid = c.kind === 'everyone' ? 'todos' : c.value
+    const visible = `@${label}`
+    const caret = ta.selectionStart ?? input.length
+    const before = input.slice(0, mentionTrigger.start)
+    const after = input.slice(caret)
+    const nextValue = `${before}${visible} ${after}`
+    const mentionStart = before.length
+    const mentionEnd = mentionStart + visible.length
+
+    // The replacement spans [mentionTrigger.start, caret) in the old value and
+    // becomes `${visible} ` in the new value. Shift any pending mention that
+    // lived AFTER the trigger; drop ones that overlapped it.
+    const replacedEndOld = caret
+    const replacedEndNew = mentionStart + visible.length + 1 // +1 trailing space
+    const shiftDelta = replacedEndNew - replacedEndOld
+    const keptBefore = pending.filter((m) => m.end <= mentionTrigger.start)
+    const shiftedAfter = pending
+      .filter((m) => m.start >= replacedEndOld)
+      .map((m) => ({ ...m, start: m.start + shiftDelta, end: m.end + shiftDelta }))
+    const newPending: PendingMention[] = [
+      ...keptBefore,
+      { start: mentionStart, end: mentionEnd, uuid, label },
+      ...shiftedAfter,
+    ]
+    const nextCaret = mentionEnd + 1
+
+    setInput(nextValue)
+    setPending(newPending)
+    setMentionTrigger(null)
+    requestAnimationFrame(() => {
+      ta.focus()
+      ta.setSelectionRange(nextCaret, nextCaret)
+    })
   }
 
   const handleScroll = async () => {
@@ -1287,6 +1429,7 @@ function MessageArea() {
             {displayMessages.map(msg => {
               const isOwn = msg.sender_id === user?.id
               const isSystem = msg.message_type === 'system'
+              const mentionsMe = !!(user?.id && msg.mentioned_user_ids?.includes(user.id))
 
               if (isSystem) {
                 return (
@@ -1302,9 +1445,16 @@ function MessageArea() {
                 <div
                   key={msg.id}
                   className={`flex gap-3 group -mx-2 px-2 py-1 rounded-lg transition-colors ${isOwn ? 'justify-end' : ''}`}
-                  style={{ background: 'transparent' }}
-                  onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.02)'}
-                  onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                  style={{
+                    background: mentionsMe ? 'rgba(255,107,44,0.06)' : 'transparent',
+                    borderLeft: mentionsMe ? '2px solid #ff6b2c' : '2px solid transparent',
+                  }}
+                  onMouseEnter={e => {
+                    if (!mentionsMe) e.currentTarget.style.background = 'rgba(255,255,255,0.02)'
+                  }}
+                  onMouseLeave={e => {
+                    if (!mentionsMe) e.currentTarget.style.background = 'transparent'
+                  }}
                 >
                   {!isOwn && (
                     <div className="mt-0.5">
@@ -1336,7 +1486,34 @@ function MessageArea() {
                         prose-hr:border-[rgba(255,255,255,0.06)]"
                       style={{ fontFamily: mono }}
                     >
-                      <Markdown remarkPlugins={[remarkGfm]}>{msg.content}</Markdown>
+                      <Markdown
+                        remarkPlugins={[remarkGfm]}
+                        components={{
+                          a: ({ href, children, ...rest }) => {
+                            if (typeof href === 'string' && href.startsWith('mention:')) {
+                              const raw = href.slice('mention:'.length)
+                              const self =
+                                raw.toLowerCase() === 'todos' || (!!user?.id && raw === user.id)
+                              return (
+                                <span
+                                  className="inline-flex items-center rounded-[6px] px-1.5 py-0.5 text-[12px] font-medium"
+                                  style={{
+                                    fontFamily: mono,
+                                    background: self ? 'rgba(255,107,44,0.18)' : 'rgba(255,107,44,0.10)',
+                                    color: '#ff6b2c',
+                                    border: '1px solid rgba(255,107,44,0.25)',
+                                  }}
+                                >
+                                  {children}
+                                </span>
+                              )
+                            }
+                            return <a href={href} {...rest}>{children}</a>
+                          },
+                        }}
+                      >
+                        {contentToMarkdown(msg.content, memberNameById)}
+                      </Markdown>
                     </div>
                     {isOwn && (
                       <div className="flex items-center gap-1.5 justify-end mt-0.5">
@@ -1354,7 +1531,18 @@ function MessageArea() {
           </div>
 
           {/* Input */}
-          <div className="px-5 py-3" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+          <div className="px-5 py-3 relative" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+            {mentionTrigger && activeChannel.type !== 'dm' && (
+              <div className="absolute left-5 right-5 bottom-[calc(100%-0.75rem)]" style={{ pointerEvents: 'auto' }}>
+                <MentionAutocomplete
+                  members={members}
+                  selfId={user?.id ?? null}
+                  query={mentionTrigger.query}
+                  onSelect={handleMentionSelect}
+                  onClose={() => setMentionTrigger(null)}
+                />
+              </div>
+            )}
             <div
               className="flex items-end gap-2 rounded-xl transition-all"
               style={{ background: '#222222', border: '1px solid rgba(255,255,255,0.06)' }}
@@ -1370,9 +1558,31 @@ function MessageArea() {
               }}
             >
               <textarea
+                ref={textareaRef}
                 value={input}
-                onChange={e => setInput(e.target.value)}
+                onChange={e => {
+                  const v = e.target.value
+                  applyInputChange(v, e.target.selectionStart ?? v.length)
+                }}
+                onKeyUp={e => {
+                  const ta = e.currentTarget
+                  syncMentionTrigger(ta.value, ta.selectionStart ?? ta.value.length)
+                }}
+                onClick={e => {
+                  const ta = e.currentTarget
+                  syncMentionTrigger(ta.value, ta.selectionStart ?? ta.value.length)
+                }}
+                onBlur={() => {
+                  // Close the popover on blur so clicks outside dismiss it.
+                  // Item selection uses onMouseDown (preventDefault) so it fires
+                  // before this blur handler, which is intentional.
+                  setTimeout(() => setMentionTrigger(null), 120)
+                }}
                 onKeyDown={e => {
+                  if (mentionTrigger && ['ArrowUp', 'ArrowDown', 'Enter', 'Tab', 'Escape'].includes(e.key)) {
+                    // Let the autocomplete's own keydown handler own these.
+                    return
+                  }
                   if (e.key === 'Enter' && !e.shiftKey) {
                     e.preventDefault()
                     handleSend()

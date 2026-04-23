@@ -23,6 +23,7 @@ export interface ChannelMessage {
   message_type: 'text' | 'system'
   edited_at: string | null
   created_at: string
+  mentioned_user_ids?: string[] | null
 }
 
 export interface ChannelMember {

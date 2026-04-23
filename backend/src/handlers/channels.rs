@@ -2,6 +2,7 @@ use axum::extract::{Extension, Path, Query};
 use axum::Json;
 use serde::Deserialize;
 
+use crate::config::Config;
 use crate::db::DbSession;
 use crate::errors::AppError;
 use crate::middleware::auth::AuthUser;
@@ -11,7 +12,8 @@ use crate::models::channel::{
     UpdateNoteRequest,
 };
 use crate::services::channel as ch_service;
-use crate::services::events::{publish_global, SseEvent};
+use crate::services::events::{self, publish_global, SseEvent};
+use crate::services::mentions;
 use crate::services::workspace as ws_service;
 
 /// Publish an SSE event to all channel members except the actor.
@@ -296,6 +298,7 @@ pub async fn list_messages(
 pub async fn send_message(
     Extension(db): Extension<DbSession>,
     Extension(auth_user): Extension<AuthUser>,
+    Extension(config): Extension<Config>,
     Path(channel_id): Path<uuid::Uuid>,
     Json(body): Json<SendMessageRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
@@ -306,6 +309,13 @@ pub async fn send_message(
     // Get sender name
     let user = crate::services::auth::get_user_by_id(&db, &auth_user.user_id).await?;
 
+    // Resolve mentions BEFORE persisting — we need the channel member list to
+    // expand `@todos` and validate user UUIDs are members.
+    let members = ch_service::list_members(&db, &channel_id).await?;
+    let tokens = mentions::parse(&body.content);
+    let recipients =
+        mentions::resolve_recipients(&tokens, &members, &auth_user.user_id);
+
     let message = ch_service::send_message(
         &db,
         &channel_id,
@@ -313,6 +323,7 @@ pub async fn send_message(
         &user.name,
         &body.content,
         "text",
+        Some(&recipients),
     )
     .await?;
 
@@ -326,6 +337,63 @@ pub async fn send_message(
         &event_data,
     )
     .await;
+
+    // Fire mention notifications + (conditional) emails. Failures are logged
+    // but don't break the send response.
+    if !recipients.is_empty() {
+        // Channel name for notification title / email subject.
+        let channel = ch_service::get_channel(&db, &auth_user.workspace_id, &channel_id)
+            .await
+            .ok();
+        let channel_name = channel
+            .as_ref()
+            .map(|c| c.name.clone())
+            .unwrap_or_else(|| "canal".to_string());
+
+        // Pre-build a lookup (uuid_str -> display name) for email rendering.
+        let member_names: std::collections::HashMap<String, String> = members
+            .iter()
+            .filter_map(|m| {
+                m.user_name
+                    .as_ref()
+                    .map(|n| (m.user_id.to_string(), n.clone()))
+            })
+            .collect();
+
+        let rendered = mentions::render_for_display(&body.content, &member_names);
+        let preview: String = rendered.chars().take(200).collect();
+        let title = format!("{} mencionou você em #{}", user.name, channel_name);
+
+        for recipient_id in &recipients {
+            let _ = crate::services::notification::create_notification(
+                &db,
+                recipient_id,
+                None,
+                None,
+                "channel_mention",
+                &title,
+                &preview,
+            )
+            .await;
+
+            if !events::is_online(recipient_id).await {
+                if let Ok(recipient) =
+                    crate::services::auth::get_user_by_id(&db, recipient_id).await
+                {
+                    let _ = crate::services::email::send_mention_email(
+                        &config,
+                        &recipient.email,
+                        &user.name,
+                        &channel_name,
+                        &channel_id,
+                        &body.content,
+                        &member_names,
+                    )
+                    .await;
+                }
+            }
+        }
+    }
 
     Ok(Json(serde_json::json!({ "message": message })))
 }

@@ -20,6 +20,16 @@ pub async fn publish_global(user_id: &Uuid, event: SseEvent) {
     }
 }
 
+/// Check if a user has at least one active SSE subscriber on the global bus.
+/// Returns `false` if the bus is not initialized.
+pub async fn is_online(user_id: &Uuid) -> bool {
+    if let Some(bus) = GLOBAL_BUS.get() {
+        bus.is_online(user_id).await
+    } else {
+        false
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct SseEvent {
     pub event_type: String,
@@ -57,6 +67,15 @@ impl EventBus {
             // Ignore send errors (no receivers connected)
             let _ = sender.send(event);
         }
+    }
+
+    /// Returns true if the user has at least one live receiver subscribed.
+    pub async fn is_online(&self, user_id: &Uuid) -> bool {
+        let channels = self.channels.read().await;
+        channels
+            .get(user_id)
+            .map(|s| s.receiver_count() > 0)
+            .unwrap_or(false)
     }
 
     /// Cleanup channels with no active receivers (call periodically or on disconnect).

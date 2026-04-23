@@ -279,6 +279,43 @@ pub async fn send_human_agent_email(
     send_email(config, to, &subject, &body).await
 }
 
+fn html_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+}
+
+pub async fn send_mention_email(
+    config: &Config,
+    to: &str,
+    mentioner_name: &str,
+    channel_name: &str,
+    channel_id: &uuid::Uuid,
+    raw_content: &str,
+    member_name_lookup: &std::collections::HashMap<String, String>,
+) -> Result<(), AppError> {
+    let logo_url = get_logo_url(config);
+    let subject = format!(
+        "{mentioner_name} mencionou você em #{channel_name} | Baisync"
+    );
+    let channel_url = format!("{}/dashboard/chat?channel={channel_id}", config.app_url);
+
+    let rendered = crate::services::mentions::render_for_display(raw_content, member_name_lookup);
+    let preview_source: String = rendered.chars().take(400).collect();
+    let preview_html = html_escape(&preview_source).replace('\n', "<br>");
+
+    let content = format!(
+        r#"<p style="margin:0 0 8px 0;color:#f0f0f0;font-size:18px;font-weight:700;">Você foi mencionado em #{channel_name}</p>
+<p style="margin:0 0 16px 0;color:rgba(255,255,255,0.5);font-size:14px;line-height:1.6;"><strong style="color:#D4835A;">{mentioner_name}</strong> te marcou numa mensagem.</p>
+<div style="background:#1A1A1A;border:1px solid rgba(255,255,255,0.06);border-radius:10px;padding:14px 18px;color:#f0f0f0;font-size:14px;line-height:1.55;margin:0 0 4px 0;">{preview_html}</div>
+{button}"#,
+        button = styled_button(&channel_url, "Abrir canal"),
+    );
+    let body = wrap_email_html("Você foi mencionado", &content, &logo_url);
+    send_email(config, to, &subject, &body).await
+}
+
 pub async fn send_pix_payment_confirmed_email(
     config: &Config,
     to: &str,

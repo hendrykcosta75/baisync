@@ -16,6 +16,7 @@ pub mod livekit;
 pub mod llm;
 pub mod mcp;
 pub mod meeting;
+pub mod mentions;
 pub mod messaging;
 pub mod messaging_recovery;
 pub mod metrics;

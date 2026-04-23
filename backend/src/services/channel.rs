@@ -360,15 +360,21 @@ pub async fn send_message(
     sender_name: &str,
     content: &str,
     message_type: &str,
+    mentioned_user_ids: Option<&[Uuid]>,
 ) -> Result<ChannelMessage, AppError> {
     let now = ts_now();
     let ts = uuid::timestamp::Timestamp::now(uuid::NoContext);
     let id = Uuid::new_v1(ts, &[0x01, 0x23, 0x45, 0x67, 0x89, 0xab]);
     let timeuuid = CqlTimeuuid::from(id);
 
+    // Cassandra stores empty lists as NULL; pass Option<&[Uuid]> straight through.
+    let mentions_param: Option<Vec<Uuid>> = mentioned_user_ids
+        .filter(|v| !v.is_empty())
+        .map(|v| v.to_vec());
+
     db.query_unpaged(
-        "INSERT INTO inertial_eclipse.channel_messages (channel_id, id, sender_id, sender_name, content, message_type, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (&channel_id, &timeuuid, sender_id, sender_name, content, message_type, now),
+        "INSERT INTO inertial_eclipse.channel_messages (channel_id, id, sender_id, sender_name, content, message_type, created_at, mentioned_user_ids) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (&channel_id, &timeuuid, sender_id, sender_name, content, message_type, now, &mentions_param),
     )
     .await
     .map_err(|e: scylla::transport::errors::QueryError| AppError::DatabaseError(e.to_string()))?;
@@ -415,6 +421,7 @@ pub async fn send_message(
         message_type: message_type.to_string(),
         edited_at: None,
         created_at: Utc::now(),
+        mentioned_user_ids: mentions_param,
     })
 }
 
@@ -426,7 +433,7 @@ pub async fn list_messages(
 ) -> Result<(Vec<ChannelMessage>, Option<String>), AppError> {
     let (result, next_cursor) = crate::db::query_paged(
         db,
-        "SELECT channel_id, id, sender_id, sender_name, content, message_type, edited_at, created_at FROM inertial_eclipse.channel_messages WHERE channel_id = ?",
+        "SELECT channel_id, id, sender_id, sender_name, content, message_type, edited_at, created_at, mentioned_user_ids FROM inertial_eclipse.channel_messages WHERE channel_id = ?",
         (channel_id,),
         page_size,
         cursor,
@@ -447,6 +454,7 @@ pub async fn list_messages(
             String,
             Option<DateTime<Utc>>,
             DateTime<Utc>,
+            Option<Vec<Uuid>>,
         )>()?
         .flatten()
     {
@@ -459,6 +467,7 @@ pub async fn list_messages(
             message_type: row.5,
             edited_at: row.6,
             created_at: row.7,
+            mentioned_user_ids: row.8,
         });
     }
 
