@@ -799,6 +799,7 @@ mod tests {
             smtp_port: 25,
             smtp_user: "x".into(),
             smtp_pass: "x".into(),
+            smtp_from_name: String::new(),
             encryption_key: "x".into(),
             baileys_url: "x".into(),
             baileys_api_key: "x".into(),
