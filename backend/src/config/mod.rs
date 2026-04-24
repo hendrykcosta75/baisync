@@ -8,6 +8,7 @@ pub struct Config {
     pub smtp_port: u16,
     pub smtp_user: String,
     pub smtp_pass: String,
+    pub smtp_from_name: String,
     /// DEPRECATED: legacy single-key path. `main.rs` now loads keys via
     /// `EncryptionService::from_env`, which reads `ENCRYPTION_KEY_V*` and
     /// falls back to `ENCRYPTION_KEY`. This field remains so the env-vars
@@ -125,6 +126,7 @@ impl Config {
                 .expect("SMTP_PORT must be a number"),
             smtp_user: env::var("SMTP_USER").unwrap_or_default(),
             smtp_pass: env::var("SMTP_PASS").unwrap_or_default(),
+            smtp_from_name: env::var("SMTP_FROM_NAME").unwrap_or_else(|_| "Baisync".into()),
             encryption_key: env::var("ENCRYPTION_KEY").expect("ENCRYPTION_KEY must be set"),
             baileys_url: env::var("BAILEYS_URL").unwrap_or_else(|_| "http://baileys:3025".into()),
             baileys_api_key: env::var("BAILEYS_API_KEY").unwrap_or_default(),

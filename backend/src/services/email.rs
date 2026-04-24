@@ -104,10 +104,14 @@ pub async fn send_email(
     subject: &str,
     body: &str,
 ) -> Result<(), AppError> {
+    let from_header = if config.smtp_from_name.is_empty() {
+        config.smtp_user.clone()
+    } else {
+        format!("{} <{}>", config.smtp_from_name, config.smtp_user)
+    };
     let email = Message::builder()
         .from(
-            config
-                .smtp_user
+            from_header
                 .parse()
                 .map_err(|e| AppError::InternalError(format!("Invalid from address: {e}")))?,
         )
