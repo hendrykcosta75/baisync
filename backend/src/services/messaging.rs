@@ -1945,28 +1945,21 @@ pub async fn process_incoming_message(
 
 /// Find ANY integration by phone (regardless of status). Used for uniqueness checks.
 ///
-/// TODO S0: `config_phone_number` is now encrypted on write. After the backfill
-/// (`bin/encrypt_legacy.rs`) runs, every stored value is ciphertext with a
-/// random AES-GCM nonce, so the `WHERE config_phone_number = ?` equality lookup
-/// below will NEVER match a newly-written row. Legacy plaintext rows continue
-/// to be matchable by the incoming plaintext `phone` until they're re-written.
-///
-/// The permanent fix requires either:
-///   1. A deterministic HMAC-derived lookup column (e.g. `config_phone_fp`),
-///      or
-///   2. Moving uniqueness enforcement to a separate index table keyed by hash.
-/// Both are out of scope for S0. For now this function degrades gracefully: it
-/// returns NotFound on encrypted rows, which makes the "phone already in use"
-/// check a soft guard. Callers MUST treat a NotFound here as "no conflict".
+/// Looks up by the indexed `config_phone_fp` column (HMAC-SHA256 of normalized
+/// plaintext phone, see `services::lookup_fp`). Plaintext is never compared
+/// against ciphertext.
 pub async fn find_any_integration_by_phone(
     db: &DbSession,
     encryption: &EncryptionService,
     phone: &str,
 ) -> Result<AssistantIntegration, AppError> {
+    let fp = crate::services::lookup_fp::phone_fp(encryption, phone)
+        .ok_or_else(|| AppError::NotFound("No integration found for this phone number".into()))?;
+
     let result = db
         .query_unpaged(
-            "SELECT assistant_id, user_id, id, channel, provider, status, config_token, config_phone_number, config_chatwoot_url, config_rate_limit_per_day, config_max_message_length, config_audio_response_mode, config_interpret_documents, config_split_messages, config_webhook_verify_token, created_at FROM inertial_eclipse.assistant_integrations WHERE config_phone_number = ? ALLOW FILTERING",
-            (phone,),
+            "SELECT assistant_id, user_id, id, channel, provider, status, config_token, config_phone_number, config_chatwoot_url, config_rate_limit_per_day, config_max_message_length, config_audio_response_mode, config_interpret_documents, config_split_messages, config_webhook_verify_token, created_at FROM inertial_eclipse.assistant_integrations WHERE config_phone_fp = ?",
+            (&fp,),
         )
         .await
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
@@ -1981,22 +1974,21 @@ pub async fn find_any_integration_by_phone(
 
 /// Find active (non-disconnected) integration by phone. Used for message routing.
 ///
-/// TODO S0: same caveat as `find_any_integration_by_phone` — the `WHERE
-/// config_phone_number = ?` equality lookup will only match LEGACY plaintext
-/// rows once the backfill migration has run. New rows are encrypted with a
-/// random AES-GCM nonce and are therefore unreachable via this query. Webhook
-/// routing will break for any assistant whose integration was re-saved after
-/// the encryption code went live. Needs a fingerprint column; see the header
-/// comment on `find_any_integration_by_phone` for the permanent fix.
+/// Looks up by the indexed `config_phone_fp` column. Returns NotFound when
+/// there is no fingerprint match, when every match is `disconnected`, or when
+/// every match's parent assistant has been deleted (orphans are cleaned up).
 pub async fn find_integration_by_phone(
     db: &DbSession,
     encryption: &EncryptionService,
     phone: &str,
 ) -> Result<AssistantIntegration, AppError> {
+    let fp = crate::services::lookup_fp::phone_fp(encryption, phone)
+        .ok_or_else(|| AppError::NotFound("No integration found for this phone number".into()))?;
+
     let result = db
         .query_unpaged(
-            "SELECT assistant_id, user_id, id, channel, provider, status, config_token, config_phone_number, config_chatwoot_url, config_rate_limit_per_day, config_max_message_length, config_audio_response_mode, config_interpret_documents, config_split_messages, config_webhook_verify_token, created_at FROM inertial_eclipse.assistant_integrations WHERE config_phone_number = ? ALLOW FILTERING",
-            (phone,),
+            "SELECT assistant_id, user_id, id, channel, provider, status, config_token, config_phone_number, config_chatwoot_url, config_rate_limit_per_day, config_max_message_length, config_audio_response_mode, config_interpret_documents, config_split_messages, config_webhook_verify_token, created_at FROM inertial_eclipse.assistant_integrations WHERE config_phone_fp = ?",
+            (&fp,),
         )
         .await
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
@@ -2061,21 +2053,23 @@ pub async fn find_integration_by_phone(
     })
 }
 
-/// TODO S0: same caveat as `find_integration_by_phone` — the `WHERE
-/// config_token = ?` equality lookup only matches LEGACY plaintext rows once
-/// the backfill has run. Telegram webhook routing (which uses the bot token as
-/// the lookup key) will break for any integration re-saved after the
-/// encryption code went live. Needs a fingerprint column; see the header
-/// comment on `find_any_integration_by_phone` for the permanent fix.
+/// Find active integration by token (Telegram bot token, etc.).
+///
+/// Looks up by the indexed `config_token_fp` column. Same shape as
+/// `find_integration_by_phone`: returns NotFound on miss, otherwise an
+/// active row whose parent assistant still exists. Orphans are cleaned up.
 pub async fn find_integration_by_token(
     db: &DbSession,
     encryption: &EncryptionService,
     token: &str,
 ) -> Result<AssistantIntegration, AppError> {
+    let fp = crate::services::lookup_fp::token_fp(encryption, token)
+        .ok_or_else(|| AppError::NotFound("No integration found for this token".into()))?;
+
     let result = db
         .query_unpaged(
-            "SELECT assistant_id, user_id, id, channel, provider, status, config_token, config_phone_number, config_chatwoot_url, config_rate_limit_per_day, config_max_message_length, config_audio_response_mode, config_interpret_documents, config_split_messages, config_webhook_verify_token, created_at FROM inertial_eclipse.assistant_integrations WHERE config_token = ? ALLOW FILTERING",
-            (token,),
+            "SELECT assistant_id, user_id, id, channel, provider, status, config_token, config_phone_number, config_chatwoot_url, config_rate_limit_per_day, config_max_message_length, config_audio_response_mode, config_interpret_documents, config_split_messages, config_webhook_verify_token, created_at FROM inertial_eclipse.assistant_integrations WHERE config_token_fp = ?",
+            (&fp,),
         )
         .await
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;

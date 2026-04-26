@@ -905,6 +905,28 @@ pub async fn create_integration(
     .await
     .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
+    // Deterministic HMAC fingerprints written via follow-up UPDATE (kept
+    // separate to stay under the scylla driver's 16-column SerializeRow tuple
+    // limit). These power the indexed equality lookups in
+    // `find_integration_by_phone` / `find_integration_by_token` despite the
+    // plaintext columns being AES-GCM ciphertext.
+    let fp_phone = req
+        .config_phone_number
+        .as_deref()
+        .and_then(|p| crate::services::lookup_fp::phone_fp(encryption, p));
+    let fp_token = req
+        .config_token
+        .as_deref()
+        .and_then(|t| crate::services::lookup_fp::token_fp(encryption, t));
+    if fp_phone.is_some() || fp_token.is_some() {
+        db.query_unpaged(
+            "UPDATE inertial_eclipse.assistant_integrations SET config_phone_fp = ?, config_token_fp = ? WHERE assistant_id = ? AND user_id = ? AND id = ?",
+            (&fp_phone, &fp_token, assistant_id, user_id, &id),
+        )
+        .await
+        .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+    }
+
     // Returned object holds PLAINTEXT so the API response is unchanged for the
     // caller/client — encryption is a storage-layer concern only.
     Ok(AssistantIntegration {
@@ -1033,6 +1055,23 @@ pub async fn update_integration(
     db.query_unpaged(
         "UPDATE inertial_eclipse.assistant_integrations SET channel = ?, provider = ?, status = ?, config_token = ?, config_phone_number = ?, config_chatwoot_url = ?, config_rate_limit_per_day = ?, config_max_message_length = ?, config_audio_response_mode = ?, config_interpret_documents = ?, config_split_messages = ?, config_webhook_verify_token = ? WHERE assistant_id = ? AND user_id = ? AND id = ?",
         (&channel as &str, &provider as &str, &status as &str, &enc_config_token, &enc_config_phone_number, &enc_config_chatwoot_url, &config_rate_limit_per_day, &config_max_message_length, &config_audio_response_mode, &config_interpret_documents, &config_split_messages, &enc_config_webhook_verify_token, assistant_id, user_id, integration_id),
+    )
+    .await
+    .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+
+    // Recompute fingerprints whenever phone/token might have changed. We
+    // always rewrite both fp columns — even when the value is unchanged the
+    // fp is deterministic so the write is idempotent. Kept as a separate
+    // UPDATE to stay under the scylla driver's 16-column tuple limit.
+    let fp_phone = config_phone_number
+        .as_deref()
+        .and_then(|p| crate::services::lookup_fp::phone_fp(encryption, p));
+    let fp_token = config_token
+        .as_deref()
+        .and_then(|t| crate::services::lookup_fp::token_fp(encryption, t));
+    db.query_unpaged(
+        "UPDATE inertial_eclipse.assistant_integrations SET config_phone_fp = ?, config_token_fp = ? WHERE assistant_id = ? AND user_id = ? AND id = ?",
+        (&fp_phone, &fp_token, assistant_id, user_id, integration_id),
     )
     .await
     .map_err(|e| AppError::DatabaseError(e.to_string()))?;

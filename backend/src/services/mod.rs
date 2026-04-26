@@ -14,6 +14,7 @@ pub mod events;
 pub mod health_check;
 pub mod livekit;
 pub mod llm;
+pub mod lookup_fp;
 pub mod mcp;
 pub mod meeting;
 pub mod mentions;
