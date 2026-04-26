@@ -1,21 +1,16 @@
+# Version-bump PRs are intentionally disabled. CI/CD (.github/workflows/ci-cd.yml)
+# runs `cargo audit --deny warnings` and `yarn audit --level moderate` on every
+# push + PR, plus pre-push hooks (lefthook.yml). That is the gate — Dependabot
+# does not need to spam version-bump PRs alongside it.
+#
+# Security advisories are still surfaced via GitHub's repo-level Dependabot
+# alerts (Settings → Code security → Dependabot alerts), which run independent
+# of this file. They post to the Security tab; CI fails them on push/PR.
+#
+# `github-actions` updates stay on a slow cadence so workflow-action versions
+# (a smaller surface than app deps) don't drift indefinitely.
 version: 2
 updates:
-  - package-ecosystem: "npm"
-    directory: "/frontend"
-    schedule:
-      interval: "weekly"
-    open-pull-requests-limit: 5
-    labels:
-      - "dependencies"
-      - "frontend"
-  - package-ecosystem: "cargo"
-    directory: "/backend"
-    schedule:
-      interval: "weekly"
-    open-pull-requests-limit: 5
-    labels:
-      - "dependencies"
-      - "backend"
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
