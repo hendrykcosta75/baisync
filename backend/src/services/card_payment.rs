@@ -727,11 +727,11 @@ pub async fn notify_card_payment_confirmed(
     config: &crate::config::Config,
     charge: &CardCharge,
 ) {
-    let user_id = &charge.user_id;
+    let workspace_id = &charge.user_id;
     let assistant_id = &charge.assistant_id;
 
     let assistant_name =
-        match crate::services::assistant::get_assistant(db, user_id, assistant_id).await {
+        match crate::services::assistant::get_assistant(db, workspace_id, assistant_id).await {
             Ok(a) => a.name,
             Err(_) => "Assistente".to_string(),
         };
@@ -739,15 +739,15 @@ pub async fn notify_card_payment_confirmed(
     let customer_name = charge.customer_name.as_deref().unwrap_or("--");
     let customer_cpf = charge.customer_cpf.as_deref().unwrap_or("--");
 
-    // 1. In-app notification
+    // 1. In-app notification — fan out to every workspace member
     let title = format!("Pagamento por Cartao Confirmado - R$ {:.2}", charge.amount);
     let message = format!(
         "Cliente: {} ({})\nDescricao: {}\nAssistente: {}",
         customer_name, charge.contact_phone, charge.description, assistant_name
     );
-    if let Err(e) = crate::services::notification::create_notification(
+    if let Err(e) = crate::services::notification::notify_workspace_members(
         db,
-        user_id,
+        workspace_id,
         Some(assistant_id),
         None,
         "card_payment_confirmed",
@@ -756,24 +756,32 @@ pub async fn notify_card_payment_confirmed(
     )
     .await
     {
-        tracing::error!(error = %e, "Failed to create card payment notification");
+        tracing::error!(error = %e, "Failed to fan out card payment notification");
     }
 
-    // 2. Email to user
-    if let Ok(user) = crate::services::auth::get_user_by_id(db, user_id).await {
-        if let Err(e) = crate::services::email::send_pix_payment_confirmed_email(
-            config,
-            &user.email,
-            &assistant_name,
-            charge.amount,
-            &charge.description,
-            customer_name,
-            customer_cpf,
-            &charge.contact_phone,
-        )
+    // 2. Email to each member, gated by per-user email-notification preference
+    let members = crate::services::workspace::list_members(db, workspace_id)
         .await
-        {
-            tracing::error!(error = %e, "Failed to send card payment email");
+        .unwrap_or_default();
+    for member in members {
+        if let Ok(user) = crate::services::auth::get_user_by_id(db, &member.user_id).await {
+            if !user.notify_email || user.email.is_empty() {
+                continue;
+            }
+            if let Err(e) = crate::services::email::send_pix_payment_confirmed_email(
+                config,
+                &user.email,
+                &assistant_name,
+                charge.amount,
+                &charge.description,
+                customer_name,
+                customer_cpf,
+                &charge.contact_phone,
+            )
+            .await
+            {
+                tracing::error!(error = %e, recipient = %user.email, "Failed to send card payment email");
+            }
         }
     }
 
@@ -781,7 +789,7 @@ pub async fn notify_card_payment_confirmed(
     if let Some(conversation_id) = &charge.conversation_id {
         let conv_result = db.query_unpaged(
             "SELECT channel FROM inertial_eclipse.conversations WHERE assistant_id = ? AND user_id = ? AND id = ?",
-            (assistant_id, user_id, conversation_id),
+            (assistant_id, workspace_id, conversation_id),
         ).await;
 
         let channel = conv_result
@@ -793,7 +801,7 @@ pub async fn notify_card_payment_confirmed(
 
         if !channel.is_empty() {
             let integrations =
-                crate::services::assistant::list_integrations(db, encryption, assistant_id, user_id)
+                crate::services::assistant::list_integrations(db, encryption, assistant_id, workspace_id)
                     .await
                     .unwrap_or_default();
             if let Some(integration) = integrations.into_iter().find(|i| i.channel == channel) {

@@ -175,7 +175,7 @@ pub async fn register_user(
     let now = ts_now();
 
     db.query_unpaged(
-        "INSERT INTO inertial_eclipse.users (id, email, password_hash, name, two_factor_enabled, active_workspace_id, created_at, updated_at) VALUES (?, ?, ?, ?, false, ?, ?, ?)",
+        "INSERT INTO inertial_eclipse.users (id, email, password_hash, name, two_factor_enabled, active_workspace_id, notify_email, notify_system, created_at, updated_at) VALUES (?, ?, ?, ?, false, ?, true, true, ?, ?)",
         (id, email, &password_hash as &str, name, id, now, now),
     )
     .await
@@ -193,6 +193,8 @@ pub async fn register_user(
             name: name.to_string(),
             two_factor_enabled: false,
             has_avatar: false,
+            notify_email: true,
+            notify_system: true,
             created_at: Utc::now(),
         },
     })
@@ -242,6 +244,7 @@ pub async fn login_user(
         .unwrap_or(id);
 
     let token = create_jwt_with_workspace(&id, &email, &active_ws, jwt_secret)?;
+    let prefs = get_notification_prefs(db, &id).await;
     Ok(AuthResponse {
         token,
         user: UserPublic {
@@ -250,9 +253,29 @@ pub async fn login_user(
             name,
             two_factor_enabled: two_factor_enabled.unwrap_or(false),
             has_avatar: has_avatar(db, &id).await,
+            notify_email: prefs.0,
+            notify_system: prefs.1,
             created_at: ts_to_dt(created_at),
         },
     })
+}
+
+/// Read `(notify_email, notify_system)` for a user. NULL columns (legacy
+/// rows pre-migration 110) default to `(true, true)` — notifications on.
+pub async fn get_notification_prefs(db: &DbSession, user_id: &Uuid) -> (bool, bool) {
+    let row = db
+        .query_unpaged(
+            "SELECT notify_email, notify_system FROM inertial_eclipse.users WHERE id = ?",
+            (user_id,),
+        )
+        .await
+        .ok()
+        .and_then(|r| r.into_rows_result().ok())
+        .and_then(|r| r.maybe_first_row::<(Option<bool>, Option<bool>)>().ok().flatten());
+    match row {
+        Some((e, s)) => (e.unwrap_or(true), s.unwrap_or(true)),
+        None => (true, true),
+    }
 }
 
 pub async fn get_user_by_id(db: &DbSession, user_id: &Uuid) -> Result<User, AppError> {
@@ -303,6 +326,10 @@ pub async fn get_user_by_id(db: &DbSession, user_id: &Uuid) -> Result<User, AppE
         )>()
         .map_err(|_| AppError::NotFound("User not found".into()))?;
 
+    // Notification prefs are read separately to keep this row tuple under
+    // the scylla driver's 16-column SerializeRow/DeserializeRow limit.
+    let (notify_email, notify_system) = get_notification_prefs(db, &id).await;
+
     Ok(User {
         id,
         email,
@@ -318,6 +345,8 @@ pub async fn get_user_by_id(db: &DbSession, user_id: &Uuid) -> Result<User, AppE
         api_key_mercadopago,
         api_key_stripe,
         blocked,
+        notify_email,
+        notify_system,
         created_at,
         updated_at,
     })
@@ -664,8 +693,37 @@ pub async fn get_user_public_with_avatar(
         name: user.name,
         two_factor_enabled: user.two_factor_enabled,
         has_avatar: avatar,
+        notify_email: user.notify_email,
+        notify_system: user.notify_system,
         created_at: user.created_at,
     })
+}
+
+pub async fn update_notification_prefs(
+    db: &DbSession,
+    user_id: &Uuid,
+    notify_email: Option<bool>,
+    notify_system: Option<bool>,
+) -> Result<UserPublic, AppError> {
+    if notify_email.is_none() && notify_system.is_none() {
+        return get_user_public_with_avatar(db, user_id).await;
+    }
+
+    // Resolve current prefs so a partial PATCH doesn't clobber the other
+    // flag with NULL on rows that haven't materialized the column yet.
+    let current = get_notification_prefs(db, user_id).await;
+    let new_email = notify_email.unwrap_or(current.0);
+    let new_system = notify_system.unwrap_or(current.1);
+    let now = ts_now();
+
+    db.query_unpaged(
+        "UPDATE inertial_eclipse.users SET notify_email = ?, notify_system = ?, updated_at = ? WHERE id = ?",
+        (new_email, new_system, now, user_id),
+    )
+    .await
+    .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+
+    get_user_public_with_avatar(db, user_id).await
 }
 
 #[cfg(test)]

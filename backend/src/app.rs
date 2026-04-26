@@ -228,6 +228,10 @@ pub fn build_router(
         // User profile
         .route("/api/user/profile", put(handlers::auth::update_profile))
         .route(
+            "/api/user/notifications",
+            put(handlers::auth::update_notification_prefs),
+        )
+        .route(
             "/api/user/avatar",
             post(handlers::auth::upload_avatar).delete(handlers::auth::delete_avatar),
         )

@@ -6,7 +6,7 @@ import { useForm, Controller } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { useAuthStore } from '@/store/useAuthStore'
-import { Trash2 } from 'lucide-react'
+import { Trash2, Bell, Mail } from 'lucide-react'
 
 const profileSchema = z.object({
   name: z.string().min(2, 'O nome deve ter pelo menos 2 caracteres'),
@@ -30,17 +30,38 @@ type PasswordFormData = z.infer<typeof passwordSchema>
 type DeleteFormData = z.infer<typeof deleteSchema>
 
 export default function SettingsPage() {
-  const { user, updateProfile, uploadAvatar, deleteAvatar, changePassword, deleteAccount, isLoading } = useAuthStore()
+  const { user, updateProfile, updateNotificationPrefs, uploadAvatar, deleteAvatar, changePassword, deleteAccount, isLoading } = useAuthStore()
   const [profileSaved, setProfileSaved] = useState(false)
   const [passwordChanged, setPasswordChanged] = useState(false)
   const [profileError, setProfileError] = useState<string | null>(null)
   const [passwordError, setPasswordError] = useState<string | null>(null)
   const [deleteError, setDeleteError] = useState<string | null>(null)
+  const [notificationsError, setNotificationsError] = useState<string | null>(null)
+  const [pendingNotifKey, setPendingNotifKey] = useState<'email' | 'system' | null>(null)
   const [showDeleteModal, setShowDeleteModal] = useState(false)
   const [avatarUploading, setAvatarUploading] = useState(false)
   const [avatarKey, setAvatarKey] = useState(0)
   const [showDeleteAvatarModal, setShowDeleteAvatarModal] = useState(false)
   const [avatarDeleting, setAvatarDeleting] = useState(false)
+
+  // Default to enabled (true) when the field is missing — matches the backend's
+  // "NULL means on" interpretation for legacy rows.
+  const notifyEmail = user?.notify_email ?? true
+  const notifySystem = user?.notify_system ?? true
+
+  const toggleNotification = async (key: 'email' | 'system', next: boolean) => {
+    setNotificationsError(null)
+    setPendingNotifKey(key)
+    try {
+      await updateNotificationPrefs(
+        key === 'email' ? { notify_email: next } : { notify_system: next },
+      )
+    } catch (err) {
+      setNotificationsError(err instanceof Error ? err.message : 'Erro ao atualizar preferências')
+    } finally {
+      setPendingNotifKey(null)
+    }
+  }
 
   const profileForm = useForm<ProfileFormData>({
     resolver: zodResolver(profileSchema),
@@ -215,6 +236,42 @@ export default function SettingsPage() {
         </Form>
       </Card>
 
+      {/* Notifications */}
+      <Card className="p-6">
+        <h2
+          className="text-lg font-semibold text-heading mb-1"
+          style={{ fontFamily: "'JetBrains Mono', 'Fira Code', monospace" }}
+        >
+          Notificações
+        </h2>
+        <p className="text-sm text-subtle mb-5">
+          Escolha como você quer receber alertas da plataforma.
+        </p>
+
+        <div className="flex flex-col divide-y divide-dim">
+          <NotificationRow
+            icon={<Bell size={16} className="text-[#ff6b2c]" />}
+            title="Notificações no sistema"
+            description="Avisos no painel quando algo importante acontece (mensagens, conexões, pagamentos)."
+            checked={notifySystem}
+            pending={pendingNotifKey === 'system'}
+            onToggle={(next) => toggleNotification('system', next)}
+          />
+          <NotificationRow
+            icon={<Mail size={16} className="text-[#ff6b2c]" />}
+            title="Notificações por email"
+            description="Resumos e alertas enviados para o email cadastrado nesta conta."
+            checked={notifyEmail}
+            pending={pendingNotifKey === 'email'}
+            onToggle={(next) => toggleNotification('email', next)}
+          />
+        </div>
+
+        {notificationsError && (
+          <p className="mt-4 text-sm text-red-400">{notificationsError}</p>
+        )}
+      </Card>
+
       {/* Change Password */}
       <Card className="p-6">
         <h2 className="text-lg font-semibold text-foreground mb-4">Alterar Senha</h2>
@@ -385,6 +442,58 @@ export default function SettingsPage() {
           </Modal.Container>
         </Modal.Backdrop>
       </Modal>
+    </div>
+  )
+}
+
+function NotificationRow({
+  icon,
+  title,
+  description,
+  checked,
+  pending,
+  onToggle,
+}: {
+  icon: React.ReactNode
+  title: string
+  description: string
+  checked: boolean
+  pending: boolean
+  onToggle: (next: boolean) => void
+}) {
+  return (
+    <div className="flex items-start justify-between gap-4 py-4 first:pt-0 last:pb-0">
+      <div className="flex items-start gap-3 min-w-0">
+        <div className="w-9 h-9 rounded-lg bg-raised border border-dim flex items-center justify-center shrink-0 mt-0.5">
+          {icon}
+        </div>
+        <div className="min-w-0">
+          <p
+            className="text-heading text-sm font-medium"
+            style={{ fontFamily: "'JetBrains Mono', 'Fira Code', monospace" }}
+          >
+            {title}
+          </p>
+          <p className="text-subtle text-xs mt-1 leading-relaxed">{description}</p>
+        </div>
+      </div>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={checked}
+        aria-label={title}
+        disabled={pending}
+        onClick={() => onToggle(!checked)}
+        className={`relative shrink-0 mt-1 inline-flex h-6 w-11 items-center rounded-full transition-colors duration-200 outline-none focus-visible:ring-2 focus-visible:ring-[#ff6b2c]/40 ${
+          checked ? 'bg-[#ff6b2c]' : 'bg-dim'
+        } ${pending ? 'opacity-60 cursor-wait' : 'cursor-pointer'}`}
+      >
+        <span
+          className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-md transition-transform duration-200 ${
+            checked ? 'translate-x-6' : 'translate-x-1'
+          }`}
+        />
+      </button>
     </div>
   )
 }

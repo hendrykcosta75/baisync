@@ -20,8 +20,16 @@ pub struct User {
     pub api_key_stripe: Option<String>,
     #[serde(default)]
     pub blocked: Option<bool>,
+    #[serde(default = "default_true")]
+    pub notify_email: bool,
+    #[serde(default = "default_true")]
+    pub notify_system: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Debug, Deserialize)]
@@ -50,6 +58,8 @@ pub struct UserPublic {
     pub name: String,
     pub two_factor_enabled: bool,
     pub has_avatar: bool,
+    pub notify_email: bool,
+    pub notify_system: bool,
     pub created_at: DateTime<Utc>,
 }
 
@@ -61,9 +71,17 @@ impl From<User> for UserPublic {
             name: u.name,
             two_factor_enabled: u.two_factor_enabled,
             has_avatar: false,
+            notify_email: u.notify_email,
+            notify_system: u.notify_system,
             created_at: u.created_at,
         }
     }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateNotificationPrefsRequest {
+    pub notify_email: Option<bool>,
+    pub notify_system: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -161,6 +179,8 @@ mod tests {
             api_key_mercadopago: None,
             api_key_stripe: None,
             blocked: None,
+            notify_email: true,
+            notify_system: true,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         }

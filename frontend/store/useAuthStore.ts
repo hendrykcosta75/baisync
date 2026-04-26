@@ -6,6 +6,8 @@ interface User {
   email: string
   name: string
   has_avatar?: boolean
+  notify_email?: boolean
+  notify_system?: boolean
 }
 
 interface AuthState {
@@ -23,6 +25,7 @@ interface AuthState {
   enable2FA: () => Promise<string>
   verify2FA: (code: string) => Promise<string>
   updateProfile: (name: string) => Promise<void>
+  updateNotificationPrefs: (prefs: { notify_email?: boolean; notify_system?: boolean }) => Promise<void>
   uploadAvatar: (file: File) => Promise<void>
   deleteAvatar: () => Promise<void>
   changePassword: (currentPassword: string, newPassword: string) => Promise<string>
@@ -128,7 +131,14 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
     set({ isLoading: true })
     try {
       const data = await apiFetch<User & { workspace_id?: string; has_avatar?: boolean }>('/api/auth/me')
-      const freshUser = { id: data.id, email: data.email, name: data.name, has_avatar: data.has_avatar }
+      const freshUser = {
+        id: data.id,
+        email: data.email,
+        name: data.name,
+        has_avatar: data.has_avatar,
+        notify_email: data.notify_email ?? true,
+        notify_system: data.notify_system ?? true,
+      }
       localStorage.setItem('auth-user', JSON.stringify(freshUser))
       // Sync active workspace ID from JWT so frontend matches backend context
       if (data.workspace_id) {
@@ -182,11 +192,44 @@ export const useAuthStore = create<AuthState>()((set, get) => ({
         body: JSON.stringify({ name }),
       })
       const currentUser = get().user
-      const updatedUser = { id: data.id, email: data.email, name: data.name, has_avatar: currentUser?.has_avatar }
+      const updatedUser = {
+        id: data.id,
+        email: data.email,
+        name: data.name,
+        has_avatar: currentUser?.has_avatar,
+        notify_email: data.notify_email ?? currentUser?.notify_email ?? true,
+        notify_system: data.notify_system ?? currentUser?.notify_system ?? true,
+      }
       localStorage.setItem('auth-user', JSON.stringify(updatedUser))
       set({ user: updatedUser, isLoading: false })
     } catch (err) {
       const message = err instanceof ApiError ? err.message : 'Falha ao atualizar perfil'
+      set({ isLoading: false, error: message })
+      throw err
+    }
+  },
+
+  updateNotificationPrefs: async (prefs) => {
+    set({ isLoading: true, error: null })
+    try {
+      const data = await apiFetch<User>('/api/user/notifications', {
+        method: 'PUT',
+        body: JSON.stringify(prefs),
+      })
+      const currentUser = get().user
+      if (!currentUser) {
+        set({ isLoading: false })
+        return
+      }
+      const updatedUser = {
+        ...currentUser,
+        notify_email: data.notify_email ?? currentUser.notify_email,
+        notify_system: data.notify_system ?? currentUser.notify_system,
+      }
+      localStorage.setItem('auth-user', JSON.stringify(updatedUser))
+      set({ user: updatedUser, isLoading: false })
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : 'Falha ao atualizar notificações'
       set({ isLoading: false, error: message })
       throw err
     }

@@ -380,16 +380,18 @@ pub async fn send_message(
                 if let Ok(recipient) =
                     crate::services::auth::get_user_by_id(&db, recipient_id).await
                 {
-                    let _ = crate::services::email::send_mention_email(
-                        &config,
-                        &recipient.email,
-                        &user.name,
-                        &channel_name,
-                        &channel_id,
-                        &body.content,
-                        &member_names,
-                    )
-                    .await;
+                    if recipient.notify_email {
+                        let _ = crate::services::email::send_mention_email(
+                            &config,
+                            &recipient.email,
+                            &user.name,
+                            &channel_name,
+                            &channel_id,
+                            &body.content,
+                            &member_names,
+                        )
+                        .await;
+                    }
                 }
             }
         }

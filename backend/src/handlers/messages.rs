@@ -455,9 +455,13 @@ async fn update_baileys_status(
         "A integração {channel_label} via {provider_label} perdeu a conexão. Acesse o painel para reconectar."
     );
 
-    if let Err(e) = notification::create_notification(
+    // `integration.user_id` is the OWNING WORKSPACE id (multi-tenancy is
+    // workspace-scoped — see project memory). Fan out the notification + email
+    // to every workspace member, gated by their individual prefs.
+    let workspace_id = integration.user_id;
+    if let Err(e) = notification::notify_workspace_members(
         db,
-        &integration.user_id,
+        &workspace_id,
         Some(&integration.assistant_id),
         Some(&integration.id),
         "connection_lost",
@@ -466,31 +470,31 @@ async fn update_baileys_status(
     )
     .await
     {
-        tracing::warn!("Failed to create disconnection notification: {e}");
+        tracing::warn!("Failed to fan out disconnection notification: {e}");
     }
 
-    let user_email = db
-        .query_unpaged(
-            "SELECT email FROM inertial_eclipse.users WHERE id = ?",
-            (&integration.user_id,),
-        )
+    let members = crate::services::workspace::list_members(db, &workspace_id)
         .await
-        .ok()
-        .and_then(|res| res.into_rows_result().ok())
-        .and_then(|rows| rows.single_row::<(String,)>().ok())
-        .map(|(e,)| e);
-
-    if let Some(user_email) = user_email {
-        if let Err(e) = email::send_connection_lost_email(
-            config,
-            &user_email,
-            &assistant_name,
-            channel_label,
-            provider_label,
-        )
-        .await
-        {
-            tracing::warn!("Failed to send connection lost email to {user_email}: {e}");
+        .unwrap_or_default();
+    for member in members {
+        if let Ok(user) = crate::services::auth::get_user_by_id(db, &member.user_id).await {
+            if !user.notify_email || user.email.is_empty() {
+                continue;
+            }
+            if let Err(e) = email::send_connection_lost_email(
+                config,
+                &user.email,
+                &assistant_name,
+                channel_label,
+                provider_label,
+            )
+            .await
+            {
+                tracing::warn!(
+                    "Failed to send connection lost email to {}: {e}",
+                    user.email
+                );
+            }
         }
     }
 }

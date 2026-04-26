@@ -219,8 +219,9 @@ async fn handle_disconnection(
         "A integração {channel_label} via {provider_label} perdeu a conexão. Acesse o painel para reconectar."
     );
 
-    // Create in-app notification
-    if let Err(e) = notification::create_notification(
+    // `user_id` is the owning WORKSPACE id (multi-tenancy is workspace-scoped),
+    // so fan out the notification + email to every member.
+    if let Err(e) = notification::notify_workspace_members(
         db,
         user_id,
         Some(assistant_id),
@@ -231,21 +232,31 @@ async fn handle_disconnection(
     )
     .await
     {
-        tracing::warn!("Failed to create notification: {e}");
+        tracing::warn!("Failed to fan out notification: {e}");
     }
 
-    // Fetch user email and send email notification
-    if let Some(user_email) = get_user_email(db, user_id).await {
-        if let Err(e) = email::send_connection_lost_email(
-            config,
-            &user_email,
-            &assistant_name,
-            &channel_label,
-            &provider_label,
-        )
+    let members = crate::services::workspace::list_members(db, user_id)
         .await
-        {
-            tracing::warn!("Failed to send connection lost email to {user_email}: {e}");
+        .unwrap_or_default();
+    for member in members {
+        if let Ok(user) = crate::services::auth::get_user_by_id(db, &member.user_id).await {
+            if !user.notify_email || user.email.is_empty() {
+                continue;
+            }
+            if let Err(e) = email::send_connection_lost_email(
+                config,
+                &user.email,
+                &assistant_name,
+                &channel_label,
+                &provider_label,
+            )
+            .await
+            {
+                tracing::warn!(
+                    "Failed to send connection lost email to {}: {e}",
+                    user.email
+                );
+            }
         }
     }
 
@@ -256,6 +267,7 @@ async fn handle_disconnection(
     Ok(())
 }
 
+#[allow(dead_code)]
 async fn get_user_email(db: &DbSession, user_id: &Uuid) -> Option<String> {
     let result = db
         .query_unpaged(

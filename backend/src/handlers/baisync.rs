@@ -252,7 +252,14 @@ pub(crate) async fn build_sophie_system_prompt(
     skill: Option<&str>,
 ) -> Result<String, AppError> {
     let user = crate::services::auth::get_user_by_id(db, user_id).await?;
-    let assistants = crate::services::assistant::list_assistants(db, user_id)
+    // Assistants/integrations/files are partitioned by workspace_id (multi-tenancy
+    // is workspace-scoped — see project memory). For a personal workspace this
+    // equals user_id; for shared workspaces the two diverge and querying by
+    // user_id silently returns 0 rows.
+    let active_ws_id = crate::services::workspace::get_active_workspace_id(db, user_id)
+        .await
+        .unwrap_or(*user_id);
+    let assistants = crate::services::assistant::list_assistants(db, &active_ws_id)
         .await
         .unwrap_or_default();
 
@@ -282,7 +289,7 @@ pub(crate) async fn build_sophie_system_prompt(
         }
 
         if let Ok(integrations) =
-            crate::services::assistant::list_integrations(db, encryption, &a.id, user_id).await
+            crate::services::assistant::list_integrations(db, encryption, &a.id, &active_ws_id).await
         {
             if !integrations.is_empty() {
                 let int_list: Vec<String> = integrations
@@ -309,7 +316,7 @@ pub(crate) async fn build_sophie_system_prompt(
             }
         }
 
-        if let Ok(files) = crate::services::rag::list_files(db, &a.id, user_id).await {
+        if let Ok(files) = crate::services::rag::list_files(db, &a.id, &active_ws_id).await {
             if !files.is_empty() {
                 let file_list: Vec<String> = files
                     .iter()
@@ -328,9 +335,6 @@ pub(crate) async fn build_sophie_system_prompt(
         assistant_details.join("\n\n")
     };
 
-    let active_ws_id = crate::services::workspace::get_active_workspace_id(db, user_id)
-        .await
-        .unwrap_or(*user_id);
     let active_ws = crate::services::workspace::get_workspace(db, &active_ws_id)
         .await
         .ok();
@@ -1165,10 +1169,13 @@ pub async fn my_recent_errors(
     Extension(db): Extension<DbSession>,
     Extension(auth_user): Extension<AuthUser>,
 ) -> Result<Json<MyRecentErrorsResponse>, AppError> {
-    let user_id = auth_user.user_id;
+    // Workspace-scoped: assistants and llm_call_logs are partitioned by
+    // workspace_id (multi-tenancy is workspace-scoped). For personal
+    // workspaces this equals user_id; for shared workspaces the two diverge.
+    let workspace_id = auth_user.workspace_id;
 
-    // 1. List user's assistants (partition-key scoped).
-    let assistants = crate::services::assistant::list_assistants(&db, &user_id)
+    // 1. List workspace's assistants (partition-key scoped).
+    let assistants = crate::services::assistant::list_assistants(&db, &workspace_id)
         .await
         .unwrap_or_default();
 
@@ -1202,7 +1209,7 @@ pub async fn my_recent_errors(
                         tool_rounds, error, created_at \
                  FROM inertial_eclipse.llm_call_logs \
                  WHERE user_id = ? AND assistant_id = ? LIMIT ?",
-                (&user_id, &asst.id, PER_ASSISTANT_SCAN),
+                (&workspace_id, &asst.id, PER_ASSISTANT_SCAN),
             )
             .await
             .map_err(|e| AppError::DatabaseError(e.to_string()))?;
@@ -1296,6 +1303,9 @@ pub async fn platform_health(
     Extension(auth_user): Extension<AuthUser>,
 ) -> Result<Json<PlatformHealthResponse>, AppError> {
     let user_id = auth_user.user_id;
+    // Assistants and usage_stats are partitioned by workspace_id (multi-tenancy
+    // is workspace-scoped). Sophie's per-user rate limit stays keyed by user_id.
+    let workspace_id = auth_user.workspace_id;
 
     // 1. Circuit breaker — live in-memory snapshot, no DB query.
     let raw = llm::snapshot_circuit_breaker_state();
@@ -1310,9 +1320,9 @@ pub async fn platform_health(
     };
 
     // 3. Usage quota — sum `total_messages` + `total_tokens` across all
-    //    (user_id, assistant_id) rows in `usage_stats`. Mirrors the pattern
+    //    (workspace_id, assistant_id) rows in `usage_stats`. Mirrors the pattern
     //    in `handlers/stats.rs::user_usage` but aggregates instead of binning.
-    let assistants = crate::services::assistant::list_assistants(&db, &user_id)
+    let assistants = crate::services::assistant::list_assistants(&db, &workspace_id)
         .await
         .unwrap_or_default();
 
@@ -1324,7 +1334,7 @@ pub async fn platform_health(
                 "SELECT total_messages, total_tokens \
                  FROM inertial_eclipse.usage_stats \
                  WHERE user_id = ? AND assistant_id = ?",
-                (&user_id, &asst.id),
+                (&workspace_id, &asst.id),
             )
             .await
             .map_err(|e| AppError::DatabaseError(e.to_string()))?;

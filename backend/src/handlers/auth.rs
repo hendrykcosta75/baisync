@@ -12,7 +12,8 @@ use crate::errors::AppError;
 use crate::middleware::auth::AuthUser;
 use crate::models::user::{
     AuthResponse, ChangePasswordRequest, DeleteAccountRequest, ForgotPasswordRequest, LoginRequest,
-    RegisterRequest, ResetPasswordRequest, UpdateProfileRequest, UserPublic, Verify2FARequest,
+    RegisterRequest, ResetPasswordRequest, UpdateNotificationPrefsRequest, UpdateProfileRequest,
+    UserPublic, Verify2FARequest,
 };
 use crate::services::{auth as auth_service, email as email_service};
 
@@ -112,6 +113,8 @@ pub async fn me(
         "name": public.name,
         "two_factor_enabled": public.two_factor_enabled,
         "has_avatar": public.has_avatar,
+        "notify_email": public.notify_email,
+        "notify_system": public.notify_system,
         "created_at": public.created_at,
         "workspace_id": auth_user.workspace_id,
     })))
@@ -123,6 +126,21 @@ pub async fn update_profile(
     Json(req): Json<UpdateProfileRequest>,
 ) -> Result<Json<UserPublic>, AppError> {
     let user = auth_service::update_profile(&db, &auth_user.user_id, &req.name).await?;
+    Ok(Json(user))
+}
+
+pub async fn update_notification_prefs(
+    Extension(db): Extension<DbSession>,
+    Extension(auth_user): Extension<AuthUser>,
+    Json(req): Json<UpdateNotificationPrefsRequest>,
+) -> Result<Json<UserPublic>, AppError> {
+    let user = auth_service::update_notification_prefs(
+        &db,
+        &auth_user.user_id,
+        req.notify_email,
+        req.notify_system,
+    )
+    .await?;
     Ok(Json(user))
 }
 

@@ -49,6 +49,26 @@ pub async fn create_notification(
     let id = Uuid::new_v4();
     let now = CqlTimestamp(Utc::now().timestamp_millis());
 
+    // Honor the user's per-account "system notifications" toggle. When the
+    // recipient has opted out, skip the DB write + SSE publish and return a
+    // synthetic Notification so call sites that don't introspect the result
+    // remain identical to the success path.
+    let (_, system_enabled) =
+        crate::services::auth::get_notification_prefs(db, user_id).await;
+    if !system_enabled {
+        return Ok(Notification {
+            user_id: *user_id,
+            id,
+            assistant_id: assistant_id.copied(),
+            integration_id: integration_id.copied(),
+            notification_type: notification_type.to_string(),
+            title: title.to_string(),
+            message: message.to_string(),
+            is_read: false,
+            created_at: Utc::now(),
+        });
+    }
+
     db.query_unpaged(
         "INSERT INTO inertial_eclipse.notifications (user_id, id, assistant_id, integration_id, notification_type, title, message, is_read, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, false, ?)",
         (user_id, &id, assistant_id, integration_id, notification_type, title, message, now),
