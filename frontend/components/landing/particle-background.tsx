@@ -2,143 +2,155 @@
 
 import { useEffect, useRef } from 'react';
 
-interface Dot {
+interface Particle {
   x: number;
   y: number;
-  baseX: number;
-  baseY: number;
-  glowing: boolean;
-  glowPhase: number;
-  glowSpeed: number;
+  vx: number;
+  vy: number;
+  r: number;
+  hueShift: number;
+  seed: number;
 }
 
 export function ParticleBackground() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const mouseRef = useRef({ x: 0, y: 0 });
-  const dotsRef = useRef<Dot[]>([]);
-  const animFrameRef = useRef<number>(0);
-  const containerRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    function handleMouseMove(e: MouseEvent) {
-      const rect = containerRef.current?.getBoundingClientRect();
-      if (rect) {
-        mouseRef.current = {
-          x: e.clientX - rect.left,
-          y: e.clientY - rect.top,
-        };
-      }
-    }
-    window.addEventListener('mousemove', handleMouseMove);
-    return () => window.removeEventListener('mousemove', handleMouseMove);
-  }, []);
+  const mouseRef = useRef({ x: -9999, y: -9999, active: false });
 
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    const spacing = 32;
-    let width = 0;
-    let height = 0;
+    const DPR = Math.min(window.devicePixelRatio || 1, 2);
+    let W = 0;
+    let H = 0;
 
-    function initDots() {
+    const rand = (a: number, b: number) => a + Math.random() * (b - a);
+
+    function resize() {
+      if (!canvas || !ctx) return;
+      const r = canvas.getBoundingClientRect();
+      W = r.width;
+      H = r.height;
+      canvas.width = Math.max(1, Math.floor(W * DPR));
+      canvas.height = Math.max(1, Math.floor(H * DPR));
+      ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    }
+
+    resize();
+    window.addEventListener('resize', resize);
+
+    function handleMove(e: MouseEvent) {
       if (!canvas) return;
-      width = canvas.offsetWidth;
-      height = canvas.offsetHeight;
-      canvas.width = width * devicePixelRatio;
-      canvas.height = height * devicePixelRatio;
-      ctx!.scale(devicePixelRatio, devicePixelRatio);
+      const rect = canvas.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      const inside =
+        x >= 0 && x <= rect.width && y >= 0 && y <= rect.height;
+      mouseRef.current = { x, y, active: inside };
+    }
+    function handleLeave() {
+      mouseRef.current.active = false;
+    }
+    window.addEventListener('mousemove', handleMove);
+    document.addEventListener('mouseleave', handleLeave);
 
-      const dots: Dot[] = [];
-      const cols = Math.ceil(width / spacing) + 1;
-      const rows = Math.ceil(height / spacing) + 1;
-
-      for (let row = 0; row < rows; row++) {
-        for (let col = 0; col < cols; col++) {
-          const x = col * spacing;
-          const y = row * spacing;
-          const glowing = Math.random() < 0.08;
-          dots.push({
-            x,
-            y,
-            baseX: x,
-            baseY: y,
-            glowing,
-            glowPhase: Math.random() * Math.PI * 2,
-            glowSpeed: 0.005 + Math.random() * 0.01,
-          });
-        }
-      }
-      dotsRef.current = dots;
+    const N = 320;
+    const particles: Particle[] = [];
+    for (let i = 0; i < N; i++) {
+      particles.push({
+        x: Math.random() * W,
+        y: Math.random() * H,
+        vx: rand(-0.2, 0.2),
+        vy: rand(-0.2, 0.2),
+        r: rand(0.5, 2.0),
+        hueShift: rand(-12, 18),
+        seed: Math.random() * 1000,
+      });
     }
 
-    function draw() {
-      if (!ctx || !canvas) return;
-      ctx.clearRect(0, 0, width, height);
+    let raf = 0;
 
-      const mx = mouseRef.current.x;
-      const my = mouseRef.current.y;
-      const parallaxStrength = 0.015;
+    function step(t: number) {
+      if (!ctx) return;
 
-      for (const dot of dotsRef.current) {
-        const dx = dot.baseX - mx;
-        const dy = dot.baseY - my;
-        dot.x = dot.baseX + dx * parallaxStrength;
-        dot.y = dot.baseY + dy * parallaxStrength;
+      // Autonomous attractor — slow elliptical orbit
+      const ambX = W * 0.5 + Math.cos(t * 0.0003) * W * 0.25;
+      const ambY = H * 0.5 + Math.sin(t * 0.00045) * H * 0.25;
+      const m = mouseRef.current;
+      const ax = m.active ? m.x : ambX;
+      const ay = m.active ? m.y : ambY;
 
-        if (dot.glowing) {
-          dot.glowPhase += dot.glowSpeed;
-          const opacity = 0.2 * (0.5 + 0.5 * Math.sin(dot.glowPhase));
-          ctx.fillStyle = `rgba(255, 107, 0, ${opacity})`;
-          ctx.beginPath();
-          ctx.arc(dot.x, dot.y, 1.5, 0, Math.PI * 2);
-          ctx.fill();
-        } else {
-          ctx.fillStyle = '#1a1a1a';
-          ctx.beginPath();
-          ctx.arc(dot.x, dot.y, 1, 0, Math.PI * 2);
-          ctx.fill();
+      // Trail fade
+      ctx.fillStyle = 'rgba(13,9,7,0.16)';
+      ctx.fillRect(0, 0, W, H);
+
+      for (const p of particles) {
+        // Curl-noise-ish flow field
+        const fx = Math.sin(p.y * 0.006 + t * 0.0003 + p.seed * 0.001) * 0.06;
+        const fy = Math.cos(p.x * 0.006 + t * 0.0003 + p.seed * 0.001) * 0.06;
+        p.vx += fx;
+        p.vy += fy;
+
+        const dx = ax - p.x;
+        const dy = ay - p.y;
+        const d = Math.hypot(dx, dy) + 0.001;
+
+        if (m.active) {
+          // Close range: repel from cursor (creates a wake)
+          if (d < 70) {
+            p.vx -= (dx / d) * (1 - d / 70) * 0.9;
+            p.vy -= (dy / d) * (1 - d / 70) * 0.9;
+          } else if (d < 220) {
+            // Medium range: gentle drift toward cursor
+            p.vx += (dx / d) * 0.05;
+            p.vy += (dy / d) * 0.05;
+          }
+        } else if (d < 280) {
+          // Idle: soft pull toward the orbital attractor
+          p.vx += (dx / d) * 0.025 * (1 - d / 280);
+          p.vy += (dy / d) * 0.025 * (1 - d / 280);
         }
+
+        p.vx *= 0.93;
+        p.vy *= 0.93;
+        p.x += p.vx;
+        p.y += p.vy;
+
+        // Wrap
+        if (p.x < -10) p.x = W + 10;
+        if (p.x > W + 10) p.x = -10;
+        if (p.y < -10) p.y = H + 10;
+        if (p.y > H + 10) p.y = -10;
+
+        const speed = Math.min(Math.hypot(p.vx, p.vy), 4);
+        const lightness = Math.min(48 + speed * 12 + p.hueShift, 72);
+        const alpha = 0.32 + Math.min(speed * 0.18, 0.55);
+        ctx.beginPath();
+        ctx.fillStyle = `hsla(${20 + p.hueShift * 0.4}, 96%, ${lightness}%, ${alpha})`;
+        ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+        ctx.fill();
       }
 
-      // Radial glow following cursor
-      if (mx > 0 && my > 0) {
-        const gradient = ctx.createRadialGradient(mx, my, 0, mx, my, 200);
-        gradient.addColorStop(0, 'rgba(255, 107, 0, 0.05)');
-        gradient.addColorStop(1, 'rgba(255, 107, 0, 0)');
-        ctx.fillStyle = gradient;
-        ctx.fillRect(0, 0, width, height);
-      }
-
-      animFrameRef.current = requestAnimationFrame(draw);
+      raf = requestAnimationFrame(step);
     }
 
-    initDots();
-    animFrameRef.current = requestAnimationFrame(draw);
-
-    const handleResize = () => {
-      initDots();
-    };
-    window.addEventListener('resize', handleResize);
+    raf = requestAnimationFrame(step);
 
     return () => {
-      cancelAnimationFrame(animFrameRef.current);
-      window.removeEventListener('resize', handleResize);
+      cancelAnimationFrame(raf);
+      window.removeEventListener('resize', resize);
+      window.removeEventListener('mousemove', handleMove);
+      document.removeEventListener('mouseleave', handleLeave);
     };
   }, []);
 
   return (
-    <div
-      ref={containerRef}
-      className="absolute inset-0 z-0 pointer-events-none"
-    >
-      <canvas
-        ref={canvasRef}
-        className="absolute inset-0 w-full h-full pointer-events-none"
-      />
-    </div>
+    <canvas
+      ref={canvasRef}
+      className="absolute inset-0 w-full h-full pointer-events-none"
+      style={{ display: 'block' }}
+    />
   );
 }

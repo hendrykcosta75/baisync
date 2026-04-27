@@ -317,6 +317,17 @@
   animation: pulse-glow 3s ease-in-out infinite;
 }
 
+/* Landing CTA shimmer — discreet orange glint */
+@keyframes btn-cta-shimmer {
+  0%   { transform: translateX(-130%) skewX(-18deg); }
+  55%  { transform: translateX(280%)  skewX(-18deg); }
+  100% { transform: translateX(280%)  skewX(-18deg); }
+}
+.btn-cta-shine {
+  animation: btn-cta-shimmer 4.5s ease-in-out infinite;
+  animation-delay: 1.2s;
+}
+
 
 /* ============================================================
    SIDEBAR
@@ -596,6 +607,30 @@
 }
 .step-card:hover::before {
   animation: shimmer 1.5s ease-in-out;
+}
+
+/* Orange shimmer through Baisync wordmark accent letters */
+@keyframes logo-text-shimmer {
+  0%   { background-position: 100% 0; }
+  60%  { background-position: 0% 0; }
+  100% { background-position: 0% 0; }
+}
+.logo-shimmer-orange {
+  background-image: linear-gradient(
+    100deg,
+    #ff6b2c 0%,
+    #ff6b2c 46%,
+    #ffe2c4 50%,
+    #ff6b2c 54%,
+    #ff6b2c 100%
+  );
+  background-size: 300% 100%;
+  background-repeat: no-repeat;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+  animation: logo-text-shimmer 3.2s ease-in-out infinite;
 }
 
 /* ============================================================

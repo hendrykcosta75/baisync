@@ -153,13 +153,6 @@ export function LandingFooter() {
           <span className="text-[#555] text-xs">
             &copy; 2026 Baisync. Todos os direitos reservados.
           </span>
-          <span className="flex items-center gap-2 text-xs text-[#555]">
-            Feito com IA
-            <span className="relative flex h-2 w-2">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#ff6b2c] opacity-75" />
-              <span className="relative inline-flex rounded-full h-2 w-2 bg-[#ff6b2c]" />
-            </span>
-          </span>
         </div>
       </div>
     </footer>

@@ -1,9 +1,7 @@
 import Link from 'next/link'
 import { LandingNavbar } from '@/components/landing-navbar'
-import { AgentChat } from '@/components/agent-chat'
 import SolutionSection from '@/components/solution-section'
 import { ParticleBackground } from '@/components/landing/particle-background'
-import { SocialProof } from '@/components/landing/social-proof'
 import { ProblemSection } from '@/components/landing/problem-section'
 import { IntegrationTabs } from '@/components/landing/integration-tabs'
 import { MetricsCounter } from '@/components/landing/metrics-counter'
@@ -20,142 +18,172 @@ export default function Home() {
       <LandingNavbar />
 
       {/* Hero Section */}
-      <section className="relative overflow-hidden">
+      <section
+        className="relative overflow-hidden"
+        style={{ background: '#0d0907', minHeight: 640 }}
+      >
         <ParticleBackground />
 
-        <div className="relative z-10 max-w-[1200px] mx-auto px-6 lg:px-12 pt-20 pb-16 lg:pt-24 lg:pb-20 flex flex-col lg:flex-row items-start gap-10 lg:gap-16">
-          {/* Left — text */}
-          <div className="flex-1 pt-5">
-            {/* Badge */}
-            <div
-              className="inline-flex items-center gap-2 rounded-full mb-8"
+        {/* Soft warm glow on the left */}
+        <div
+          aria-hidden
+          className="absolute inset-0 pointer-events-none"
+          style={{
+            background:
+              'radial-gradient(ellipse at 30% 50%, rgba(255,106,26,0.18) 0%, rgba(13,9,7,0) 55%)',
+            zIndex: 1,
+          }}
+        />
+
+        {/* Centered content */}
+        <div
+          className="relative z-10 flex flex-col items-center justify-center text-center px-6 py-20 sm:py-24"
+          style={{ minHeight: 640 }}
+        >
+          {/* Heading */}
+          <h1
+            style={{
+              fontFamily: mono,
+              fontSize: 'clamp(32px, 5vw, 54px)',
+              fontWeight: 700,
+              color: '#fff',
+              lineHeight: 1.05,
+              letterSpacing: -1,
+              margin: 0,
+              maxWidth: 780,
+              animation: 'fadeSlideUp 0.7s ease 0.1s both',
+            }}
+          >
+            Impulsione seu negócio
+            <br />
+            <span style={{ color: '#ff6a1a' }}>com</span> Inteligência Artificial
+          </h1>
+
+          {/* Subtitle */}
+          <p
+            style={{
+              fontFamily: mono,
+              marginTop: 20,
+              fontSize: 14,
+              color: 'rgba(255,220,200,0.65)',
+              maxWidth: 480,
+              lineHeight: 1.6,
+              letterSpacing: 0.3,
+              animation: 'fadeSlideUp 0.7s ease 0.25s both',
+            }}
+          >
+            Crie agentes inteligentes para atendimento e receba consultoria
+            especializada para transformar seu negócio com IA.
+          </p>
+
+          {/* CTAs */}
+          <div
+            className="flex flex-col sm:flex-row gap-3 mt-8"
+            style={{ animation: 'fadeSlideUp 0.7s ease 0.4s both' }}
+          >
+            <Link
+              href="/dashboard"
+              className="group relative overflow-hidden inline-flex items-center justify-center transition-all duration-200 hover:brightness-110"
               style={{
-                border: '1px solid #222',
-                padding: '6px 18px 6px 12px',
-                animation: 'fadeSlideUp 0.6s ease',
+                isolation: 'isolate',
+                fontFamily: mono,
+                background:
+                  'linear-gradient(180deg, #ff7a2e 0%, #ff6a1a 55%, #e85a10 100%)',
+                color: '#1a0e08',
+                padding: '12px 22px',
+                borderRadius: 8,
+                fontSize: 11,
+                fontWeight: 700,
+                letterSpacing: 1.5,
+                textTransform: 'uppercase',
+                textDecoration: 'none',
+                boxShadow:
+                  '6px 6px 14px rgba(0,0,0,0.55), -2px -2px 8px rgba(255,140,60,0.18), inset 0 1px 0 rgba(255,220,180,0.45), inset 0 -1px 0 rgba(120,40,0,0.35)',
               }}
             >
-              <div
-                className="animate-pulse-dot"
+              <span
+                aria-hidden
+                className="btn-cta-shine"
                 style={{
-                  width: 8,
-                  height: 8,
-                  borderRadius: '50%',
-                  background: '#ff6b2c',
-                  boxShadow: '0 0 8px rgba(255,107,0,0.4)',
+                  position: 'absolute',
+                  top: 0,
+                  bottom: 0,
+                  left: 0,
+                  width: '40%',
+                  zIndex: -1,
+                  pointerEvents: 'none',
+                  background:
+                    'linear-gradient(90deg, transparent 0%, rgba(255,220,180,0.18) 40%, rgba(255,240,215,0.5) 50%, rgba(255,220,180,0.18) 60%, transparent 100%)',
+                  transform: 'translateX(-130%) skewX(-18deg)',
                 }}
               />
-              <span
-                style={{
-                  fontFamily: mono,
-                  fontSize: 11,
-                  color: '#aaa',
-                  letterSpacing: 1.5,
-                  textTransform: 'uppercase',
-                }}
-              >
-                Agentes de IA + Consultoria Inteligente
-              </span>
-            </div>
-
-            {/* Heading with gradient text */}
-            <h1
+              <span style={{ position: 'relative', zIndex: 1 }}>Começar Agora</span>
+            </Link>
+            <Link
+              href="/login"
+              className="text-center transition-all duration-200 hover:border-[#ff6b2c] hover:text-[#ff6b2c]"
               style={{
                 fontFamily: mono,
-                fontSize: 'clamp(32px, 4.5vw, 56px)',
-                fontWeight: 800,
+                background: 'transparent',
                 color: '#fff',
-                lineHeight: 1.15,
-                marginBottom: 28,
-                letterSpacing: -1,
-                animation: 'fadeSlideUp 0.7s ease 0.1s both',
+                border: '0.5px solid rgba(255,255,255,0.4)',
+                padding: '12px 22px',
+                borderRadius: 6,
+                fontSize: 11,
+                letterSpacing: 1.5,
+                textTransform: 'uppercase',
+                textDecoration: 'none',
               }}
             >
-              Impulsione seu
-              <br />
-              negócio{' '}
-              <span className="gradient-text-orange">com</span>
-              <br />
-              Inteligência
-              <br />
-              Artificial
-            </h1>
+              Ver Demo
+            </Link>
+          </div>
+        </div>
 
-            {/* Subtitle */}
-            <p
-              style={{
-                fontFamily: mono,
-                fontSize: 14,
-                color: '#777',
-                lineHeight: 1.8,
-                maxWidth: 460,
-                marginBottom: 36,
-                animation: 'fadeSlideUp 0.7s ease 0.25s both',
-              }}
-            >
-              Crie agentes inteligentes para atendimento
-              <br className="hidden sm:block" />
-              {' '}e receba consultoria especializada para
-              <br className="hidden sm:block" />
-              {' '}transformar seu negócio com IA.
-            </p>
-
-            {/* CTAs */}
+        {/* Bottom-right status */}
+        <div
+          className="absolute bottom-6 right-8 hidden sm:flex flex-col items-end gap-1.5"
+          style={{
+            zIndex: 4,
+            fontFamily: mono,
+            fontSize: 10,
+            color: 'rgba(255,140,40,0.5)',
+            letterSpacing: 1.5,
+          }}
+        >
+          <div className="flex items-center gap-1.5">
             <div
-              className="flex flex-col sm:flex-row gap-3.5"
-              style={{ animation: 'fadeSlideUp 0.7s ease 0.4s both' }}
-            >
-              <Link
-                href="/dashboard"
-                className="animated-border inline-block text-center transition-all duration-200 hover:opacity-90"
-                style={{
-                  fontFamily: mono,
-                  fontSize: 12,
-                  fontWeight: 700,
-                  color: '#000',
-                  background: '#ff6b2c',
-                  padding: '12px 28px',
-                  borderRadius: 8,
-                  textDecoration: 'none',
-                  letterSpacing: 0.5,
-                  textTransform: 'uppercase',
-                }}
-              >
-                Começar Agora
-              </Link>
-              <Link
-                href="/login"
-                className="inline-block text-center transition-all duration-200 hover:border-[#ff6b2c] hover:text-[#ff6b2c]"
-                style={{
-                  fontFamily: mono,
-                  fontSize: 12,
-                  fontWeight: 500,
-                  color: '#aaa',
-                  border: '1px solid #333',
-                  padding: '12px 28px',
-                  borderRadius: 8,
-                  textDecoration: 'none',
-                  letterSpacing: 0.5,
-                  textTransform: 'uppercase',
-                }}
-              >
-                Ver Demo
-              </Link>
-            </div>
-
-            {/* Social Proof */}
-            <div className="mt-12">
-              <SocialProof />
-            </div>
+              style={{
+                width: 6,
+                height: 6,
+                borderRadius: '50%',
+                background: '#ff6a1a',
+                boxShadow: '0 0 8px #ff6a1a',
+              }}
+            />
+            <span>SISTEMA ONLINE</span>
           </div>
+          <div>v 2.4.0 · sync ativo</div>
+        </div>
 
-          {/* Right — chat (desktop only) */}
-          <div
-            className="hidden lg:block flex-shrink-0"
-            style={{ animation: 'fadeSlideUp 0.8s ease 0.3s both' }}
-          >
-            <AgentChat />
+        {/* Bottom-left equalizer */}
+        <div
+          className="absolute bottom-6 left-8 hidden sm:flex items-center gap-2"
+          style={{
+            zIndex: 4,
+            fontFamily: mono,
+            fontSize: 10,
+            color: 'rgba(255,255,255,0.4)',
+            letterSpacing: 1.5,
+          }}
+        >
+          <div className="flex gap-[3px] items-end">
+            <div style={{ width: 2, height: 8, background: '#ff6a1a', opacity: 0.9 }} />
+            <div style={{ width: 2, height: 12, background: '#ff6a1a', opacity: 0.7 }} />
+            <div style={{ width: 2, height: 6, background: '#ff6a1a', opacity: 0.5 }} />
+            <div style={{ width: 2, height: 10, background: '#ff6a1a', opacity: 0.8 }} />
           </div>
+          <span>FLUXO ATIVO</span>
         </div>
       </section>
 

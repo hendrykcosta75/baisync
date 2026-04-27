@@ -36,14 +36,14 @@ function LogoExpand() {
         style={{ fontFamily: mono, fontSize: 16, fontWeight: 700, letterSpacing: 1, color: '#fff' }}
       >
         {/* B + usiness */}
-        <span style={{ color: '#ff6b2c' }}>B</span>
+        <span className="logo-shimmer-orange">B</span>
         <Reveal delay={0}>usiness</Reveal>
 
         {/* , (space) */}
         <Reveal delay={80}>,&nbsp;</Reveal>
 
         {/* AI */}
-        <span style={{ color: '#ff6b2c' }}>AI</span>
+        <span className="logo-shimmer-orange">AI</span>
 
         {/* , (space) */}
         <Reveal delay={160}>,&nbsp;</Reveal>
@@ -63,12 +63,13 @@ export function LandingNavbar() {
 
   return (
     <header
-      className="sticky top-0 z-50 w-full"
+      className="fixed top-0 left-0 right-0 z-50"
       style={{
-        borderBottom: '1px solid #111',
-        background: 'rgba(0,0,0,0.85)',
-        backdropFilter: 'blur(12px)',
-        WebkitBackdropFilter: 'blur(12px)',
+        background: 'rgba(10,7,5,0.30)',
+        backdropFilter: 'blur(8px) saturate(150%)',
+        WebkitBackdropFilter: 'blur(8px) saturate(150%)',
+        borderBottom: '1px solid rgba(255,140,40,0.10)',
+        boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.04)',
       }}
     >
       <div className="max-w-[1200px] mx-auto px-6 lg:px-12 h-16 flex items-center justify-between">
@@ -151,7 +152,15 @@ export function LandingNavbar() {
 
       {/* Mobile nav */}
       {mobileOpen && (
-        <div className="md:hidden px-6 py-4 space-y-1" style={{ borderTop: '1px solid #111', background: 'rgba(0,0,0,0.95)' }}>
+        <div
+          className="md:hidden px-6 py-4 space-y-1"
+          style={{
+            borderTop: '1px solid rgba(255,140,40,0.08)',
+            background: 'rgba(13,9,7,0.55)',
+            backdropFilter: 'blur(20px) saturate(160%)',
+            WebkitBackdropFilter: 'blur(20px) saturate(160%)',
+          }}
+        >
           {[
             { label: 'A SOLUÇÃO', href: '/#solution' },
             { label: 'RECURSOS', href: '/#features' },
