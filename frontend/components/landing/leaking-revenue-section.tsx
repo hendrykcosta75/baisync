@@ -151,7 +151,7 @@ export function LeakingRevenueSection() {
               <animateTransform attributeName="transform" type="translate" values="0,0; 0,30; 0,90; 0,90" dur="4s" repeatCount="indefinite" />
               <rect x="60" y="100" width="240" height="44" rx="3" fill="#1a1a1a" stroke="#ef4444" strokeWidth="0.5" />
               <text x="72" y="118" fontSize="14" fill="#ef4444" fontFamily={mono} fontWeight="bold">- R$ 340</text>
-              <text x="72" y="135" fontSize="13" fill="#888" fontFamily={mono}>Queria comprar vestido, desistiu</text>
+              <text x="72" y="135" fontSize="12" fill="#888" fontFamily={mono}>Queria um vestido, desistiu</text>
             </g>
           </g>
 
@@ -166,7 +166,7 @@ export function LeakingRevenueSection() {
               <animateTransform attributeName="transform" type="translate" values="0,0; 0,30; 0,100; 0,100" dur="4s" begin="1.3s" repeatCount="indefinite" />
               <rect x="220" y="100" width="240" height="44" rx="3" fill="#1a1a1a" stroke="#ef4444" strokeWidth="0.5" />
               <text x="232" y="118" fontSize="14" fill="#ef4444" fontFamily={mono} fontWeight="bold">- R$ 890</text>
-              <text x="232" y="135" fontSize="13" fill="#888" fontFamily={mono}>Cansou de esperar, foi embora</text>
+              <text x="232" y="135" fontSize="12" fill="#888" fontFamily={mono}>Cansou de esperar, foi embora</text>
             </g>
           </g>
 
@@ -181,7 +181,7 @@ export function LeakingRevenueSection() {
               <animateTransform attributeName="transform" type="translate" values="0,0; 0,30; 0,95; 0,95" dur="4s" begin="2.6s" repeatCount="indefinite" />
               <rect x="380" y="100" width="240" height="44" rx="3" fill="#1a1a1a" stroke="#ef4444" strokeWidth="0.5" />
               <text x="392" y="118" fontSize="14" fill="#ef4444" fontFamily={mono} fontWeight="bold">- R$ ?</text>
-              <text x="392" y="135" fontSize="13" fill="#888" fontFamily={mono}>Mandou mensagem, ninguém viu</text>
+              <text x="392" y="135" fontSize="12" fill="#888" fontFamily={mono}>Mandou mensagem, ninguém viu</text>
             </g>
           </g>
 
@@ -192,7 +192,7 @@ export function LeakingRevenueSection() {
               <animateTransform attributeName="transform" type="translate" values="0,40; 0,80; 0,160; 0,160" dur="4s" begin="0.8s" repeatCount="indefinite" />
               <rect x="60" y="100" width="240" height="44" rx="3" fill="#1a1a1a" stroke="#ef4444" strokeWidth="0.5" />
               <text x="72" y="118" fontSize="14" fill="#ef4444" fontFamily={mono} fontWeight="bold">- R$ 1.200</text>
-              <text x="72" y="135" fontSize="13" fill="#888" fontFamily={mono}>Ficou irritado, foi pro concorrente</text>
+              <text x="72" y="135" fontSize="12" fill="#888" fontFamily={mono}>Irritado, foi pro concorrente</text>
             </g>
 
             <g opacity="0">
@@ -200,7 +200,7 @@ export function LeakingRevenueSection() {
               <animateTransform attributeName="transform" type="translate" values="0,40; 0,80; 0,170; 0,170" dur="4s" begin="2.1s" repeatCount="indefinite" />
               <rect x="220" y="100" width="240" height="44" rx="3" fill="#1a1a1a" stroke="#ef4444" strokeWidth="0.5" />
               <text x="232" y="118" fontSize="14" fill="#ef4444" fontFamily={mono} fontWeight="bold">- R$ 560</text>
-              <text x="232" y="135" fontSize="13" fill="#888" fontFamily={mono}>Achou caro, ninguém explicou</text>
+              <text x="232" y="135" fontSize="12" fill="#888" fontFamily={mono}>Achou caro, ninguém explicou</text>
             </g>
 
             <g opacity="0">
@@ -208,7 +208,7 @@ export function LeakingRevenueSection() {
               <animateTransform attributeName="transform" type="translate" values="0,40; 0,80; 0,165; 0,165" dur="4s" begin="3.4s" repeatCount="indefinite" />
               <rect x="380" y="100" width="240" height="44" rx="3" fill="#1a1a1a" stroke="#ef4444" strokeWidth="0.5" />
               <text x="392" y="118" fontSize="14" fill="#ef4444" fontFamily={mono} fontWeight="bold">- R$ ?</text>
-              <text x="392" y="135" fontSize="13" fill="#888" fontFamily={mono}>Nunca soubemos quem era</text>
+              <text x="392" y="135" fontSize="12" fill="#888" fontFamily={mono}>Nunca soubemos quem era</text>
             </g>
           </g>
 
