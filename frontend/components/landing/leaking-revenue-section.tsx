@@ -49,7 +49,7 @@ export function LeakingRevenueSection() {
   return (
     <section
       ref={sectionRef}
-      className="relative py-24 px-6 font-[family-name:var(--font-jetbrains-mono)] overflow-hidden"
+      className="relative py-24 px-3 sm:px-6 font-[family-name:var(--font-jetbrains-mono)] overflow-hidden"
     >
       {/* Red ambient glow — top center */}
       <div
@@ -121,7 +121,7 @@ export function LeakingRevenueSection() {
           {/* Cano / linha de receita no topo */}
           <g>
             <rect x="60" y="40" width="560" height="24" rx="2" fill="#1a1a1a" stroke="#ef4444" strokeWidth="0.5" />
-            <text x="60" y="32" fontSize="10" fill="#666" fontFamily={mono}>
+            <text x="60" y="30" fontSize="13" fill="#888" fontFamily={mono}>
               RECEITA POTENCIAL
             </text>
 
@@ -149,9 +149,9 @@ export function LeakingRevenueSection() {
             <g opacity="0">
               <animate attributeName="opacity" values="0;0;1;1;0" dur="4s" repeatCount="indefinite" />
               <animateTransform attributeName="transform" type="translate" values="0,0; 0,30; 0,90; 0,90" dur="4s" repeatCount="indefinite" />
-              <rect x="60" y="100" width="240" height="34" rx="3" fill="#1a1a1a" stroke="#ef4444" strokeWidth="0.5" />
-              <text x="72" y="115" fontSize="10" fill="#ef4444" fontFamily={mono} fontWeight="bold">- R$ 340</text>
-              <text x="72" y="128" fontSize="10" fill="#888" fontFamily={mono}>Queria comprar vestido, desistiu</text>
+              <rect x="60" y="100" width="240" height="44" rx="3" fill="#1a1a1a" stroke="#ef4444" strokeWidth="0.5" />
+              <text x="72" y="118" fontSize="14" fill="#ef4444" fontFamily={mono} fontWeight="bold">- R$ 340</text>
+              <text x="72" y="135" fontSize="13" fill="#888" fontFamily={mono}>Queria comprar vestido, desistiu</text>
             </g>
           </g>
 
@@ -164,9 +164,9 @@ export function LeakingRevenueSection() {
             <g opacity="0">
               <animate attributeName="opacity" values="0;0;1;1;0" dur="4s" begin="1.3s" repeatCount="indefinite" />
               <animateTransform attributeName="transform" type="translate" values="0,0; 0,30; 0,100; 0,100" dur="4s" begin="1.3s" repeatCount="indefinite" />
-              <rect x="220" y="100" width="240" height="34" rx="3" fill="#1a1a1a" stroke="#ef4444" strokeWidth="0.5" />
-              <text x="232" y="115" fontSize="10" fill="#ef4444" fontFamily={mono} fontWeight="bold">- R$ 890</text>
-              <text x="232" y="128" fontSize="10" fill="#888" fontFamily={mono}>Cansou de esperar, foi embora</text>
+              <rect x="220" y="100" width="240" height="44" rx="3" fill="#1a1a1a" stroke="#ef4444" strokeWidth="0.5" />
+              <text x="232" y="118" fontSize="14" fill="#ef4444" fontFamily={mono} fontWeight="bold">- R$ 890</text>
+              <text x="232" y="135" fontSize="13" fill="#888" fontFamily={mono}>Cansou de esperar, foi embora</text>
             </g>
           </g>
 
@@ -179,9 +179,9 @@ export function LeakingRevenueSection() {
             <g opacity="0">
               <animate attributeName="opacity" values="0;0;1;1;0" dur="4s" begin="2.6s" repeatCount="indefinite" />
               <animateTransform attributeName="transform" type="translate" values="0,0; 0,30; 0,95; 0,95" dur="4s" begin="2.6s" repeatCount="indefinite" />
-              <rect x="380" y="100" width="240" height="34" rx="3" fill="#1a1a1a" stroke="#ef4444" strokeWidth="0.5" />
-              <text x="392" y="115" fontSize="10" fill="#ef4444" fontFamily={mono} fontWeight="bold">- R$ ?</text>
-              <text x="392" y="128" fontSize="10" fill="#888" fontFamily={mono}>Mandou mensagem, ninguém viu</text>
+              <rect x="380" y="100" width="240" height="44" rx="3" fill="#1a1a1a" stroke="#ef4444" strokeWidth="0.5" />
+              <text x="392" y="118" fontSize="14" fill="#ef4444" fontFamily={mono} fontWeight="bold">- R$ ?</text>
+              <text x="392" y="135" fontSize="13" fill="#888" fontFamily={mono}>Mandou mensagem, ninguém viu</text>
             </g>
           </g>
 
@@ -190,25 +190,25 @@ export function LeakingRevenueSection() {
             <g opacity="0">
               <animate attributeName="opacity" values="0;0;1;1;0" dur="4s" begin="0.8s" repeatCount="indefinite" />
               <animateTransform attributeName="transform" type="translate" values="0,40; 0,80; 0,160; 0,160" dur="4s" begin="0.8s" repeatCount="indefinite" />
-              <rect x="60" y="100" width="240" height="34" rx="3" fill="#1a1a1a" stroke="#ef4444" strokeWidth="0.5" />
-              <text x="72" y="115" fontSize="10" fill="#ef4444" fontFamily={mono} fontWeight="bold">- R$ 1.200</text>
-              <text x="72" y="128" fontSize="10" fill="#888" fontFamily={mono}>Ficou irritado, foi pro concorrente</text>
+              <rect x="60" y="100" width="240" height="44" rx="3" fill="#1a1a1a" stroke="#ef4444" strokeWidth="0.5" />
+              <text x="72" y="118" fontSize="14" fill="#ef4444" fontFamily={mono} fontWeight="bold">- R$ 1.200</text>
+              <text x="72" y="135" fontSize="13" fill="#888" fontFamily={mono}>Ficou irritado, foi pro concorrente</text>
             </g>
 
             <g opacity="0">
               <animate attributeName="opacity" values="0;0;1;1;0" dur="4s" begin="2.1s" repeatCount="indefinite" />
               <animateTransform attributeName="transform" type="translate" values="0,40; 0,80; 0,170; 0,170" dur="4s" begin="2.1s" repeatCount="indefinite" />
-              <rect x="220" y="100" width="240" height="34" rx="3" fill="#1a1a1a" stroke="#ef4444" strokeWidth="0.5" />
-              <text x="232" y="115" fontSize="10" fill="#ef4444" fontFamily={mono} fontWeight="bold">- R$ 560</text>
-              <text x="232" y="128" fontSize="10" fill="#888" fontFamily={mono}>Achou caro, ninguém explicou</text>
+              <rect x="220" y="100" width="240" height="44" rx="3" fill="#1a1a1a" stroke="#ef4444" strokeWidth="0.5" />
+              <text x="232" y="118" fontSize="14" fill="#ef4444" fontFamily={mono} fontWeight="bold">- R$ 560</text>
+              <text x="232" y="135" fontSize="13" fill="#888" fontFamily={mono}>Achou caro, ninguém explicou</text>
             </g>
 
             <g opacity="0">
               <animate attributeName="opacity" values="0;0;1;1;0" dur="4s" begin="3.4s" repeatCount="indefinite" />
               <animateTransform attributeName="transform" type="translate" values="0,40; 0,80; 0,165; 0,165" dur="4s" begin="3.4s" repeatCount="indefinite" />
-              <rect x="380" y="100" width="240" height="34" rx="3" fill="#1a1a1a" stroke="#ef4444" strokeWidth="0.5" />
-              <text x="392" y="115" fontSize="10" fill="#ef4444" fontFamily={mono} fontWeight="bold">- R$ ?</text>
-              <text x="392" y="128" fontSize="10" fill="#888" fontFamily={mono}>Nunca soubemos quem era</text>
+              <rect x="380" y="100" width="240" height="44" rx="3" fill="#1a1a1a" stroke="#ef4444" strokeWidth="0.5" />
+              <text x="392" y="118" fontSize="14" fill="#ef4444" fontFamily={mono} fontWeight="bold">- R$ ?</text>
+              <text x="392" y="135" fontSize="13" fill="#888" fontFamily={mono}>Nunca soubemos quem era</text>
             </g>
           </g>
 
@@ -255,7 +255,7 @@ export function LeakingRevenueSection() {
 
           {/* Indicação "você" */}
           <g opacity="0.55">
-            <text x="500" y="395" fontSize="13" fill="#ef4444" fontFamily={mono} fontStyle="italic">você</text>
+            <text x="495" y="395" fontSize="16" fill="#ef4444" fontFamily={mono} fontStyle="italic">você</text>
             <path d="M 495 395 Q 450 405 395 395" fill="none" stroke="#ef4444" strokeWidth="0.8" strokeLinecap="round" opacity="0.7" />
             <path d="M 400 391 L 393 395 L 400 399" fill="none" stroke="#ef4444" strokeWidth="0.8" strokeLinecap="round" strokeLinejoin="round" opacity="0.7" />
           </g>
@@ -263,8 +263,8 @@ export function LeakingRevenueSection() {
           {/* Contador de receita perdida */}
           <g transform="translate(340, 480)">
             <line x1="-280" y1="-10" x2="280" y2="-10" stroke="#ef4444" strokeWidth="0.3" strokeDasharray="2 4" opacity="0.4" />
-            <text textAnchor="middle" fontSize="10" fill="#666" fontFamily={mono} y="10">total perdido este mês</text>
-            <text textAnchor="middle" fontSize="36" fill="#ef4444" fontFamily={mono} fontWeight="bold" y="48">
+            <text textAnchor="middle" fontSize="13" fill="#888" fontFamily={mono} y="12">total perdido este mês</text>
+            <text textAnchor="middle" fontSize="42" fill="#ef4444" fontFamily={mono} fontWeight="bold" y="56">
               <tspan>- R$ 12.847</tspan>
               <animate attributeName="opacity" values="1;0.6;1" dur="2s" repeatCount="indefinite" />
             </text>

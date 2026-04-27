@@ -91,7 +91,7 @@ export function ProblemSection() {
   return (
     <section
       ref={sectionRef}
-      className="relative py-24 px-6 font-[family-name:var(--font-jetbrains-mono)] overflow-hidden"
+      className="relative py-24 px-3 sm:px-6 font-[family-name:var(--font-jetbrains-mono)] overflow-hidden"
     >
       {/* Red ambient glow — top center (Solflow-style) */}
       <div
@@ -242,11 +242,11 @@ export function ProblemSection() {
                     transition: 'opacity 0.35s ease, transform 0.35s ease',
                   }}
                 >
-                  <rect x={card.x} y={card.y} width={card.w} height="40" rx="4" fill="#1a1a1a" stroke="#ef4444" strokeWidth="0.5" />
-                  <text x={card.x + 12} y={card.y + 18} fontSize="10" fill="#666" fontFamily={mono}>
+                  <rect x={card.x} y={card.y} width={card.w} height="50" rx="4" fill="#1a1a1a" stroke="#ef4444" strokeWidth="0.5" />
+                  <text x={card.x + 14} y={card.y + 21} fontSize="14" fill="#888" fontFamily={mono}>
                     {`Cliente · ${card.time}`}
                   </text>
-                  <text x={card.x + 12} y={card.y + 33} fontSize="11" fill="#ccc" fontFamily={mono}>
+                  <text x={card.x + 14} y={card.y + 40} fontSize="15" fill="#ccc" fontFamily={mono}>
                     {card.text}
                   </text>
                 </g>
