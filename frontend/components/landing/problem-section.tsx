@@ -2,62 +2,34 @@
 
 import { useEffect, useRef, useState } from 'react';
 
-const problems = [
-  {
-    icon: (
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <circle cx="12" cy="12" r="10" />
-        <polyline points="12 6 12 12 16 14" />
-      </svg>
-    ),
-    title: 'Atendimento Lento',
-    desc: 'Clientes esperam horas — ou dias — por uma resposta. 60% desistem antes de serem atendidos.',
-  },
-  {
-    icon: (
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
-        <circle cx="9" cy="7" r="4" />
-        <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
-        <path d="M16 3.13a4 4 0 0 1 0 7.75" />
-      </svg>
-    ),
-    title: 'Equipe Sobrecarregada',
-    desc: 'Sua equipe gasta 80% do tempo respondendo as mesmas perguntas repetitivas.',
-  },
-  {
-    icon: (
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-        <line x1="9" y1="10" x2="15" y2="10" />
-        <line x1="12" y1="7" x2="12" y2="13" />
-        <line x1="4" y1="4" x2="20" y2="20" stroke="currentColor" strokeWidth="2" />
-      </svg>
-    ),
-    title: 'Leads Perdidos',
-    desc: 'Mensagens não respondidas no WhatsApp significam vendas que nunca acontecem.',
-  },
-  {
-    icon: (
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <line x1="18" y1="20" x2="18" y2="10" />
-        <line x1="12" y1="20" x2="12" y2="14" />
-        <line x1="6" y1="20" x2="6" y2="16" />
-        <path d="M4 8l4-2 4 3 4-4 4 2" />
-      </svg>
-    ),
-    title: 'Zero Visibilidade',
-    desc: 'Sem métricas, sem dados. Decisões baseadas em achismo, não em números.',
-  },
-];
-
 const headingLine1 = 'Seu atendimento está';
 const headingLine2 = 'perdendo clientes.';
 
+const mono = "'JetBrains Mono', 'Fira Code', monospace";
+
+// Each entry pairs an arrow (line pointing at the center) with the
+// corresponding question card so they reveal together as the user scrolls.
+const QUESTIONS = [
+  { arrow: { x1: 120, y1: 80,  x2: 305, y2: 218 }, card: { x: 20,  y: 60,  w: 180, time: '14:23', text: '"Qual o horário?"' } },
+  { arrow: { x1: 340, y1: 60,  x2: 340, y2: 190 }, card: { x: 245, y: 20,  w: 190, time: '14:24', text: '"Vocês entregam?"' } },
+  { arrow: { x1: 560, y1: 80,  x2: 375, y2: 218 }, card: { x: 480, y: 60,  w: 180, time: '14:25', text: '"Qual o preço?"' } },
+  { arrow: { x1: 100, y1: 240, x2: 290, y2: 240 }, card: { x: 20,  y: 220, w: 180, time: '14:26', text: '"Como funciona?"' } },
+  { arrow: { x1: 580, y1: 240, x2: 390, y2: 240 }, card: { x: 480, y: 220, w: 180, time: '14:27', text: '"Tem desconto?"' } },
+  { arrow: { x1: 120, y1: 400, x2: 305, y2: 265 }, card: { x: 20,  y: 380, w: 180, time: '14:28', text: '"Aceita Pix?"' } },
+  { arrow: { x1: 560, y1: 400, x2: 375, y2: 265 }, card: { x: 480, y: 380, w: 180, time: '14:29', text: '"Tem em estoque?"' } },
+];
+
+const PERSON_DELAY_MS = 350;
+const DRAW_MS = 450;
+
 export function ProblemSection() {
   const sectionRef = useRef<HTMLDivElement>(null);
-  const [visibleCards, setVisibleCards] = useState<Set<number>>(new Set());
+  const svgRef = useRef<SVGSVGElement>(null);
   const [headingVisible, setHeadingVisible] = useState(false);
+  const [personVisible, setPersonVisible] = useState(false);
+  const [linesDrawn, setLinesDrawn] = useState(0);
+  const [cardsVisible, setCardsVisible] = useState(0);
+  const [taglineVisible, setTaglineVisible] = useState(false);
 
   useEffect(() => {
     const section = sectionRef.current;
@@ -76,28 +48,43 @@ export function ProblemSection() {
     const heading = section.querySelector('[data-heading]');
     if (heading) headingObs.observe(heading);
 
-    const cards = section.querySelectorAll('[data-card-index]');
-    const cardObs = new IntersectionObserver(
-      (entries) => {
-        entries.forEach((entry) => {
-          if (entry.isIntersecting) {
-            const index = Number(
-              (entry.target as HTMLElement).dataset.cardIndex
-            );
-            setTimeout(() => {
-              setVisibleCards((prev) => new Set([...prev, index]));
-            }, index * 150);
-            cardObs.unobserve(entry.target);
-          }
-        });
-      },
-      { threshold: 0.2 }
-    );
-
-    cards.forEach((card) => cardObs.observe(card));
     return () => {
       headingObs.disconnect();
-      cardObs.disconnect();
+    };
+  }, []);
+
+  useEffect(() => {
+    const svg = svgRef.current;
+    if (!svg) return;
+
+    const timeouts: ReturnType<typeof setTimeout>[] = [];
+    const obs = new IntersectionObserver(
+      ([entry]) => {
+        if (!entry.isIntersecting) return;
+        obs.disconnect();
+
+        // Person appears first.
+        timeouts.push(setTimeout(() => setPersonVisible(true), 0));
+
+        // Each pair plays in sequence: line draws, then card fades in.
+        QUESTIONS.forEach((_, i) => {
+          const lineStart = PERSON_DELAY_MS + i * DRAW_MS;
+          const cardShow  = lineStart + DRAW_MS;
+          timeouts.push(setTimeout(() => setLinesDrawn(c => Math.max(c, i + 1)), lineStart));
+          timeouts.push(setTimeout(() => setCardsVisible(c => Math.max(c, i + 1)), cardShow));
+        });
+
+        // Tagline closes the sequence.
+        const taglineDelay = PERSON_DELAY_MS + QUESTIONS.length * DRAW_MS + 200;
+        timeouts.push(setTimeout(() => setTaglineVisible(true), taglineDelay));
+      },
+      { threshold: 0.25 }
+    );
+    obs.observe(svg);
+
+    return () => {
+      obs.disconnect();
+      timeouts.forEach(clearTimeout);
     };
   }, []);
 
@@ -168,51 +155,121 @@ export function ProblemSection() {
           </h2>
         </div>
 
-        <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
-          {problems.map((problem, i) => (
-            <div
-              key={i}
-              data-card-index={i}
-              className="group relative rounded-xl border border-dim bg-app p-6 transition-all duration-300 hover:-translate-y-1 hover:border-red-500/40"
-              style={{
-                opacity: visibleCards.has(i) ? 1 : 0,
-                transform: visibleCards.has(i)
-                  ? 'translateY(0)'
-                  : 'translateY(20px)',
-                transition: 'opacity 0.5s ease, transform 0.5s ease',
-              }}
+        <svg
+          ref={svgRef}
+          viewBox="0 0 680 480"
+          role="img"
+          aria-label="Atendente cercado por perguntas repetitivas vindas de todos os lados"
+          className="mx-auto block w-full max-w-[640px] h-auto"
+        >
+          <title>Pessoa cercada por perguntas repetitivas</title>
+          <desc>Atendente no centro recebendo perguntas de todas as direções</desc>
+
+          <defs>
+            <marker
+              id="problemArrowRed"
+              viewBox="0 0 10 10"
+              refX="8"
+              refY="5"
+              markerWidth="5"
+              markerHeight="5"
+              orient="auto-start-reverse"
             >
-              {/* Red glow halo on hover */}
-              <div
-                className="pointer-events-none absolute -inset-1 rounded-xl opacity-0 transition-opacity duration-500 group-hover:opacity-100"
-                style={{
-                  background: 'radial-gradient(300px circle at 50% 50%, rgba(239,68,68,0.1), transparent 70%)',
-                  filter: 'blur(20px)',
-                  zIndex: -1,
-                }}
-              />
+              <path d="M2 1 L8 5 L2 9" fill="none" stroke="#ef4444" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" opacity="0.6" />
+            </marker>
+            <radialGradient id="problemPulseGlow">
+              <stop offset="0%" stopColor="#ef4444" stopOpacity="0.25" />
+              <stop offset="100%" stopColor="#ef4444" stopOpacity="0" />
+            </radialGradient>
+          </defs>
 
-              {/* Inner red glow border effect */}
-              <div
-                className="pointer-events-none absolute inset-0 rounded-xl opacity-0 transition-opacity duration-300 group-hover:opacity-100"
-                style={{
-                  boxShadow: 'inset 0 0 30px rgba(239,68,68,0.05), 0 0 40px rgba(239,68,68,0.08)',
-                }}
-              />
+          {/* Pessoa central — fades in first, before any line is drawn. */}
+          <g
+            style={{
+              opacity: personVisible ? 1 : 0,
+              transition: 'opacity 0.6s ease',
+            }}
+          >
+            {/* Glow pulsante atrás da pessoa */}
+            <circle cx="340" cy="240" r="80" fill="url(#problemPulseGlow)">
+              <animate attributeName="r" values="70;95;70" dur="2.5s" repeatCount="indefinite" />
+              <animate attributeName="opacity" values="0.6;1;0.6" dur="2.5s" repeatCount="indefinite" />
+            </circle>
 
-              <div className="relative">
-                <div className="mb-4 flex h-10 w-10 items-center justify-center rounded-lg border border-red-500/20 bg-red-500/10 text-red-400 transition-all duration-300 group-hover:bg-red-500/15 group-hover:border-red-500/40 group-hover:shadow-[0_0_20px_rgba(239,68,68,0.15)]">
-                  {problem.icon}
-                </div>
-                <h3 className="mb-2 text-base font-semibold text-white">
-                  {problem.title}
-                </h3>
-                <p className="text-sm leading-relaxed text-[#888]">
-                  {problem.desc}
-                </p>
-              </div>
-            </div>
-          ))}
+            {/* Pessoa no centro */}
+            <g transform="translate(340, 240)">
+              <circle cx="0" cy="0" r="42" fill="#0a0a0a" stroke="#ef4444" strokeWidth="1" />
+              <circle cx="0" cy="-10" r="12" fill="none" stroke="#ef4444" strokeWidth="1.2" />
+              <path d="M -20 22 Q -20 5 0 5 Q 20 5 20 22" fill="none" stroke="#ef4444" strokeWidth="1.2" />
+              <path d="M -5 -12 Q -3 -10 -1 -12" fill="none" stroke="#ef4444" strokeWidth="1" strokeLinecap="round" />
+              <path d="M 1 -12 Q 3 -10 5 -12" fill="none" stroke="#ef4444" strokeWidth="1" strokeLinecap="round" />
+              <line x1="-3" y1="-5" x2="3" y2="-5" stroke="#ef4444" strokeWidth="1" strokeLinecap="round" />
+              <ellipse cx="12" cy="-15" rx="2" ry="3" fill="#ef4444" opacity="0.7">
+                <animate attributeName="cy" values="-15;-8;-15" dur="2s" repeatCount="indefinite" />
+                <animate attributeName="opacity" values="0.7;0;0.7" dur="2s" repeatCount="indefinite" />
+              </ellipse>
+            </g>
+          </g>
+
+          {/* For each pair: line draws progressively (stroke-dashoffset goes
+              from full length to 0), THEN the card fades in. */}
+          {QUESTIONS.map(({ arrow, card }, i) => {
+            const lineDrawn = linesDrawn > i;
+            const cardVisible = cardsVisible > i;
+            const length = Math.hypot(arrow.x2 - arrow.x1, arrow.y2 - arrow.y1);
+            return (
+              <g key={i}>
+                <line
+                  x1={arrow.x1}
+                  y1={arrow.y1}
+                  x2={arrow.x2}
+                  y2={arrow.y2}
+                  stroke="#ef4444"
+                  strokeWidth="0.6"
+                  opacity={lineDrawn ? 0.65 : 0}
+                  markerEnd="url(#problemArrowRed)"
+                  style={{
+                    strokeDasharray: length,
+                    strokeDashoffset: lineDrawn ? 0 : length,
+                    transition: `stroke-dashoffset ${DRAW_MS}ms ease-out, opacity 0.2s ease`,
+                  }}
+                />
+                <g
+                  style={{
+                    opacity: cardVisible ? 0.85 : 0,
+                    transform: cardVisible ? 'translate(0,0)' : 'translate(0, 6px)',
+                    transformOrigin: 'center',
+                    transition: 'opacity 0.35s ease, transform 0.35s ease',
+                  }}
+                >
+                  <rect x={card.x} y={card.y} width={card.w} height="40" rx="4" fill="#1a1a1a" stroke="#ef4444" strokeWidth="0.5" />
+                  <text x={card.x + 12} y={card.y + 18} fontSize="10" fill="#666" fontFamily={mono}>
+                    {`Cliente · ${card.time}`}
+                  </text>
+                  <text x={card.x + 12} y={card.y + 33} fontSize="11" fill="#ccc" fontFamily={mono}>
+                    {card.text}
+                  </text>
+                </g>
+              </g>
+            );
+          })}
+        </svg>
+
+        {/* Tagline — fades up after the last card lands. */}
+        <div
+          className="mx-auto mt-12 max-w-[520px] text-center"
+          style={{
+            opacity: taglineVisible ? 1 : 0,
+            transform: taglineVisible ? 'translateY(0)' : 'translateY(12px)',
+            transition: 'opacity 0.6s ease, transform 0.6s ease',
+          }}
+        >
+          <p className="text-sm leading-relaxed text-subtle" style={{ fontFamily: mono }}>
+            80% do tempo da sua equipe vai para
+          </p>
+          <p className="mt-1.5 text-sm leading-relaxed text-red-500" style={{ fontFamily: mono }}>
+            as mesmas perguntas, todos os dias.
+          </p>
         </div>
       </div>
 

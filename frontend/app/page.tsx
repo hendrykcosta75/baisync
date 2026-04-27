@@ -3,6 +3,7 @@ import { LandingNavbar } from '@/components/landing-navbar'
 import SolutionSection from '@/components/solution-section'
 import { ParticleBackground } from '@/components/landing/particle-background'
 import { ProblemSection } from '@/components/landing/problem-section'
+import { LeakingRevenueSection } from '@/components/landing/leaking-revenue-section'
 import { IntegrationTabs } from '@/components/landing/integration-tabs'
 import { MetricsCounter } from '@/components/landing/metrics-counter'
 import { PricingSection } from '@/components/landing/pricing-section'
@@ -192,6 +193,12 @@ export default function Home() {
 
       {/* Problem Section */}
       <ProblemSection />
+
+      {/* Glow Divider */}
+      <div className="glow-divider my-4" />
+
+      {/* Leaking Revenue Section */}
+      <LeakingRevenueSection />
 
       {/* Glow Divider */}
       <div className="glow-divider my-4" />

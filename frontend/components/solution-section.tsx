@@ -717,7 +717,7 @@ export default function SolutionSection() {
                 transition: "all 0.5s ease",
               }}
             >
-              COMO FUNCIONA
+              A SOLUÇÃO
             </span>
             <h2
               style={{
