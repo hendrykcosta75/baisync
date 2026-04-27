@@ -9,6 +9,12 @@ export class ApiError extends Error {
   }
 }
 
+// Public-facing routes where a 401 should NOT trigger a redirect — either
+// the user is already on auth, or the page renders unauthenticated content.
+const NO_REDIRECT_PATHS = ['/login', '/register', '/forgot-password', '/reset-password', '/']
+
+let redirectingFromUnauth = false
+
 export async function apiFetch<T>(
   path: string,
   options: RequestInit = {}
@@ -29,12 +35,15 @@ export async function apiFetch<T>(
   if (res.status === 401) {
     if (
       typeof window !== 'undefined' &&
+      !redirectingFromUnauth &&
+      !NO_REDIRECT_PATHS.includes(window.location.pathname) &&
       !path.includes('/auth/login') &&
       !path.includes('/auth/register') &&
       !path.includes('/api/public/')
     ) {
+      redirectingFromUnauth = true
       localStorage.removeItem('auth-user')
-      window.location.href = '/login'
+      window.location.replace('/login')
     }
   }
 

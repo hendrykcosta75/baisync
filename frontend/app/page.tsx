@@ -82,7 +82,7 @@ export default function Home() {
             style={{ animation: 'fadeSlideUp 0.7s ease 0.4s both' }}
           >
             <Link
-              href="/dashboard"
+              href="/register"
               className="group relative overflow-hidden inline-flex items-center justify-center transition-all duration-200 hover:brightness-110"
               style={{
                 isolation: 'isolate',

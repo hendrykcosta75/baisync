@@ -37,9 +37,24 @@ export default function RegisterPage() {
   })
 
   useEffect(() => {
-    if (isAuthenticated) {
-      window.location.assign('/dashboard')
-    }
+    if (!isAuthenticated) return
+    // Verify the session is actually valid before redirecting away.
+    // Stale `auth-user` in localStorage can claim isAuthenticated=true even
+    // when the backend cookie expired — without this guard, /register would
+    // bounce to /dashboard, the dashboard's 401 would bounce back, looping.
+    let cancelled = false
+    fetch('/api/auth/me', { credentials: 'same-origin' })
+      .then(res => {
+        if (cancelled) return
+        if (res.ok) {
+          window.location.assign('/dashboard')
+        } else {
+          localStorage.removeItem('auth-user')
+          useAuthStore.setState({ user: null, isAuthenticated: false })
+        }
+      })
+      .catch(() => { /* stay on /register */ })
+    return () => { cancelled = true }
   }, [isAuthenticated])
 
   const toggleVisibility = () => setIsVisible(!isVisible)
