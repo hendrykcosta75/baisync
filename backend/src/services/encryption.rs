@@ -164,13 +164,12 @@ impl KeyResolver {
 /// Two surface areas:
 ///
 /// * **Non-versioned** — `encrypt`/`decrypt`/`try_decrypt_or_passthrough`/
-///   `encrypt_opt`/`try_decrypt_opt`. These use the resolver's
-///   `current_version` internally. Ciphertext produced this way is
-///   indistinguishable on-disk from ciphertext produced by the old
-///   single-key service. Callers that don't know about versioning
-///   (assistant_integrations, legacy users columns) keep working
-///   unchanged. To rotate ciphertext written this way requires the
-///   offline S0b re-encrypt flow.
+///   `encrypt_opt`/`try_decrypt_opt`. Encryption uses the resolver's
+///   `current_version`; decryption tries the current key first and then every
+///   older loaded key. Ciphertext produced this way has no version marker, so
+///   authenticated fallback is required to keep assistant integrations and
+///   legacy user columns readable during a rotation. Retiring an old key still
+///   requires the offline S0b re-encrypt flow.
 ///
 /// * **Versioned** — `encrypt_versioned`/`decrypt_versioned`. Callers
 ///   store `(ciphertext, version)` alongside the row and, on read,
@@ -272,8 +271,30 @@ impl EncryptionService {
     }
 
     pub fn decrypt(&self, encrypted: &str) -> Result<String, AppError> {
-        let (key, _version) = self.resolver.encrypt_key();
-        Self::decrypt_with_key(key, encrypted)
+        let (current_key, current_version) = self.resolver.encrypt_key();
+        let current_error = match Self::decrypt_with_key(current_key, encrypted) {
+            Ok(plaintext) => return Ok(plaintext),
+            Err(error) => error,
+        };
+
+        // Non-versioned S0/legacy rows cannot tell us which key encrypted
+        // them. AES-GCM authenticates every attempt, so trying the remaining
+        // loaded keys cannot silently yield plaintext under the wrong key.
+        // Prefer newest-to-oldest after the current key to minimize work for
+        // recently rotated rows.
+        for version in self.resolver.known_versions().into_iter().rev() {
+            if version == current_version {
+                continue;
+            }
+            let Some(key) = self.resolver.decrypt_key(version) else {
+                continue;
+            };
+            if let Ok(plaintext) = Self::decrypt_with_key(key, encrypted) {
+                return Ok(plaintext);
+            }
+        }
+
+        Err(current_error)
     }
 
     /// Try to decrypt the value. If decryption fails (e.g. the value is still
@@ -555,6 +576,26 @@ mod tests {
         // 5. New encryption — MUST use V2 (current_version).
         let (_c2, v2) = svc_v1_v2.encrypt_versioned("new-key").unwrap();
         assert_eq!(v2, 2);
+    }
+
+    /// Regression gate for unversioned S0/legacy columns. These rows do not
+    /// carry a `key_version`, so ciphertext written before a rotation must
+    /// remain readable while the prior key is still loaded.
+    #[test]
+    fn test_non_versioned_v1_ciphertext_readable_when_v2_is_current() {
+        let svc_v1 = service_with(resolver_with(&[(1, [0u8; 32])], 1));
+        let ciphertext = svc_v1.encrypt("legacy-openai-key").unwrap();
+
+        let rotated = service_with(resolver_with(&[(1, [0u8; 32]), (2, [1u8; 32])], 2));
+        assert_eq!(rotated.current_version(), 2);
+        assert_eq!(rotated.decrypt(&ciphertext).unwrap(), "legacy-openai-key");
+
+        let current_ciphertext = rotated.encrypt("new-openai-key").unwrap();
+        assert!(svc_v1.decrypt(&current_ciphertext).is_err());
+        assert_eq!(
+            rotated.decrypt(&current_ciphertext).unwrap(),
+            "new-openai-key"
+        );
     }
 
     #[test]
