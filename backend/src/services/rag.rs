@@ -161,7 +161,19 @@ fn extract_docx(content: &[u8]) -> Result<String, AppError> {
                 _ => {}
             },
             Ok(Event::Text(t)) if in_t => {
-                out.push_str(&t.unescape().unwrap_or_default());
+                out.push_str(&t.decode().unwrap_or_default());
+                if out.len() >= MAX_EXTRACTED_CHARS {
+                    break;
+                }
+            }
+            Ok(Event::GeneralRef(reference)) if in_t => {
+                if let Ok(Some(ch)) = reference.resolve_char_ref() {
+                    out.push(ch);
+                } else if let Ok(name) = reference.decode() {
+                    if let Some(value) = quick_xml::escape::resolve_predefined_entity(&name) {
+                        out.push_str(value);
+                    }
+                }
                 if out.len() >= MAX_EXTRACTED_CHARS {
                     break;
                 }
@@ -539,7 +551,7 @@ mod tests {
                 br#"<?xml version="1.0" encoding="UTF-8"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
 <w:body>
-<w:p><w:r><w:t>Primeiro paragrafo</w:t></w:r></w:p>
+<w:p><w:r><w:t>Primeiro &amp; paragrafo</w:t></w:r></w:p>
 <w:p><w:r><w:t>Segundo paragrafo</w:t></w:r></w:p>
 <w:tbl>
 <w:tr>
@@ -555,7 +567,7 @@ mod tests {
         }
 
         let out = extract_text(&buf, DOCX_MIME).expect("extract_docx failed");
-        assert!(out.contains("Primeiro paragrafo"), "p1 missing: {out}");
+        assert!(out.contains("Primeiro & paragrafo"), "p1 missing: {out}");
         assert!(out.contains("Segundo paragrafo"), "p2 missing: {out}");
         assert!(out.contains("A1"), "table cell A1 missing: {out}");
         assert!(out.contains("B1"), "table cell B1 missing: {out}");
